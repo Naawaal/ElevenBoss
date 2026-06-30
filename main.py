@@ -86,9 +86,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # Run automatic database migrations on startup BEFORE entering the event loop
-    from app.db.migrations import run_migrations
-    run_migrations()
 
     try:
         asyncio.run(run_bot(sync_mode=args.sync))

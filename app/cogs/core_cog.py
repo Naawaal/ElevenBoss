@@ -41,6 +41,7 @@ class CoreCog(commands.Cog):
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def info(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=False)
         uptime_seconds = int(time.time() - self.start_time)
         uptime_str = self._format_uptime(uptime_seconds)
 
@@ -58,7 +59,7 @@ class CoreCog(commands.Cog):
         )
         if self.bot.user:
             embed.set_thumbnail(url=self.bot.user.display_avatar.url)
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="test_error", description="Intentionally triggers an exception to test Sentry integration.")
     @app_commands.allowed_installs(guilds=True, users=False)

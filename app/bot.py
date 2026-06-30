@@ -60,6 +60,20 @@ class ElevenBossBot(commands.Bot):
                 logger.error(f"Development Auto-Sync: Failed to sync commands to guild {config.GUILD_ID}: {e}", exc_info=e)
                 capture_exception(e)
 
+        # Run database migrations asynchronously in the background so it doesn't block bot startup/connection
+        import asyncio
+        asyncio.create_task(self._run_migrations_async())
+
+    async def _run_migrations_async(self):
+        import asyncio
+        from app.db.migrations import run_migrations
+        try:
+            logger.info("Scheduling background database migrations check...")
+            await asyncio.to_thread(run_migrations)
+        except Exception as e:
+            logger.error(f"Background database migrations check failed: {e}", exc_info=e)
+            capture_exception(e)
+
     async def on_ready(self):
         logger.info(f"ElevenBoss logged in successfully as {self.user} (ID: {self.user.id if self.user else 'Unknown'})")
         logger.info(f"Guild count: {len(self.guilds)} server(s) connected.")
@@ -80,12 +94,23 @@ class ElevenBossBot(commands.Bot):
         if isinstance(error, discord.app_commands.CommandInvokeError):
             actual_error = error.original
 
-        # Log command failure locally
-        logger.error(
-            f"AppCommandError in command '{interaction.command.name if interaction.command else 'Unknown'}' "
-            f"by user {interaction.user.name} ({interaction.user.id}): {actual_error}",
-            exc_info=actual_error
-        )
+        # Log command failure locally (suppress traceback for transient/expired Discord interactions)
+        if isinstance(actual_error, discord.NotFound) and actual_error.code == 10062:
+            logger.warning(
+                f"AppCommandError in command '{interaction.command.name if interaction.command else 'Unknown'}' "
+                f"by user {interaction.user.name} ({interaction.user.id}): Interaction expired (Unknown interaction)"
+            )
+        elif isinstance(actual_error, discord.HTTPException) and actual_error.code in (40060, 50027):
+            logger.warning(
+                f"AppCommandError in command '{interaction.command.name if interaction.command else 'Unknown'}' "
+                f"by user {interaction.user.name} ({interaction.user.id}): Interaction already acknowledged or invalid token"
+            )
+        else:
+            logger.error(
+                f"AppCommandError in command '{interaction.command.name if interaction.command else 'Unknown'}' "
+                f"by user {interaction.user.name} ({interaction.user.id}): {actual_error}",
+                exc_info=actual_error
+            )
 
         # Classify errors to filter out benign user input/permission errors from Sentry alerts
         user_facing_errors = (
@@ -106,6 +131,12 @@ class ElevenBossBot(commands.Bot):
                 error_message = f"The bot lacks permissions to run this command: `{perms}`"
             else:
                 error_message = f"Command execution denied: {actual_error}"
+        elif isinstance(actual_error, discord.NotFound) and actual_error.code == 10062:
+            # Benign Discord API error: Unknown interaction (expired token)
+            error_message = "This interaction has expired. Please run the command again."
+        elif isinstance(actual_error, discord.HTTPException) and actual_error.code in (40060, 50027):
+            # Benign Discord API error: Interaction already acknowledged or invalid webhook token
+            error_message = "This interaction has already been acknowledged or expired."
         else:
             # System errors: Send to error reporting system
             capture_exception(actual_error)
@@ -117,6 +148,8 @@ class ElevenBossBot(commands.Bot):
                 await interaction.response.send_message(error_message, ephemeral=True)
             else:
                 await interaction.followup.send(error_message, ephemeral=True)
+        except (discord.NotFound, discord.HTTPException) as de:
+            logger.warning(f"Could not send error response for AppCommandError (interaction likely expired/invalid): {de}")
         except Exception as e:
             logger.error(f"Failed to respond to user for AppCommandError: {e}", exc_info=e)
 
