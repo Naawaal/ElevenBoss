@@ -4,18 +4,20 @@ import time
 import discord
 from discord import app_commands
 from discord.ext import commands
-from bot.utils.embeds import info_embed, success_embed
+from app.utils.embeds import info_embed, success_embed
 
-logger = logging.getLogger("discord")
+logger = logging.getLogger("app.cogs.core_cog")
 
-class GeneralCog(commands.Cog):
+class CoreCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.start_time = time.time()
 
     @app_commands.command(name="ping", description="Checks the bot's latency and responsiveness.")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def ping(self, interaction: discord.Interaction):
-        # Shard latency
+        # Gateway latency
         latency_ms = round(self.bot.latency * 1000)
         
         # Calculate API response round-trip latency
@@ -36,6 +38,8 @@ class GeneralCog(commands.Cog):
         await interaction.edit_original_response(embed=embed)
 
     @app_commands.command(name="info", description="Displays general information and statistics about ElevenBoss.")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def info(self, interaction: discord.Interaction):
         uptime_seconds = int(time.time() - self.start_time)
         uptime_str = self._format_uptime(uptime_seconds)
@@ -52,11 +56,14 @@ class GeneralCog(commands.Cog):
             description="A highly scalable, structured Discord bot built with Sentry integration.",
             fields=fields
         )
-        embed.set_thumbnail(url=self.bot.user.display_avatar.url if self.bot.user else None)
+        if self.bot.user:
+            embed.set_thumbnail(url=self.bot.user.display_avatar.url)
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="test_error", description="Intentionally triggers an exception to test Sentry integration.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
+    @app_commands.default_permissions(administrator=True)
     async def test_error(self, interaction: discord.Interaction):
         await interaction.response.send_message("Triggering test error... Check logs and Sentry.", ephemeral=True)
         # Raise an exception to be caught globally and forwarded to Sentry
@@ -78,4 +85,4 @@ class GeneralCog(commands.Cog):
         return " ".join(parts)
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(GeneralCog(bot))
+    await bot.add_cog(CoreCog(bot))
