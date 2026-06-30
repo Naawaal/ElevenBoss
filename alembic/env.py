@@ -14,8 +14,7 @@ from app.db.base import Base
 # ==============================================================================
 # FUTURE MODELS IMPORTS (For Alembic autogenerate support)
 # Import all database models here so SQLAlchemy registers their tables on Base.metadata:
-# e.g. from app.models.player import Player
-# e.g. from app.models.club import Club
+import app.models
 # ==============================================================================
 
 # this is the Alembic Config object, which provides

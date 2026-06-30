@@ -30,11 +30,24 @@ def init_error_reporting() -> None:
         return
 
     try:
+        def before_send(event, hint):
+            if "exc_info" in hint:
+                exc_type, exc_value, tb = hint["exc_info"]
+                exc_name = exc_type.__name__
+                if exc_name in ("NotFound", "HTTPException"):
+                    code = getattr(exc_value, "code", None)
+                    if exc_name == "NotFound" and code == 10062:
+                        return None
+                    if exc_name == "HTTPException" and code in (40060, 50027):
+                        return None
+            return event
+
         sentry_sdk.init(
             dsn=dsn,
             environment=env,
             traces_sample_rate=1.0 if env != "production" else 0.1,
             profiles_sample_rate=1.0 if env != "production" else 0.1,
+            before_send=before_send,
         )
         logger.info(f"Sentry error reporting initialized (environment={env}).")
     except Exception as e:
