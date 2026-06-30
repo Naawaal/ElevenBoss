@@ -35,6 +35,7 @@ async def run_bot(sync_mode: str):
     # Initialize Sentry / crash reporting
     init_error_reporting()
 
+
     # Instantiate the bot
     bot = ElevenBossBot()
 
@@ -84,6 +85,10 @@ if __name__ == "__main__":
         help="Sync application commands to Discord (global or guild-scoped) and exit immediately."
     )
     args = parser.parse_args()
+
+    # Run automatic database migrations on startup BEFORE entering the event loop
+    from app.db.migrations import run_migrations
+    run_migrations()
 
     try:
         asyncio.run(run_bot(sync_mode=args.sync))

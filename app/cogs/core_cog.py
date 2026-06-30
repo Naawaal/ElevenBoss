@@ -69,6 +69,25 @@ class CoreCog(commands.Cog):
         # Raise an exception to be caught globally and forwarded to Sentry
         raise RuntimeError("Test error triggered via /test_error command.")
 
+    @app_commands.command(name="db-health", description="Checks the connectivity and status of the PostgreSQL database.")
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
+    @app_commands.default_permissions(administrator=True)
+    async def db_health(self, interaction: discord.Interaction):
+        from app.db.health import check_db_health
+        from app.utils.embeds import success_embed, error_embed
+
+        await interaction.response.defer(ephemeral=True)
+
+        health_result = await check_db_health()
+
+        if health_result["ok"]:
+            embed = success_embed("Database Connected", health_result["message"])
+        else:
+            embed = error_embed("Database Connection Failed", health_result["message"])
+
+        await interaction.edit_original_response(embed=embed)
+
     def _format_uptime(self, seconds: int) -> str:
         days, remainder = divmod(seconds, 86400)
         hours, remainder = divmod(remainder, 3600)

@@ -11,3 +11,8 @@ python-dotenv>=1.0.0
 # ── Error tracking (Crashlytics alternative for Python) ──────
 # pure_eval extra enables cleaner local-variable capture in tracebacks
 sentry-sdk[pure_eval]>=2.0.0
+
+# ── Database ──────────────────────────────────────────────────
+SQLAlchemy>=2.0.0
+asyncpg>=0.29.0
+alembic>=1.13.0
