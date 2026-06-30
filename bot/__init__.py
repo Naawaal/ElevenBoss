@@ -1,0 +1,3 @@
+"""
+ElevenBoss Discord Bot package.
+"""

@@ -1,0 +1,13 @@
+# ElevenBoss — Python Dependencies
+# Install inside your virtual environment:
+#   pip install -r requirements.txt
+
+# ── Discord ───────────────────────────────────────────────────
+discord.py>=2.4.0
+
+# ── Environment variable loading ─────────────────────────────
+python-dotenv>=1.0.0
+
+# ── Error tracking (Crashlytics alternative for Python) ──────
+# pure_eval extra enables cleaner local-variable capture in tracebacks
+sentry-sdk[pure_eval]>=2.0.0
