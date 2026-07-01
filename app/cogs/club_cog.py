@@ -131,15 +131,22 @@ class ClubCog(commands.Cog):
             await self.send_error_response(interaction, "Invalid or unsupported interactive element.")
             return
 
-        # Ensure we are in a guild context
-        if not interaction.guild_id:
-            logger.warning(f"ui_interaction_rejected: reason=dm_not_allowed, user_id={interaction.user.id}")
-            await self.send_error_response(interaction, "Interactive menus are not supported in DMs.")
-            return
-
         guild_id = interaction.guild_id
         user_id = interaction.user.id
         nonce = custom_id.nonce
+
+        # Ensure we are in a guild context unless it's a DM settings/admin action
+        if not guild_id:
+            if custom_id.scope not in ("dm_settings", "dm_admin", "nav", "schedule"):
+                logger.warning(f"ui_interaction_rejected: reason=dm_not_allowed, user_id={user_id}")
+                await self.send_error_response(interaction, "Interactive menus are not supported in DMs.")
+                return
+            # Fetch guild_id from session state for DM console
+            session = ui_session_manager.get_session(nonce)
+            if session:
+                guild_id = session.guild_id
+            else:
+                guild_id = 0
 
         try:
             # Handle close button immediately
@@ -262,6 +269,123 @@ class ClubCog(commands.Cog):
                     new_view = await handle_view_recent_match(guild_id, interaction.user, nonce)
                 elif custom_id.action == "view":
                     new_view = await handle_view_match_detail(guild_id, interaction.user, custom_id.target, nonce)
+
+            elif custom_id.scope == "dm_settings":
+                from app.ui.handlers.dm_settings_handler import (
+                    handle_open_settings_console,
+                    handle_open_settings_overview,
+                    handle_open_settings_channels,
+                    handle_open_settings_admin_role,
+                    handle_open_settings_automation,
+                    handle_open_settings_schedule,
+                    handle_open_settings_matchday,
+                )
+                from app.services.settings_service import SettingsService
+                from app.ui.handlers.dm_admin_handler import handle_open_admin_dashboard
+
+                session = ui_session_manager.get_session(nonce)
+
+                if custom_id.action == "guild_select":
+                    if not interaction.data.get("values"):
+                        raise ValueError("No server selected.")
+                    selected_guild_id = int(interaction.data["values"][0])
+                    
+                    if session:
+                        session.guild_id = selected_guild_id
+                        dest = session.metadata.get("dest", "settings")
+                        if dest == "admin":
+                            new_view = await handle_open_admin_dashboard(selected_guild_id, interaction.user, nonce)
+                        else:
+                            new_view = await handle_open_settings_overview(selected_guild_id, interaction.user, nonce)
+                elif custom_id.action == "switch" and custom_id.target == "guild":
+                    if session:
+                        session.guild_id = 0
+                    new_view = await handle_open_settings_console(interaction.user, nonce)
+                elif custom_id.action == "view":
+                    if custom_id.target == "overview":
+                        new_view = await handle_open_settings_overview(guild_id, interaction.user, nonce)
+                    elif custom_id.target == "channels":
+                        new_view = await handle_open_settings_channels(guild_id, interaction.user, nonce)
+                    elif custom_id.target == "admin_role":
+                        new_view = await handle_open_settings_admin_role(guild_id, interaction.user, nonce)
+                    elif custom_id.target == "automation":
+                        new_view = await handle_open_settings_automation(guild_id, interaction.user, nonce)
+                    elif custom_id.target == "schedule":
+                        new_view = await handle_open_settings_schedule(guild_id, interaction.user, nonce)
+                    elif custom_id.target == "matchday":
+                        new_view = await handle_open_settings_matchday(guild_id, interaction.user, nonce)
+                elif custom_id.action == "channel_game" and custom_id.target == "select":
+                    if not interaction.data.get("values"):
+                        raise ValueError("No channel selected.")
+                    channel_id = interaction.data["values"][0]
+                    guild_obj = self.bot.get_guild(guild_id) if self.bot else None
+                    await SettingsService.update_channels(guild_id, guild_obj, game_channel_id=channel_id)
+                    new_view = await handle_open_settings_channels(guild_id, interaction.user, nonce)
+                elif custom_id.action == "channel_match" and custom_id.target == "select":
+                    if not interaction.data.get("values"):
+                        raise ValueError("No channel selected.")
+                    channel_id = interaction.data["values"][0]
+                    guild_obj = self.bot.get_guild(guild_id) if self.bot else None
+                    await SettingsService.update_channels(guild_id, guild_obj, matchday_channel_id=channel_id)
+                    new_view = await handle_open_settings_channels(guild_id, interaction.user, nonce)
+                elif custom_id.action == "role_admin" and custom_id.target == "select":
+                    if not interaction.data.get("values"):
+                        raise ValueError("No role selected.")
+                    role_id = interaction.data["values"][0]
+                    # Check clear option
+                    val = None if role_id == "clear" else role_id
+                    await SettingsService.update_admin_role(guild_id, val)
+                    new_view = await handle_open_settings_admin_role(guild_id, interaction.user, nonce)
+
+            elif custom_id.scope == "schedule":
+                from app.services.settings_service import SettingsService
+                from app.ui.handlers.dm_settings_handler import handle_open_settings_schedule
+                guild_obj = interaction.guild or (self.bot.get_guild(guild_id) if self.bot else None)
+                if custom_id.action == "enable":
+                    await SettingsService.enable_schedule(guild_id, guild_obj)
+                    new_view = await handle_open_settings_schedule(guild_id, interaction.user, nonce)
+                elif custom_id.action == "disable":
+                    await SettingsService.disable_schedule(guild_id)
+                    new_view = await handle_open_settings_schedule(guild_id, interaction.user, nonce)
+                elif custom_id.action == "refresh":
+                    new_view = await handle_open_settings_schedule(guild_id, interaction.user, nonce)
+
+            elif custom_id.scope == "dm_admin":
+                from app.ui.handlers.dm_admin_handler import handle_open_admin_dashboard
+                if custom_id.action == "matchday_run":
+                    from app.services.matchday_service import MatchdayService
+                    from app.services.announcement_service import AnnouncementService
+                    # Get current week
+                    async with get_session() as db_sess:
+                        from app.repositories.league_repository import get_active_league_by_guild
+                        from app.repositories.season_repository import get_active_season_for_league
+                        league = await get_active_league_by_guild(db_sess, guild_id)
+                        season = await get_active_season_for_league(db_sess, guild_id, league.id) if league else None
+                        week = season.current_week if season else 1
+                        
+                    bot_user_id = self.bot.user.id if self.bot and self.bot.user else 0
+                    res = await MatchdayService.run_current_matchday(guild_id, bot_user_id, is_admin=True)
+                    if res.success:
+                        AnnouncementService.bot = self.bot
+                        await AnnouncementService.announce_matchday_summary(guild_id, week, res.results)
+                        if res.season_completed:
+                            await AnnouncementService.announce_season_complete(guild_id, res.season_number)
+                    new_view = await handle_open_admin_dashboard(guild_id, interaction.user, nonce)
+                elif custom_id.action == "automation_check":
+                    from app.services.game_loop_orchestrator import GameLoopOrchestrator
+                    orchestrator = GameLoopOrchestrator(self.bot)
+                    await orchestrator.run_guild_check(guild_id)
+                    new_view = await handle_open_admin_dashboard(guild_id, interaction.user, nonce)
+                elif custom_id.action == "league_start":
+                    from app.services.league_service import start_league
+                    from app.services.announcement_service import AnnouncementService
+                    res = await start_league(guild_id)
+                    if res.success:
+                        AnnouncementService.bot = self.bot
+                        await AnnouncementService.announce_league_start(guild_id, res.league_name)
+                    new_view = await handle_open_admin_dashboard(guild_id, interaction.user, nonce)
+                elif custom_id.action == "refresh":
+                    new_view = await handle_open_admin_dashboard(guild_id, interaction.user, nonce)
 
             elif custom_id.scope == "nav" and custom_id.action == "back":
 

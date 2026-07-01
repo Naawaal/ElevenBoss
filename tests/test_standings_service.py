@@ -52,3 +52,18 @@ class TestStandingsService(unittest.IsolatedAsyncioTestCase):
         
         self.assertEqual(result, mock_standings)
         mock_repo_get_table.assert_called_once_with(session_mock, "12345")
+
+    async def test_get_ranked_table(self):
+        from app.repositories.standing_repository import get_ranked_table
+        session_mock = AsyncMock()
+        guild_id = "12345"
+        season_id = uuid.uuid4()
+        
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = []
+        session_mock.execute.return_value = result_mock
+        
+        table = await get_ranked_table(session_mock, guild_id, season_id)
+        self.assertEqual(table, [])
+        session_mock.execute.assert_called_once()
+

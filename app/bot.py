@@ -18,6 +18,10 @@ class ElevenBossBot(commands.Bot):
         )
 
     async def setup_hook(self):
+        # Bind bot reference to permission service
+        from app.services import permission_service
+        permission_service.bot = self
+
         # Register tree error handler for slash commands
         self.tree.on_error = self.on_app_command_error
 
@@ -60,9 +64,25 @@ class ElevenBossBot(commands.Bot):
                 logger.error(f"Development Auto-Sync: Failed to sync commands to guild {config.GUILD_ID}: {e}", exc_info=e)
                 capture_exception(e)
 
+        # Global Sync (required for DM-only slash commands to work in DMs)
+        try:
+            synced_global = await self.tree.sync()
+            logger.info(f"Global Sync: Successfully synced {len(synced_global)} slash commands globally (active in DMs).")
+        except Exception as e:
+            logger.error(f"Global Sync: Failed to sync commands globally: {e}", exc_info=e)
+            capture_exception(e)
+
         # Run database migrations asynchronously in the background so it doesn't block bot startup/connection
         import asyncio
         asyncio.create_task(self._run_migrations_async())
+
+        # Start scheduler
+        from app.scheduler.scheduler import start_scheduler
+        try:
+            start_scheduler(self)
+        except Exception as e:
+            logger.error(f"Failed to start background scheduler: {e}", exc_info=e)
+            capture_exception(e)
 
     async def _run_migrations_async(self):
         import asyncio
@@ -80,6 +100,12 @@ class ElevenBossBot(commands.Bot):
 
     async def close(self):
         logger.info("Initiating graceful shutdown for ElevenBoss...")
+        from app.scheduler.scheduler import shutdown_scheduler
+        try:
+            shutdown_scheduler()
+        except Exception as e:
+            logger.error(f"Failed to stop background scheduler: {e}", exc_info=e)
+            capture_exception(e)
         await super().close()
         logger.info("Shutdown sequence completed.")
 

@@ -176,6 +176,7 @@ class MatchdayService:
                 message="Only server administrators or game admins can simulate the matchday."
             )
             
+        job_key = None
         try:
             # Step 1: Pre-transaction validation of league and season
             async with get_session() as session:
@@ -534,11 +535,12 @@ class MatchdayService:
             logger.error(f"matchday_run_failed: guild_id={guild_id}, error={e}\n{err_trace}")
             
             # Record failure in a separate database session so it doesn't get rolled back
-            try:
-                async with get_session() as fail_session:
-                    await mark_job_failed(fail_session, job_key, f"{str(e)}\n{err_trace}")
-            except Exception as e_job:
-                logger.error(f"Failed to record job failure: {e_job}")
+            if job_key:
+                try:
+                    async with get_session() as fail_session:
+                        await mark_job_failed(fail_session, job_key, f"{str(e)}\n{err_trace}")
+                except Exception as e_job:
+                    logger.error(f"Failed to record job failure: {e_job}")
                 
             from app.error_reporting import capture_exception
             capture_exception(e)

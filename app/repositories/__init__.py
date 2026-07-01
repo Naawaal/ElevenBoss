@@ -2,6 +2,11 @@
 Database repositories for data access logic
 """
 from app.repositories.manager_repository import get_manager_by_discord_id, create_manager
+from app.repositories.guild_config_repository import (
+    get_or_create_guild_config, get_or_create_config,
+    update_channels, update_admin_role, update_automation_settings,
+    update_schedule_settings, set_matchday_enabled, get_settings_overview
+)
 from app.repositories.club_repository import (
     get_club_by_name, create_club, get_club_by_manager_id,
     get_user_club, get_clubs_in_league, assign_club_to_league,
@@ -20,7 +25,7 @@ from app.repositories.season_repository import (
 )
 from app.repositories.standing_repository import (
     create_initial_standing, get_table_for_active_season,
-    get_standing_for_update
+    get_standing_for_update, get_ranked_table
 )
 
 from app.repositories.fixture_repository import (

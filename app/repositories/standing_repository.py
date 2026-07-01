@@ -77,3 +77,34 @@ async def get_standing_for_update(
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
+
+async def get_ranked_table(
+    session: AsyncSession,
+    guild_id: int | str,
+    season_id: uuid.UUID,
+) -> list[LeagueStanding]:
+    """
+    Fetch all standing rows for a specific season in the guild.
+    Sorted by points (desc), goal_difference (desc), goals_for (desc), and club name (asc).
+    """
+    stmt = (
+        select(LeagueStanding)
+        .join(Club, LeagueStanding.club_id == Club.id)
+        .where(
+            LeagueStanding.guild_id == str(guild_id),
+            LeagueStanding.season_id == season_id
+        )
+        .options(
+            joinedload(LeagueStanding.club)
+        )
+        .order_by(
+            LeagueStanding.points.desc(),
+            LeagueStanding.goal_difference.desc(),
+            LeagueStanding.goals_for.desc(),
+            Club.name.asc()
+        )
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
