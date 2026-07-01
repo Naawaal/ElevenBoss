@@ -11,7 +11,7 @@ async def handle_view_player_search(guild_id: int, discord_user_id: int, nonce: 
     """
     valid, err_msg = ui_session_manager.validate_session(nonce, discord_user_id)
     if not valid:
-        logger.warning(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
+        logger.info(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
         raise ValueError(err_msg)
     return render_player_search(nonce)
 
@@ -21,12 +21,12 @@ async def handle_view_player_detail(guild_id: int, discord_user_id: int, player_
     """
     valid, err_msg = ui_session_manager.validate_session(nonce, discord_user_id)
     if not valid:
-        logger.warning(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
+        logger.info(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
         raise ValueError(err_msg)
         
     player = await get_player_detail(guild_id, discord_user_id, player_id)
     if not player:
-        logger.warning(f"ui_interaction_rejected: reason=player_not_found_or_unauthorized, player_id={player_id}, user_id={discord_user_id}")
+        logger.info(f"ui_interaction_rejected: reason=player_not_found_or_unauthorized, player_id={player_id}, user_id={discord_user_id}")
         raise ValueError("Player not found or does not belong to your club.")
         
     logger.info(f"ui_player_detail_opened: player_id={player_id}, guild_id={guild_id}, discord_user_id={discord_user_id}")
@@ -40,12 +40,12 @@ async def handle_search_player_by_name(guild_id: int, discord_user_id: int, quer
     if nonce:
         valid, err_msg = ui_session_manager.validate_session(nonce, discord_user_id)
         if not valid:
-            logger.warning(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
+            logger.info(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
             raise ValueError(err_msg)
             
     matches = await search_player_by_name(guild_id, discord_user_id, query)
     if matches is None:
-        logger.warning(f"ui_interaction_rejected: reason=unregistered_user, user_id={discord_user_id}")
+        logger.info(f"ui_interaction_rejected: reason=unregistered_user, user_id={discord_user_id}")
         raise ValueError("You are not registered as a manager with a club. Run `/register` to get started.")
         
     if not matches:

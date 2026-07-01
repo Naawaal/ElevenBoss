@@ -1,5 +1,5 @@
 import math
-from app.ui.components import container, text_display, action_row, secondary_button, select_menu, V2View
+from app.ui.components import container, text_display, action_row, secondary_button, select_menu, media_gallery, V2View
 from app.ui.custom_ids import encode_custom_id
 from app.ui.layouts.common import close_button, refresh_button, back_button
 
@@ -35,9 +35,16 @@ def build_squad_table(players: list[dict], page: int, page_size: int) -> str:
         
     return "\n".join(lines)
 
-def build_squad_layout(club_name: str, players: list[dict], page: int, nonce: str) -> V2View:
+def build_squad_layout(
+    club_name: str,
+    players: list[dict],
+    page: int,
+    nonce: str,
+    has_image: bool = False
+) -> V2View:
     """
-    Builds the paginated Squad Overview layout with player selection menu and controls.
+    Builds the Squad Overview layout. If has_image is True, renders
+    the dynamic Pillow card grid inside a Media Gallery. Fallback to ASCII table.
     """
     total_players = len(players)
     total_pages = max(1, math.ceil(total_players / PAGE_SIZE))
@@ -45,6 +52,7 @@ def build_squad_layout(club_name: str, players: list[dict], page: int, nonce: st
     # Clamp page to valid range
     page = max(1, min(page, total_pages))
     
+    # Text fallback compilation
     table_text = build_squad_table(players, page, PAGE_SIZE)
     header = f"### 👥 SQUAD OVERVIEW — {club_name}\nPage {page} of {total_pages} ({total_players} players)\n\n"
     full_text = header + table_text
@@ -63,12 +71,17 @@ def build_squad_layout(club_name: str, players: list[dict], page: int, nonce: st
         
     select_custom_id = encode_custom_id("player", "view", "select", nonce)
     
-    comp_payload = [
-        container([
-            text_display(full_text)
-        ])
-    ]
+    comp_payload = []
     
+    if has_image:
+        comp_payload.append(media_gallery(["attachment://squad.png"], ["Squad Overview Board"]))
+    else:
+        comp_payload.append(
+            container([
+                text_display(full_text)
+            ])
+        )
+        
     # Add player select menu if options are available
     if options:
         player_select = select_menu(

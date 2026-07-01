@@ -80,7 +80,7 @@ async def handle_open_lineup_screen(guild_id: int, discord_user_id: int, nonce: 
     if nonce:
         valid, err_msg = ui_session_manager.validate_session(nonce, discord_user_id)
         if not valid:
-            logger.warning(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
+            logger.info(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
             raise ValueError(err_msg)
         session = ui_session_manager.get_session(nonce)
     else:
@@ -91,7 +91,7 @@ async def handle_open_lineup_screen(guild_id: int, discord_user_id: int, nonce: 
     res = await LineupService.get_lineup_screen_data(guild_id, discord_user_id)
     if not res.success:
         if res.code == "NO_CLUB":
-            logger.warning(f"ui_interaction_rejected: reason=unregistered_user, user_id={discord_user_id}")
+            logger.info(f"ui_interaction_rejected: reason=unregistered_user, user_id={discord_user_id}")
         else:
             logger.error(f"ui_error: failed to load lineup data: {res.message}")
         raise ValueError(res.message)
@@ -112,7 +112,7 @@ async def handle_select_formation(guild_id: int, discord_user_id: int, formation
     """
     valid, err_msg = ui_session_manager.validate_session(nonce, discord_user_id)
     if not valid:
-        logger.warning(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
+        logger.info(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
         raise ValueError(err_msg)
         
     session = ui_session_manager.get_session(nonce)
@@ -141,7 +141,7 @@ async def handle_auto_lineup(guild_id: int, discord_user_id: int, nonce: str):
     """
     valid, err_msg = ui_session_manager.validate_session(nonce, discord_user_id)
     if not valid:
-        logger.warning(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
+        logger.info(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
         raise ValueError(err_msg)
         
     session = ui_session_manager.get_session(nonce)
@@ -164,7 +164,7 @@ async def handle_save_lineup(guild_id: int, discord_user_id: int, nonce: str):
     """
     valid, err_msg = ui_session_manager.validate_session(nonce, discord_user_id)
     if not valid:
-        logger.warning(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
+        logger.info(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
         raise ValueError(err_msg)
         
     session = ui_session_manager.get_session(nonce)
@@ -190,7 +190,7 @@ async def handle_refresh_lineup(guild_id: int, discord_user_id: int, nonce: str)
     """
     valid, err_msg = ui_session_manager.validate_session(nonce, discord_user_id)
     if not valid:
-        logger.warning(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
+        logger.info(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
         raise ValueError(err_msg)
         
     session = ui_session_manager.get_session(nonce)

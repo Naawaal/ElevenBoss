@@ -14,12 +14,12 @@ async def handle_view_squad(guild_id: int, discord_user_id: int, page: int, nonc
     if nonce:
         valid, err_msg = ui_session_manager.validate_session(nonce, discord_user_id)
         if not valid:
-            logger.warning(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
+            logger.info(f"ui_interaction_rejected: reason=session_validation_failed, user_id={discord_user_id}, nonce={nonce}")
             raise ValueError(err_msg)
             
     summary = await get_manager_club_summary(guild_id, discord_user_id)
     if not summary:
-        logger.warning(f"ui_interaction_rejected: reason=unregistered_user, user_id={discord_user_id}")
+        logger.info(f"ui_interaction_rejected: reason=unregistered_user, user_id={discord_user_id}")
         raise ValueError("You are not registered as a manager with a club. Run `/register` to get started.")
         
     players = await get_squad(guild_id, discord_user_id)

@@ -17,7 +17,12 @@ from app.ui.handlers import (
     handle_select_formation,
     handle_auto_lineup,
     handle_save_lineup,
-    handle_refresh_lineup
+    handle_refresh_lineup,
+    handle_open_league_dashboard,
+    handle_join_league,
+    handle_start_league,
+    handle_view_table,
+    handle_refresh_table
 )
 from app.error_reporting import capture_exception
 from app.ui.components import container, text_display, V2View
@@ -61,8 +66,8 @@ class ClubCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         try:
-            view = await handle_view_squad(interaction.guild_id, interaction.user.id, page=1)
-            await interaction.edit_original_response(view=view)
+            view, file = await handle_view_squad(interaction.guild_id, interaction.user.id, page=1)
+            await interaction.edit_original_response(view=view, attachments=[file] if file else [])
         except ValueError as ve:
             await interaction.edit_original_response(content=f"❌ {str(ve)}")
         except Exception as e:
@@ -205,6 +210,20 @@ class ClubCog(commands.Cog):
                 elif custom_id.action == "refresh" and custom_id.target == "main":
                     new_view = await handle_refresh_lineup(guild_id, user_id, nonce)
 
+            elif custom_id.scope == "league":
+                if custom_id.action == "join":
+                    new_view = await handle_join_league(guild_id, interaction.user, nonce)
+                elif custom_id.action == "start":
+                    new_view = await handle_start_league(guild_id, interaction.user, nonce)
+                elif custom_id.action == "refresh":
+                    new_view = await handle_open_league_dashboard(guild_id, interaction.user, nonce)
+                elif custom_id.action == "view_table":
+                    new_view = await handle_view_table(guild_id, interaction.user, nonce)
+
+            elif custom_id.scope == "table":
+                if custom_id.action == "refresh":
+                    new_view = await handle_refresh_table(guild_id, interaction.user, nonce)
+
             elif custom_id.scope == "nav" and custom_id.action == "back":
                 if custom_id.target == "locker":
                     new_view = await handle_open_locker_room(guild_id, user_id, nonce)
@@ -212,6 +231,8 @@ class ClubCog(commands.Cog):
                     session = ui_session_manager.get_session(nonce)
                     page = session.metadata.get("squad_page", 1) if session else 1
                     new_view = await handle_view_squad(guild_id, user_id, page=page, nonce=nonce)
+                elif custom_id.target == "league":
+                    new_view = await handle_open_league_dashboard(guild_id, interaction.user, nonce)
 
             if isinstance(new_view, tuple):
                 view, file = new_view

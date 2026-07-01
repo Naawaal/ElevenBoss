@@ -66,8 +66,8 @@ class ElevenBossBot(commands.Bot):
 
     async def _run_migrations_async(self):
         import asyncio
-        from app.db.migrations import run_migrations
         try:
+            from app.db.migrations import run_migrations
             logger.info("Scheduling background database migrations check...")
             await asyncio.to_thread(run_migrations)
         except Exception as e:

@@ -13,4 +13,11 @@ from app.ui.handlers.lineup_handler import (
     handle_save_lineup,
     handle_refresh_lineup
 )
+from app.ui.handlers.league_handler import (
+    handle_open_league_dashboard,
+    handle_join_league,
+    handle_start_league,
+    handle_view_table,
+    handle_refresh_table
+)
 
