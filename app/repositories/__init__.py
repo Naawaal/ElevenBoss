@@ -11,13 +11,30 @@ from app.repositories.player_repository import bulk_create_players, get_players_
 from app.repositories.lineup_repository import get_active_lineup, save_lineup_with_players
 from app.repositories.league_repository import (
     get_active_or_draft_league_by_guild, get_draft_league_by_guild,
+    get_active_league_by_guild,
     create_league, set_league_status, count_league_clubs
 )
 from app.repositories.season_repository import (
-    get_latest_season_for_league, create_season, set_season_status
+    get_latest_season_for_league, get_active_season_for_league,
+    create_season, set_season_status
 )
 from app.repositories.standing_repository import (
-    create_initial_standing, get_table_for_active_season
+    create_initial_standing, get_table_for_active_season,
+    get_standing_for_update
 )
 
-
+from app.repositories.fixture_repository import (
+    fixtures_exist_for_season, bulk_create_fixtures,
+    get_fixtures_by_week, get_fixtures_for_active_week,
+    get_fixture_week_range, count_fixtures_for_season,
+    get_current_week_fixtures_for_update, get_week_fixture_counts,
+    mark_fixture_played, get_latest_played_fixture
+)
+from app.repositories.match_repository import (
+    create_match_result, bulk_create_match_events,
+    get_match_result_by_fixture, get_match_events
+)
+from app.repositories.scheduler_run_repository import (
+    create_running_job, mark_job_success,
+    mark_job_failed, get_job_by_key
+)

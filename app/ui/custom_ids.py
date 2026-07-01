@@ -1,7 +1,11 @@
 from dataclasses import dataclass
 
-KNOWN_SCOPES = {"locker", "squad", "player", "nav", "lineup", "league", "table"}
-KNOWN_ACTIONS = {"open", "view", "page", "back", "close", "refresh", "help", "formation", "auto", "save", "join", "start", "view_table"}
+KNOWN_SCOPES = {"locker", "squad", "player", "nav", "lineup", "league", "table", "fixtures", "matchday", "match"}
+KNOWN_ACTIONS = {"open", "view", "page", "back", "close", "refresh", "help", "formation", "auto", "save", "join", "start", "view_table", "week", "prev", "next", "generate", "run", "recent", "status"}
+
+
+
+
 
 @dataclass(frozen=True)
 class CustomId:

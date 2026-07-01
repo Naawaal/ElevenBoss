@@ -1,7 +1,7 @@
 import logging
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -9,6 +9,8 @@ from app.db.session import get_session
 from app.repositories import (
     get_active_or_draft_league_by_guild,
     get_draft_league_by_guild,
+    get_active_league_by_guild,
+    get_active_season_for_league,
     create_league as db_create_league,
     set_league_status,
     count_league_clubs,
@@ -17,14 +19,17 @@ from app.repositories import (
     assign_club_to_league,
     assign_club_to_season,
     create_season,
-    get_latest_season_for_league
+    get_latest_season_for_league,
+    bulk_create_fixtures,
 )
 from app.repositories.manager_repository import get_manager_by_discord_id
 from app.services.bot_club_service import generate_bot_clubs_for_league
 from app.services.standings_service import initialize_standings
+from app.engine.fixture_generator import generate_round_robin_fixtures, expected_fixture_counts
 from app.models.league import League, LeagueStatus
 from app.models.season import Season, SeasonStatus
 from app.models.club import Club
+from app.models.fixture import Fixture, FixtureStatus
 
 logger = logging.getLogger("app.services.league_service")
 
@@ -39,6 +44,12 @@ class LeagueResult:
     league_size: int | None = None
     human_clubs: int = 0
     bot_clubs: int = 0
+    # Fixture stats — populated after /league start
+    total_clubs: int = 0
+    total_weeks: int = 0
+    fixtures_per_week: int = 0
+    total_fixtures: int = 0
+    current_week: int = 1
 
 @dataclass
 class LeagueStatusResult:
@@ -247,25 +258,58 @@ async def start_league(
     guild_id: int | str,
 ) -> LeagueResult:
     """
-    Starts the league season: fills empty slots with bot clubs, bootstraps season,
-    and initializes standings. Executed atomically.
+    Starts the league season in one atomic transaction:
+      1. Validate draft league exists
+      2. Guard against already-active season
+      3. Count joined human clubs
+      4. Generate bot filler clubs + squads
+      5. Create Season 1
+      6. Assign all clubs to the season
+      7. Initialize league standings
+      8. Generate full round-robin fixture schedule
+      9. Persist all fixtures
+     10. Set league + season status → ACTIVE
+     11. Commit
+
+    If any step fails the entire transaction rolls back automatically.
     """
     logger.info(f"league_start_started: guild_id={guild_id}")
-    
+
     try:
-        # Atomic database transaction using get_session() context manager
         async with get_session() as session:
-            # Retrieve draft league
+            # 1. Retrieve draft league
             league = await get_draft_league_by_guild(session, guild_id)
             if not league:
-                logger.info(f"league_start_failed: no draft league in guild_id={guild_id}")
+                # Check if league is already active to give a better message
+                active = await get_active_league_by_guild(session, guild_id)
+                if active:
+                    logger.info(f"league_start_failed: league_already_active, guild_id={guild_id}")
+                    return LeagueResult(
+                        success=False,
+                        code="league_already_active",
+                        message="This league has already started. Use `/fixtures view` to browse the fixture schedule.",
+                    )
+                logger.info(f"league_start_failed: no draft league, guild_id={guild_id}")
                 return LeagueResult(
                     success=False,
                     code="league_not_found",
-                    message="No draft league was found in this server to start."
+                    message="No draft league was found in this server to start.",
                 )
-                
-            # Get joined human clubs
+
+            # 2. Guard against double-start (active season already exists)
+            existing_season = await get_active_season_for_league(session, guild_id, league.id)
+            if existing_season:
+                logger.info(
+                    f"league_start_failed: season_already_exists, guild_id={guild_id}, "
+                    f"league_id={league.id}, season_id={existing_season.id}"
+                )
+                return LeagueResult(
+                    success=False,
+                    code="league_already_active",
+                    message="This league has already started. Use `/fixtures view` to browse the fixture schedule.",
+                )
+
+            # 3. Get joined human clubs
             stmt = select(Club).where(
                 Club.guild_id == str(guild_id),
                 Club.league_id == league.id,
@@ -274,49 +318,96 @@ async def start_league(
             result = await session.execute(stmt)
             human_clubs = list(result.scalars().all())
             human_count = len(human_clubs)
-            
+
             bot_clubs_needed = league.max_clubs - human_count
             if bot_clubs_needed < 0:
-                logger.info(f"league_start_failed: joined clubs ({human_count}) exceed max size ({league.max_clubs})")
+                logger.info(
+                    f"league_start_failed: too_many_clubs, guild_id={guild_id}, "
+                    f"human_count={human_count}, max_clubs={league.max_clubs}"
+                )
                 return LeagueResult(
                     success=False,
                     code="league_full",
-                    message="Joined human clubs exceed the league size limit."
+                    message="Joined human clubs exceed the league size limit.",
                 )
-                
-            # Create Season 1
-            season = await create_season(session, guild_id, league.id, season_number=1)
-            await session.flush()
-            
-            # Generate bot filler clubs
-            bot_clubs = []
+
+            # 4. Generate bot filler clubs (includes squad generation)
+            bot_clubs: list[Club] = []
             if bot_clubs_needed > 0:
+                logger.info(
+                    f"bot_clubs_generation_started: guild_id={guild_id}, "
+                    f"league_id={league.id}, count={bot_clubs_needed}"
+                )
                 bot_clubs = await generate_bot_clubs_for_league(
                     session,
                     guild_id=guild_id,
                     league_id=league.id,
-                    season_id=season.id,
-                    count=bot_clubs_needed
+                    season_id=None,  # season_id assigned below after create_season
+                    count=bot_clubs_needed,
                 )
                 await session.flush()
-                
-            # Link human clubs to season
-            for club in human_clubs:
-                club.season_id = season.id
-                
-            # Initialize standings for all clubs
+                logger.info(
+                    f"bot_clubs_generation_success: guild_id={guild_id}, generated={len(bot_clubs)}"
+                )
+
+            # 5. Create Season 1
+            season = await create_season(session, guild_id, league.id, season_number=1)
+            await session.flush()
+
+            # 6. Assign all clubs to the season
             all_clubs = human_clubs + bot_clubs
+            for club in all_clubs:
+                club.season_id = season.id
+
+            # 7. Initialize standings (one row per club)
             club_ids = [club.id for club in all_clubs]
             await initialize_standings(session, guild_id, season.id, club_ids)
-            
-            # Update league status to ACTIVE
-            league.status = LeagueStatus.ACTIVE
-            
             logger.info(
-                f"league_started: guild_id={guild_id}, league_id={league.id}, season_id={season.id}, "
-                f"human_clubs={human_count}, bot_clubs={len(bot_clubs)}"
+                f"standings_initialized: guild_id={guild_id}, season_id={season.id}, "
+                f"club_count={len(all_clubs)}"
             )
-            
+
+            # 8. Generate round-robin fixture schedule
+            logger.info(
+                f"fixtures_generation_started: guild_id={guild_id}, "
+                f"season_id={season.id}, club_count={len(all_clubs)}"
+            )
+            club_id_strings = [str(c.id) for c in all_clubs]
+            generated = generate_round_robin_fixtures(club_id_strings, double_round_robin=False)
+
+            # 9. Build ORM Fixture objects and bulk-insert
+            fixture_objects = [
+                Fixture(
+                    guild_id=str(guild_id),
+                    season_id=season.id,
+                    week=f.week,
+                    home_club_id=uuid.UUID(f.home_club_id),
+                    away_club_id=uuid.UUID(f.away_club_id),
+                    status=FixtureStatus.SCHEDULED,
+                )
+                for f in generated
+            ]
+            await bulk_create_fixtures(session, fixture_objects)
+            await session.flush()
+
+            counts = expected_fixture_counts(len(all_clubs))
+            logger.info(
+                f"fixtures_generated: guild_id={guild_id}, league_id={league.id}, "
+                f"season_id={season.id}, total_fixtures={len(fixture_objects)}, "
+                f"total_weeks={counts['total_weeks']}"
+            )
+
+            # 10. Activate league + season
+            league.status = LeagueStatus.ACTIVE
+            season.status = SeasonStatus.ACTIVE
+            season.current_week = 1
+
+            logger.info(
+                f"league_started: guild_id={guild_id}, league_id={league.id}, "
+                f"season_id={season.id}, human_clubs={human_count}, "
+                f"bot_clubs={len(bot_clubs)}, total_fixtures={len(fixture_objects)}"
+            )
+
             return LeagueResult(
                 success=True,
                 code="success",
@@ -326,17 +417,25 @@ async def start_league(
                 league_name=league.name,
                 league_size=league.max_clubs,
                 human_clubs=human_count,
-                bot_clubs=len(bot_clubs)
+                bot_clubs=len(bot_clubs),
+                total_clubs=len(all_clubs),
+                total_weeks=counts["total_weeks"],
+                fixtures_per_week=counts["fixtures_per_week"],
+                total_fixtures=len(fixture_objects),
+                current_week=1,
             )
-            
+
     except Exception as e:
-        logger.error(f"league_start_failed: unexpected database error: {e}", exc_info=e)
+        logger.error(
+            f"league_start_failed: unexpected_error, guild_id={guild_id}, error={e}",
+            exc_info=e
+        )
         from app.error_reporting import capture_exception
         capture_exception(e)
         return LeagueResult(
             success=False,
             code="database_error",
-            message="An unexpected database error occurred during season bootstrap. Operation rolled back."
+            message="An unexpected error occurred during season bootstrap. All changes rolled back.",
         )
 
 async def get_league_status(

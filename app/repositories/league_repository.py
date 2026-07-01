@@ -16,6 +16,19 @@ async def get_active_or_draft_league_by_guild(session: AsyncSession, guild_id: i
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
+async def get_active_league_by_guild(session: AsyncSession, guild_id: int | str) -> League | None:
+    """
+    Fetch the single ACTIVE league in a specific guild.
+    Returns None if the league is still in draft, completed, or archived.
+    Used by fixture service which requires a fully-started season.
+    """
+    stmt = select(League).where(
+        League.guild_id == str(guild_id),
+        League.status == LeagueStatus.ACTIVE
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
 async def get_draft_league_by_guild(session: AsyncSession, guild_id: int | str) -> League | None:
     """
     Fetch the draft league in a specific guild.

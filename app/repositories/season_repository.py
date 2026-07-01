@@ -13,6 +13,20 @@ async def get_latest_season_for_league(session: AsyncSession, league_id: uuid.UU
     result = await session.execute(stmt)
     return result.scalars().first()
 
+async def get_active_season_for_league(session: AsyncSession, guild_id: int | str, league_id: uuid.UUID) -> Season | None:
+    """
+    Fetch the currently ACTIVE season for a given league in the guild.
+    Returns None if no active season exists (e.g., draft or completed).
+    Used by fixture service to ensure a season has been bootstrapped before generating fixtures.
+    """
+    stmt = select(Season).where(
+        Season.guild_id == str(guild_id),
+        Season.league_id == league_id,
+        Season.status == SeasonStatus.ACTIVE,
+    ).order_by(Season.season_number.desc())
+    result = await session.execute(stmt)
+    return result.scalars().first()
+
 async def create_season(session: AsyncSession, guild_id: int | str, league_id: uuid.UUID, season_number: int) -> Season:
     """
     Create a new Season record.

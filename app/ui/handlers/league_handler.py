@@ -95,17 +95,19 @@ async def handle_start_league(guild_id: int, user: discord.Member, nonce: str):
         raise ValueError(res.message)
         
     logger.info(f"league_started: guild_id={guild_id}, league_id={res.league_id}, bot_clubs={res.bot_clubs}")
-    
-    # Return updated dashboard
+
+    # Return updated dashboard with fixture stats in the banner
     status_res = await get_league_status(guild_id)
     banner_content = (
-        f"✅ **League season started successfully!**\n"
-        f"• League Size: `{res.league_size}`\n"
-        f"• Human Clubs: `{res.human_clubs}`\n"
-        f"• Bot Clubs Generated: `{res.bot_clubs}`\n"
-        f"• Season: `Season 1`"
+        f"✅ **League started — fixtures ready!**\n"
+        f"🏆 **League:** `{res.league_name}`\n"
+        f"👥 **Human Clubs:** `{res.human_clubs}`  |  🤖 **Bot Clubs:** `{res.bot_clubs}`\n"
+        f"📆 **Total Weeks:** `{res.total_weeks}`  |  🗂️ **Fixtures:** `{res.total_fixtures}`\n"
+        f"▶️ **Current Week:** Week `{res.current_week}`\n"
+        f"→ Use `/fixtures view` to see Week 1."
     )
     return render_league_dashboard(status_res, nonce, is_admin, banner=banner_content, has_image=True)
+
 
 async def handle_view_table(guild_id: int, user: discord.Member, nonce: str):
     """

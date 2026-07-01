@@ -113,6 +113,39 @@ class TestLeagueUiPayloads(unittest.TestCase):
         join_btn = next((b for b in buttons if "Join" in b["label"]), None)
         self.assertIsNone(join_btn)
 
+    def test_render_league_dashboard_active_shows_view_fixtures(self):
+        # League in active status
+        data = LeagueStatusResult(
+            success=True,
+            code="success",
+            message="OK",
+            league_id=MagicMock(),
+            league_name="Championship League",
+            status="active",
+            league_size=8,
+            human_clubs=3,
+            bot_clubs=5,
+            season_number=1,
+            current_week=1
+        )
+        
+        view, file = render_league_dashboard(data, nonce="xyz123", is_admin=True, has_image=False)
+        components = view.to_components()
+        
+        buttons = []
+        for row in components:
+            if row["type"] == 1:  # action_row
+                for comp in row["components"]:
+                    if comp["type"] == 2:  # button
+                        buttons.append(comp)
+                        
+        # Check View Fixtures Button is present
+        fixtures_btn = next((b for b in buttons if "View Fixtures" in b["label"]), None)
+        self.assertIsNotNone(fixtures_btn)
+        # Ensure it has the correct custom ID format (fixtures:view)
+        self.assertIn("fixtures:view", fixtures_btn["custom_id"])
+
+
     def test_render_table(self):
         mock_club = MagicMock(spec=Club)
         mock_club.name = "Stormgate FC"

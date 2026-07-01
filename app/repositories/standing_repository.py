@@ -55,3 +55,25 @@ async def get_table_for_active_season(session: AsyncSession, guild_id: int | str
     )
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+async def get_standing_for_update(
+    session: AsyncSession,
+    guild_id: int | str,
+    season_id: uuid.UUID,
+    club_id: uuid.UUID
+) -> LeagueStanding | None:
+    """
+    Fetch standing record for a club with a write lock (FOR UPDATE).
+    """
+    stmt = (
+        select(LeagueStanding)
+        .where(
+            LeagueStanding.guild_id == str(guild_id),
+            LeagueStanding.season_id == season_id,
+            LeagueStanding.club_id == club_id
+        )
+        .with_for_update()
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+

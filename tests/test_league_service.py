@@ -159,45 +159,131 @@ class TestLeagueService(unittest.IsolatedAsyncioTestCase):
 
     @patch("app.services.league_service.get_session")
     @patch("app.services.league_service.get_draft_league_by_guild")
+    @patch("app.services.league_service.get_active_league_by_guild")
+    @patch("app.services.league_service.get_active_season_for_league")
     @patch("app.services.league_service.create_season")
     @patch("app.services.league_service.generate_bot_clubs_for_league")
     @patch("app.services.league_service.initialize_standings")
-    async def test_start_league_success(self, mock_standings, mock_generate_bots, mock_create_season, mock_get_draft, mock_get_session):
+    @patch("app.services.league_service.bulk_create_fixtures")
+    async def test_start_league_success(self, mock_bulk, mock_standings, mock_generate_bots, mock_create_season, mock_active_season, mock_active_league, mock_get_draft, mock_get_session):
         session_mock = AsyncMock()
         mock_get_session.return_value.__aenter__.return_value = session_mock
-        
+
         league_mock = MagicMock()
         league_mock.id = uuid.uuid4()
         league_mock.name = "Pro League"
         league_mock.max_clubs = 8
         league_mock.status = LeagueStatus.DRAFT
         mock_get_draft.return_value = league_mock
-        
+        mock_active_season.return_value = None  # No existing active season
+
         # Mock 3 joined human clubs
         human_clubs = [MagicMock(id=uuid.uuid4(), is_bot_controlled=False) for _ in range(3)]
-        
+
         # Execute query returning human clubs
         result_mock = MagicMock()
         result_mock.scalars.return_value.all.return_value = human_clubs
         session_mock.execute.return_value = result_mock
-        
+
         # Mock generated bots
         bot_clubs = [MagicMock(id=uuid.uuid4(), is_bot_controlled=True) for _ in range(5)]
         mock_generate_bots.return_value = bot_clubs
-        
+
         season_mock = MagicMock()
         season_mock.id = uuid.uuid4()
         mock_create_season.return_value = season_mock
-        
+
+        mock_bulk.return_value = []
+
         res = await start_league("123")
         self.assertTrue(res.success)
         self.assertEqual(res.code, "success")
         self.assertEqual(res.human_clubs, 3)
         self.assertEqual(res.bot_clubs, 5)
+        self.assertEqual(res.total_clubs, 8)
+        self.assertEqual(res.total_weeks, 7)      # 8 clubs = 7 weeks
+        self.assertEqual(res.fixtures_per_week, 4)
+        self.assertEqual(res.total_fixtures, 28)  # 8 clubs = 28 fixtures
         self.assertEqual(league_mock.status, LeagueStatus.ACTIVE)
-        
-        # Check standings and bots generated counts
-        mock_generate_bots.assert_called_once_with(
-            session_mock, guild_id="123", league_id=league_mock.id, season_id=season_mock.id, count=5
-        )
+
+        # Check bots and fixtures were called
+        mock_generate_bots.assert_called_once()
         mock_standings.assert_called_once()
+        mock_bulk.assert_called_once()
+
+    @patch("app.services.league_service.get_session")
+    @patch("app.services.league_service.get_draft_league_by_guild")
+    @patch("app.services.league_service.get_active_league_by_guild")
+    async def test_start_league_rejects_already_active_league(self, mock_active_league, mock_get_draft, mock_get_session):
+        """Starting a league that's already active returns league_already_active."""
+        session_mock = AsyncMock()
+        mock_get_session.return_value.__aenter__.return_value = session_mock
+        mock_get_draft.return_value = None  # No draft league (already active)
+        mock_active_league.return_value = MagicMock()  # Active league exists
+
+        res = await start_league("123")
+        self.assertFalse(res.success)
+        self.assertEqual(res.code, "league_already_active")
+
+    @patch("app.services.league_service.get_session")
+    @patch("app.services.league_service.get_draft_league_by_guild")
+    @patch("app.services.league_service.get_active_league_by_guild")
+    @patch("app.services.league_service.get_active_season_for_league")
+    @patch("app.services.league_service.create_season")
+    @patch("app.services.league_service.generate_bot_clubs_for_league")
+    @patch("app.services.league_service.initialize_standings")
+    @patch("app.services.league_service.bulk_create_fixtures")
+    async def test_start_league_rolls_back_if_fixture_insert_fails(
+        self, mock_bulk, mock_standings, mock_generate_bots, mock_create_season,
+        mock_active_season, mock_active_league, mock_get_draft, mock_get_session
+    ):
+        """If fixture bulk insert raises, start_league returns database_error."""
+        session_mock = AsyncMock()
+        mock_get_session.return_value.__aenter__.return_value = session_mock
+
+        league_mock = MagicMock()
+        league_mock.id = uuid.uuid4()
+        league_mock.name = "Pro League"
+        league_mock.max_clubs = 8
+        league_mock.status = LeagueStatus.DRAFT
+        mock_get_draft.return_value = league_mock
+        mock_active_season.return_value = None
+
+        human_clubs = [MagicMock(id=uuid.uuid4(), is_bot_controlled=False) for _ in range(3)]
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = human_clubs
+        session_mock.execute.return_value = result_mock
+
+        bot_clubs = [MagicMock(id=uuid.uuid4(), is_bot_controlled=True) for _ in range(5)]
+        mock_generate_bots.return_value = bot_clubs
+
+        season_mock = MagicMock()
+        season_mock.id = uuid.uuid4()
+        mock_create_season.return_value = season_mock
+
+        # Fixture insert fails
+        mock_bulk.side_effect = RuntimeError("DB insert failure")
+
+        res = await start_league("123")
+        self.assertFalse(res.success)
+        self.assertEqual(res.code, "database_error")
+
+    @patch("app.services.league_service.get_session")
+    @patch("app.services.league_service.get_draft_league_by_guild")
+    @patch("app.services.league_service.get_active_league_by_guild")
+    @patch("app.services.league_service.get_active_season_for_league")
+    async def test_start_league_rejects_if_season_already_exists(
+        self, mock_active_season, mock_active_league, mock_get_draft, mock_get_session
+    ):
+        """If a draft league exists but already has an active season, reject as already active."""
+        session_mock = AsyncMock()
+        mock_get_session.return_value.__aenter__.return_value = session_mock
+
+        league_mock = MagicMock()
+        league_mock.id = uuid.uuid4()
+        mock_get_draft.return_value = league_mock
+        mock_active_season.return_value = MagicMock()  # Season already active
+
+        res = await start_league("123")
+        self.assertFalse(res.success)
+        self.assertEqual(res.code, "league_already_active")

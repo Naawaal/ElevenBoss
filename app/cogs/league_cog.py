@@ -102,14 +102,15 @@ class LeagueGroup(commands.GroupCog, name="league"):
         # Return active season summary dashboard
         try:
             banner_content = (
-                f"✅ **League season started successfully!**\n"
-                f"• League Size: `{res.league_size}`\n"
-                f"• Human Clubs: `{res.human_clubs}`\n"
-                f"• Bot Clubs Generated: `{res.bot_clubs}`\n"
-                f"• Season: `Season 1`"
+                f"✅ **League started — fixtures ready!**\n"
+                f"🏆 **League:** `{res.league_name}`\n"
+                f"👥 **Human Clubs:** `{res.human_clubs}`  |  🤖 **Bot Clubs:** `{res.bot_clubs}`\n"
+                f"📆 **Total Weeks:** `{res.total_weeks}`  |  🗂️ **Fixtures:** `{res.total_fixtures}`\n"
+                f"▶️ **Current Week:** Week `{res.current_week}`\n"
+                f"→ Use `/fixtures view` to see Week 1."
             )
             view, file = await handle_open_league_dashboard(
-                interaction.guild_id, 
+                interaction.guild_id,
                 interaction.user,
                 banner=banner_content
             )
@@ -117,7 +118,8 @@ class LeagueGroup(commands.GroupCog, name="league"):
         except Exception as e:
             logger.error(f"Failed to load league dashboard after start: {e}", exc_info=e)
             capture_exception(e)
-            await interaction.edit_original_response(content="✅ League started successfully! Run `/league status` to view.")
+            await interaction.edit_original_response(content="✅ League started! Use `/fixtures view` to see Week 1.")
+
 
     @app_commands.command(name="status", description="View the current league status dashboard.")
     @app_commands.allowed_installs(guilds=True, users=False)

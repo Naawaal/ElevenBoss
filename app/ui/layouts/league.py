@@ -54,13 +54,21 @@ def build_league_dashboard_layout(data, nonce: str, is_admin: bool, banner: str 
         rows.append(action_row(action_buttons))
         
     # Row 2: Navigation & Table
-    nav_buttons = [
-        success_button("📊 View Table", view_table_id),
-        refresh_button("league", "refresh", nonce),
-        secondary_button("◀ Back", back_id),
-        close_button(nonce)
-    ]
+    nav_buttons = []
+    if data.status == "active":
+        view_fixtures_id = encode_custom_id("fixtures", "view", "current", nonce)
+        nav_buttons.append(success_button("📅 View Fixtures", view_fixtures_id))
+
+    nav_buttons.append(
+        primary_button("📊 View Table", view_table_id)
+        if data.status == "active"
+        else success_button("📊 View Table", view_table_id)
+    )
+    nav_buttons.append(refresh_button("league", "refresh", nonce))
+    nav_buttons.append(secondary_button("◀ Back", back_id))
+    nav_buttons.append(close_button(nonce))
     rows.append(action_row(nav_buttons))
+
     
     # Assemble final layout payload
     comp_payload = []

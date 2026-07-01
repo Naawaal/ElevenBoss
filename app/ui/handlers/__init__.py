@@ -20,4 +20,16 @@ from app.ui.handlers.league_handler import (
     handle_view_table,
     handle_refresh_table
 )
+from app.ui.handlers.fixtures_handler import (
+    handle_view_current_week_fixtures,
+    handle_view_week_fixtures,
+)
+from app.ui.handlers.matchday_handler import (
+    handle_view_matchday_status,
+    handle_run_matchday,
+)
+from app.ui.handlers.match_handler import (
+    handle_view_recent_match,
+    handle_view_match_detail,
+)
 

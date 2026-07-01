@@ -22,7 +22,13 @@ from app.ui.handlers import (
     handle_join_league,
     handle_start_league,
     handle_view_table,
-    handle_refresh_table
+    handle_refresh_table,
+    handle_view_current_week_fixtures,
+    handle_view_week_fixtures,
+    handle_view_matchday_status,
+    handle_run_matchday,
+    handle_view_recent_match,
+    handle_view_match_detail,
 )
 from app.error_reporting import capture_exception
 from app.ui.components import container, text_display, V2View
@@ -224,7 +230,41 @@ class ClubCog(commands.Cog):
                 if custom_id.action == "refresh":
                     new_view = await handle_refresh_table(guild_id, interaction.user, nonce)
 
+            elif custom_id.scope == "fixtures":
+                if custom_id.action == "view" and custom_id.target == "current":
+                    new_view = await handle_view_current_week_fixtures(guild_id, interaction.user, nonce)
+                elif custom_id.action == "week":
+                    try:
+                        target_week = int(custom_id.target)
+                    except (ValueError, TypeError):
+                        raise ValueError(f"Invalid week target in custom_id: {custom_id.target}")
+                    new_view = await handle_view_week_fixtures(guild_id, interaction.user, nonce, target_week)
+                elif custom_id.action == "refresh":
+                    try:
+                        refresh_week = int(custom_id.target)
+                    except (ValueError, TypeError):
+                        refresh_week = None
+                    if refresh_week:
+                        new_view = await handle_view_week_fixtures(guild_id, interaction.user, nonce, refresh_week)
+                    else:
+                        new_view = await handle_view_current_week_fixtures(guild_id, interaction.user, nonce)
+
+            elif custom_id.scope == "matchday":
+                if custom_id.action == "status":
+                    new_view = await handle_view_matchday_status(guild_id, interaction.user, nonce)
+                elif custom_id.action == "run":
+                    new_view = await handle_run_matchday(guild_id, interaction.user, nonce)
+                elif custom_id.action == "refresh":
+                    new_view = await handle_view_matchday_status(guild_id, interaction.user, nonce)
+
+            elif custom_id.scope == "match":
+                if custom_id.action == "recent":
+                    new_view = await handle_view_recent_match(guild_id, interaction.user, nonce)
+                elif custom_id.action == "view":
+                    new_view = await handle_view_match_detail(guild_id, interaction.user, custom_id.target, nonce)
+
             elif custom_id.scope == "nav" and custom_id.action == "back":
+
                 if custom_id.target == "locker":
                     new_view = await handle_open_locker_room(guild_id, user_id, nonce)
                 elif custom_id.target == "squad":
