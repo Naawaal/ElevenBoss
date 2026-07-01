@@ -57,5 +57,10 @@ Always follow the clean folder structure. Do not mix business logic, database qu
   Do not use the `File` component (type `13`), as it renders as a generic download widget. Note that both components require the file URL to be wrapped in an object under a `"url"` key, not passed as a raw string.
 - **Font Resiliency**: When using image rendering libraries like Pillow, always wrap font loading calls (`ImageFont.truetype()`) in a try-except block catching `IOError`, falling back to `ImageFont.load_default()` to guarantee cross-platform runtime safety.
 
+---
 
-
+## 6. Match Simulation, Gameplay Engine, and Standings Guidelines
+- **Deterministic Simulation**: All gameplay simulation calculations (under `app/engine/`) must be entirely deterministic and reproducible via a provided seed. Never use `random.randint()`, global `random.seed()`, or system time in simulation logic. Always instantiate and pass a local `random.Random(seed)` instance.
+- **Idempotency & Scheduler Locks**: Matchday simulation must check and create a running lock record in the `scheduler_runs` table using a unique lock key (format: `matchday:{guild_id}:{season_id}:{week}`) within a single transaction to prevent parallel executions.
+- **Lineup Resiliency**: If a club has no active or valid lineup prior to simulation, the service layer must automatically construct a fallback starting XI using squad players (e.g. via `build_auto_lineup`) and save it to the database before running the match simulation.
+- **Atomic Standings Consistency**: Updates to match results, standings, fixtures status, and scheduler run states must all occur atomically within a single database transaction context to prevent desynchronized statistics.
