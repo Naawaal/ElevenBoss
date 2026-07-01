@@ -29,3 +29,15 @@ async def create_club(session: AsyncSession, guild_id: int | str, manager_id: uu
     )
     session.add(club)
     return club
+
+async def get_club_by_manager_id(session: AsyncSession, guild_id: int | str, manager_id: uuid.UUID) -> Club | None:
+    """
+    Fetch a club in a specific guild by manager ID.
+    """
+    stmt = select(Club).where(
+        Club.guild_id == str(guild_id),
+        Club.manager_id == manager_id
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+

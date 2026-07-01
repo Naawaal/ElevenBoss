@@ -37,3 +37,17 @@ Always follow the clean folder structure. Do not mix business logic, database qu
 - **Local Resilience**: Sentry must remain optional. If `SENTRY_DSN` is empty, Sentry runs in no-op mode without breaking local execution.
 - **Sentry MCP Server**: Utilize the Sentry MCP server integration (`sentry/*` tools like `search_issues`, `get_sentry_resource`, and `analyze_issue_with_seer`) to fetch stack traces, debug production errors, and run AI-based root-cause analysis directly from Sentry.
 
+---
+
+## 5. Discord Components V2 UI & Session Guidelines
+- **Components V2 Only**: Interactive screens must use the Components V2 system (setting `IS_COMPONENTS_V2` message flag). Do not mix V2 messages with legacy `content` or `embeds`.
+- **Text as Components**: Render all text inside `TextDisplay` components nested in `Section` or `Container` blocks.
+- **Bypass Serialization via V2View**: Use `V2View` from `app/ui/components.py` to transmit raw Components V2 payload dicts to Discord.
+- **Compact Custom IDs**: All button/select `custom_id`s must use the compact colon-separated format `fcm:v1:<scope>:<action>:<target>:<nonce>`. Always encode and decode custom IDs via `encode_custom_id` and `decode_custom_id` in `app/ui/custom_ids.py` to enforce length limits (max 100 chars) and white-listed scopes/actions.
+- **Global Event Interception**: Do not bind callbacks directly on View classes. All button and select clicks must be routed through the global `on_interaction` event listener in `app/cogs/club_cog.py`.
+- **Interaction and Session Validation**: Every interaction callback must validate:
+  1. The guild exists (no DMs allowed).
+  2. The session has not expired and the clicking user is the verified owner of the session (using `ui_session_manager`).
+  3. The requested player or club belongs to the manager (verified via the service layer).
+
+
