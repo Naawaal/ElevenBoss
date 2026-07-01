@@ -25,8 +25,9 @@ class TestLeagueUiPayloads(unittest.TestCase):
             current_week=None
         )
         
-        view = render_league_dashboard(data, nonce="xyz123", is_admin=True)
+        view, file = render_league_dashboard(data, nonce="xyz123", is_admin=True, has_image=False)
         self.assertTrue(view.has_components_v2())
+        self.assertIsNone(file)
         
         components = view.to_components()
         self.assertTrue(len(components) > 0)
@@ -65,7 +66,8 @@ class TestLeagueUiPayloads(unittest.TestCase):
             current_week=None
         )
         
-        view = render_league_dashboard(data, nonce="xyz123", is_admin=False)
+        view, file = render_league_dashboard(data, nonce="xyz123", is_admin=False, has_image=False)
+        self.assertIsNone(file)
         components = view.to_components()
         
         buttons = []
@@ -96,7 +98,8 @@ class TestLeagueUiPayloads(unittest.TestCase):
             current_week=1
         )
         
-        view = render_league_dashboard(data, nonce="xyz123", is_admin=True)
+        view, file = render_league_dashboard(data, nonce="xyz123", is_admin=True, has_image=False)
+        self.assertIsNone(file)
         components = view.to_components()
         
         buttons = []
@@ -116,6 +119,7 @@ class TestLeagueUiPayloads(unittest.TestCase):
         
         mock_standing = MagicMock(spec=LeagueStanding)
         mock_standing.club = mock_club
+        mock_standing.club_id = MagicMock()
         mock_standing.played = 0
         mock_standing.wins = 0
         mock_standing.draws = 0
@@ -125,8 +129,9 @@ class TestLeagueUiPayloads(unittest.TestCase):
         mock_standing.goal_difference = 0
         mock_standing.points = 0
         
-        view = render_table([mock_standing], nonce="xyz123")
+        view, file = render_table([mock_standing], nonce="xyz123", has_image=False)
         self.assertTrue(view.has_components_v2())
+        self.assertIsNone(file)
         
         components = view.to_components()
         self.assertTrue(len(components) > 0)

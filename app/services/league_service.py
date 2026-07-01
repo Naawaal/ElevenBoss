@@ -53,6 +53,7 @@ class LeagueStatusResult:
     bot_clubs: int = 0
     season_number: int | None = None
     current_week: int | None = None
+    clubs: list[dict] | None = None
 
 def validate_league_name(name: str) -> str:
     """
@@ -106,7 +107,7 @@ async def create_league(
     try:
         validated_name = validate_league_name(league_name)
     except ValueError as e:
-        logger.warning(f"league_create_failed: invalid league name for guild_id={guild_id}, reason={e}")
+        logger.info(f"league_create_failed: invalid league name for guild_id={guild_id}, reason={e}")
         return LeagueResult(
             success=False,
             code="invalid_league_name",
@@ -118,7 +119,7 @@ async def create_league(
             # Check for existing draft/active league
             existing = await get_active_or_draft_league_by_guild(session, guild_id)
             if existing:
-                logger.warning(f"league_create_failed: active/draft league exists for guild_id={guild_id}")
+                logger.info(f"league_create_failed: active/draft league exists for guild_id={guild_id}")
                 return LeagueResult(
                     success=False,
                     code="league_exists",
@@ -162,7 +163,7 @@ async def join_league(
             # Check if user is registered and has a club
             manager = await get_manager_by_discord_id(session, guild_id, discord_user_id)
             if not manager or not manager.club_id:
-                logger.warning(f"league_join_failed: manager not registered for guild_id={guild_id}, user_id={discord_user_id}")
+                logger.info(f"league_join_failed: manager not registered for guild_id={guild_id}, user_id={discord_user_id}")
                 return LeagueResult(
                     success=False,
                     code="not_registered",
@@ -171,7 +172,7 @@ async def join_league(
                 
             club = await get_user_club(session, guild_id, discord_user_id)
             if not club:
-                logger.warning(f"league_join_failed: club not found for guild_id={guild_id}, user_id={discord_user_id}")
+                logger.info(f"league_join_failed: club not found for guild_id={guild_id}, user_id={discord_user_id}")
                 return LeagueResult(
                     success=False,
                     code="not_registered",
@@ -181,7 +182,7 @@ async def join_league(
             # Get draft league in guild
             league = await get_draft_league_by_guild(session, guild_id)
             if not league:
-                logger.warning(f"league_join_failed: no draft league in guild_id={guild_id}")
+                logger.info(f"league_join_failed: no draft league in guild_id={guild_id}")
                 return LeagueResult(
                     success=False,
                     code="league_not_found",
@@ -195,14 +196,14 @@ async def join_league(
                 current_league = res.scalar_one_or_none()
                 if current_league and current_league.status in (LeagueStatus.DRAFT, LeagueStatus.ACTIVE):
                     if current_league.id == league.id:
-                        logger.warning(f"league_join_failed: club {club.id} already joined current league {league.id}")
+                        logger.info(f"league_join_failed: club {club.id} already joined current league {league.id}")
                         return LeagueResult(
                             success=False,
                             code="already_joined",
                             message="Your club has already joined this league."
                         )
                     else:
-                        logger.warning(f"league_join_failed: club {club.id} already in active/draft league {current_league.id}")
+                        logger.info(f"league_join_failed: club {club.id} already in active/draft league {current_league.id}")
                         return LeagueResult(
                             success=False,
                             code="already_joined",
@@ -212,7 +213,7 @@ async def join_league(
             # Check if league is full
             joined_count = await count_league_clubs(session, guild_id, league.id)
             if joined_count >= league.max_clubs:
-                logger.warning(f"league_join_failed: league {league.id} is full (count={joined_count})")
+                logger.info(f"league_join_failed: league {league.id} is full (count={joined_count})")
                 return LeagueResult(
                     success=False,
                     code="league_full",
@@ -257,7 +258,7 @@ async def start_league(
             # Retrieve draft league
             league = await get_draft_league_by_guild(session, guild_id)
             if not league:
-                logger.warning(f"league_start_failed: no draft league in guild_id={guild_id}")
+                logger.info(f"league_start_failed: no draft league in guild_id={guild_id}")
                 return LeagueResult(
                     success=False,
                     code="league_not_found",
@@ -276,7 +277,7 @@ async def start_league(
             
             bot_clubs_needed = league.max_clubs - human_count
             if bot_clubs_needed < 0:
-                logger.warning(f"league_start_failed: joined clubs ({human_count}) exceed max size ({league.max_clubs})")
+                logger.info(f"league_start_failed: joined clubs ({human_count}) exceed max size ({league.max_clubs})")
                 return LeagueResult(
                     success=False,
                     code="league_full",
@@ -379,7 +380,8 @@ async def get_league_status(
                 human_clubs=human_count,
                 bot_clubs=bot_count,
                 season_number=season_number,
-                current_week=current_week
+                current_week=current_week,
+                clubs=[{"name": c.name, "is_bot": c.is_bot_controlled} for c in clubs]
             )
     except Exception as e:
         logger.error(f"league_status_failed: database error: {e}", exc_info=e)

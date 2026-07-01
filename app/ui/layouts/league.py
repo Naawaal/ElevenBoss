@@ -1,18 +1,14 @@
-from app.ui.components import container, text_display, action_row, primary_button, secondary_button, success_button, V2View
+from app.ui.components import container, text_display, action_row, primary_button, secondary_button, success_button, media_gallery, V2View
 from app.ui.custom_ids import encode_custom_id
 from app.ui.layouts.common import close_button, refresh_button
 
-def build_league_dashboard_layout(data, nonce: str, is_admin: bool, banner: str | None = None) -> V2View:
+def build_league_dashboard_layout(data, nonce: str, is_admin: bool, banner: str | None = None, has_image: bool = False) -> V2View:
     """
     Builds the League Dashboard UI using Discord Components V2.
     """
     status_emoji = "📝" if data.status == "draft" else "⚔️"
     
-    text = ""
-    if banner:
-        text += f"{banner}\n\n"
-        
-    text += (
+    text = (
         f"### {status_emoji} LEAGUE DASHBOARD — {data.league_name}\n"
         f"📈 **Status:** `{data.status.upper()}`\n"
         f"👥 **League Size:** {data.max_clubs} clubs\n"
@@ -67,10 +63,25 @@ def build_league_dashboard_layout(data, nonce: str, is_admin: bool, banner: str 
     rows.append(action_row(nav_buttons))
     
     # Assemble final layout payload
-    comp_payload = [
-        container([
-            text_display(text)
-        ])
-    ] + rows
+    comp_payload = []
+    
+    # If a success/error notification banner exists, prepend it first
+    if banner:
+        comp_payload.append(
+            container([
+                text_display(banner)
+            ])
+        )
+        
+    if has_image:
+        comp_payload.append(media_gallery(["attachment://league.png"], ["League Dashboard Status"]))
+    else:
+        comp_payload.append(
+            container([
+                text_display(text)
+            ])
+        )
+        
+    comp_payload.extend(rows)
     
     return V2View(comp_payload)

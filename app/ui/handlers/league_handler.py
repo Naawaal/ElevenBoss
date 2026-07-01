@@ -51,7 +51,7 @@ async def handle_open_league_dashboard(guild_id: int, user: discord.Member, nonc
         
     is_admin = await check_admin_permission(guild_id, user)
     logger.info(f"league_status_viewed: guild_id={guild_id}, user_id={user.id}, session_id={nonce}")
-    return render_league_dashboard(status_res, nonce, is_admin, banner=banner)
+    return render_league_dashboard(status_res, nonce, is_admin, banner=banner, has_image=True)
 
 async def handle_join_league(guild_id: int, user: discord.Member, nonce: str):
     """
@@ -72,7 +72,7 @@ async def handle_join_league(guild_id: int, user: discord.Member, nonce: str):
     # Return updated dashboard
     status_res = await get_league_status(guild_id)
     is_admin = await check_admin_permission(guild_id, user)
-    return render_league_dashboard(status_res, nonce, is_admin, banner=f"✅ {res.message}")
+    return render_league_dashboard(status_res, nonce, is_admin, banner=f"✅ {res.message}", has_image=True)
 
 async def handle_start_league(guild_id: int, user: discord.Member, nonce: str):
     """
@@ -105,7 +105,7 @@ async def handle_start_league(guild_id: int, user: discord.Member, nonce: str):
         f"• Bot Clubs Generated: `{res.bot_clubs}`\n"
         f"• Season: `Season 1`"
     )
-    return render_league_dashboard(status_res, nonce, is_admin, banner=banner_content)
+    return render_league_dashboard(status_res, nonce, is_admin, banner=banner_content, has_image=True)
 
 async def handle_view_table(guild_id: int, user: discord.Member, nonce: str):
     """
@@ -120,8 +120,12 @@ async def handle_view_table(guild_id: int, user: discord.Member, nonce: str):
         logger.info(f"league_table_view_failed: guild_id={guild_id}, reason=no_active_season")
         raise ValueError("The standings table is only available once the league has started and is active.")
         
+    from app.services.club_service import get_manager_club_summary
+    summary = await get_manager_club_summary(guild_id, user.id)
+    manager_club_id = summary["club_id"] if summary else None
+    
     logger.info(f"league_table_viewed: guild_id={guild_id}, user_id={user.id}")
-    return render_table(standings, nonce)
+    return render_table(standings, nonce, manager_club_id=manager_club_id, has_image=True)
 
 async def handle_refresh_table(guild_id: int, user: discord.Member, nonce: str):
     """

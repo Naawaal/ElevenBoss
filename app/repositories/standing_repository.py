@@ -42,7 +42,10 @@ async def get_table_for_active_season(session: AsyncSession, guild_id: int | str
             League.status == LeagueStatus.ACTIVE,
             Season.status == SeasonStatus.ACTIVE
         )
-        .options(joinedload(LeagueStanding.club))
+        .options(
+            joinedload(LeagueStanding.club),
+            joinedload(LeagueStanding.season).joinedload(Season.league)
+        )
         .order_by(
             LeagueStanding.points.desc(),
             LeagueStanding.goal_difference.desc(),

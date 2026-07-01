@@ -46,12 +46,12 @@ class LeagueGroup(commands.GroupCog, name="league"):
 
         # Open the dashboard for the newly created league
         try:
-            view = await handle_open_league_dashboard(
+            view, file = await handle_open_league_dashboard(
                 interaction.guild_id, 
                 interaction.user,
                 banner="✅ **League created successfully!**"
             )
-            await interaction.edit_original_response(view=view)
+            await interaction.edit_original_response(view=view, attachments=[file] if file else [])
         except Exception as e:
             logger.error(f"Failed to load league dashboard after create: {e}", exc_info=e)
             capture_exception(e)
@@ -70,12 +70,12 @@ class LeagueGroup(commands.GroupCog, name="league"):
 
         # Refreshes the dashboard
         try:
-            view = await handle_open_league_dashboard(
+            view, file = await handle_open_league_dashboard(
                 interaction.guild_id, 
                 interaction.user,
                 banner=f"✅ {res.message}"
             )
-            await interaction.edit_original_response(view=view)
+            await interaction.edit_original_response(view=view, attachments=[file] if file else [])
         except Exception as e:
             logger.error(f"Failed to load league dashboard after join: {e}", exc_info=e)
             capture_exception(e)
@@ -108,12 +108,12 @@ class LeagueGroup(commands.GroupCog, name="league"):
                 f"• Bot Clubs Generated: `{res.bot_clubs}`\n"
                 f"• Season: `Season 1`"
             )
-            view = await handle_open_league_dashboard(
+            view, file = await handle_open_league_dashboard(
                 interaction.guild_id, 
                 interaction.user,
                 banner=banner_content
             )
-            await interaction.edit_original_response(view=view)
+            await interaction.edit_original_response(view=view, attachments=[file] if file else [])
         except Exception as e:
             logger.error(f"Failed to load league dashboard after start: {e}", exc_info=e)
             capture_exception(e)
@@ -126,8 +126,8 @@ class LeagueGroup(commands.GroupCog, name="league"):
         await interaction.response.defer(ephemeral=True)
 
         try:
-            view = await handle_open_league_dashboard(interaction.guild_id, interaction.user)
-            await interaction.edit_original_response(view=view)
+            view, file = await handle_open_league_dashboard(interaction.guild_id, interaction.user)
+            await interaction.edit_original_response(view=view, attachments=[file] if file else [])
         except ValueError as ve:
             await interaction.edit_original_response(content=f"❌ {str(ve)}")
         except Exception as e:

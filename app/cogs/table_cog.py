@@ -27,8 +27,8 @@ class TableCog(commands.Cog):
         try:
             # Create a fresh UI session for the table view
             session = ui_session_manager.create_session(interaction.user.id, interaction.guild_id)
-            view = await handle_view_table(interaction.guild_id, interaction.user, session.session_id)
-            await interaction.edit_original_response(view=view)
+            view, file = await handle_view_table(interaction.guild_id, interaction.user, session.session_id)
+            await interaction.edit_original_response(view=view, attachments=[file] if file else [])
         except ValueError as ve:
             await interaction.edit_original_response(content=f"❌ {str(ve)}")
         except Exception as e:

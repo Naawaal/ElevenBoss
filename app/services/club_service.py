@@ -32,6 +32,37 @@ async def get_manager_club_summary(guild_id: int | str, discord_user_id: int | s
             best_player = max(players, key=lambda p: p.overall) if squad_size > 0 else None
             highest_pot_player = max(players, key=lambda p: p.potential) if squad_size > 0 else None
             
+            # Fetch dynamic league status
+            from sqlalchemy import select, func
+            from app.models.league import League, LeagueStatus
+            from app.models.season import Season
+            
+            league_status_str = "No Active League"
+            if club.league_id:
+                res_league = await session.execute(select(League).where(League.id == club.league_id))
+                league = res_league.scalar_one_or_none()
+                if league:
+                    if league.status == LeagueStatus.DRAFT:
+                        res_count = await session.execute(
+                            select(func.count(Club.id)).where(Club.league_id == league.id)
+                        )
+                        club_count = res_count.scalar() or 0
+                        league_status_str = f"Draft Lobby: {league.name} ({club_count}/{league.max_clubs})"
+                    elif league.status == LeagueStatus.ACTIVE:
+                        if club.season_id:
+                            res_season = await session.execute(
+                                select(Season).where(Season.id == club.season_id)
+                            )
+                            season = res_season.scalar_one_or_none()
+                            if season:
+                                league_status_str = f"{league.name} (Season {season.season_number})"
+                            else:
+                                league_status_str = f"{league.name} (Active)"
+                        else:
+                            league_status_str = f"{league.name} (Active)"
+                    elif league.status == LeagueStatus.COMPLETED:
+                        league_status_str = f"{league.name} (Completed)"
+            
             return {
                 "club_id": str(club.id),
                 "club_name": club.name,
@@ -44,7 +75,7 @@ async def get_manager_club_summary(guild_id: int | str, discord_user_id: int | s
                 "best_player_ovr": best_player.overall if best_player else 0,
                 "highest_pot_name": highest_pot_player.display_name if highest_pot_player else "N/A",
                 "highest_pot_val": highest_pot_player.potential if highest_pot_player else 0,
-                "league_status": "No Active League", # V1 placeholders are allowed for league table
+                "league_status": league_status_str,
                 "next_suggested_action": "View your squad details or examine player stats.",
                 "discord_user_id": str(discord_user_id),
                 "guild_id": str(guild_id)

@@ -1,6 +1,9 @@
+import io
+import discord
 from dataclasses import dataclass
 from app.ui.components import V2View
 from app.ui.layouts.league import build_league_dashboard_layout
+from app.ui.league_status_image_renderer import render_league_status_board
 
 @dataclass
 class LeagueStatusView:
@@ -16,9 +19,16 @@ class LeagueStatusView:
     can_start: bool
     next_action: str
 
-def render_league_dashboard(data, nonce: str, is_admin: bool, banner: str | None = None) -> V2View:
+def render_league_dashboard(
+    data, 
+    nonce: str, 
+    is_admin: bool, 
+    banner: str | None = None,
+    has_image: bool = True
+) -> tuple[V2View, discord.File | None]:
     """
     Renders the League Dashboard view payload using the given data.
+    If has_image is True, generates a Pillow status poster image and returns it as a File.
     """
     # Map raw dictionary or status result into the LeagueStatusView model
     total_clubs = data.human_clubs + data.bot_clubs
@@ -53,4 +63,23 @@ def render_league_dashboard(data, nonce: str, is_admin: bool, banner: str | None
         next_action=next_action
     )
     
-    return build_league_dashboard_layout(view_model, nonce, is_admin, banner=banner)
+    if not has_image:
+        view = build_league_dashboard_layout(view_model, nonce, is_admin, banner=banner, has_image=False)
+        return view, None
+        
+    img_bytes = render_league_status_board(
+        league_name=view_model.league_name,
+        status=view_model.status,
+        league_size=view_model.max_clubs,
+        human_clubs=view_model.human_clubs,
+        bot_clubs=view_model.bot_clubs,
+        total_clubs=view_model.total_clubs,
+        season_number=view_model.season_number,
+        current_week=view_model.current_week,
+        next_action=view_model.next_action,
+        clubs_list=getattr(data, "clubs", None)
+    )
+    
+    file = discord.File(fp=io.BytesIO(img_bytes), filename="league.png")
+    view = build_league_dashboard_layout(view_model, nonce, is_admin, banner=banner, has_image=True)
+    return view, file
