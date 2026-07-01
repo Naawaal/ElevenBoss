@@ -40,3 +40,14 @@ async def get_players_by_name(session: AsyncSession, club_id: uuid.UUID, name_qu
     result = await session.execute(stmt)
     return list(result.scalars().all())
 
+async def get_players_by_ids(session: AsyncSession, player_ids: list[uuid.UUID]) -> list[Player]:
+    """
+    Fetch players by a list of their IDs.
+    """
+    if not player_ids:
+        return []
+    stmt = select(Player).where(Player.id.in_(player_ids))
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+

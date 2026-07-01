@@ -6,3 +6,5 @@ from app.ui.layouts.player_detail import (
     build_player_search_layout,
     build_player_match_select_layout
 )
+from app.ui.layouts.lineup import build_lineup_layout
+

@@ -12,7 +12,12 @@ from app.ui.handlers import (
     handle_view_squad,
     handle_view_player_search,
     handle_view_player_detail,
-    handle_search_player_by_name
+    handle_search_player_by_name,
+    handle_open_lineup_screen,
+    handle_select_formation,
+    handle_auto_lineup,
+    handle_save_lineup,
+    handle_refresh_lineup
 )
 from app.error_reporting import capture_exception
 from app.ui.components import container, text_display, V2View
@@ -146,6 +151,9 @@ class ClubCog(commands.Cog):
                 logger.info(f"ui_interaction_received: closed session={nonce}, user_id={user_id}")
                 return
 
+            # Defer response immediately to prevent 3-second Discord timeouts
+            await interaction.response.defer()
+
             new_view = None
 
             # Route to handlers based on scope and action
@@ -182,6 +190,21 @@ class ClubCog(commands.Cog):
                 elif custom_id.action == "refresh":
                     new_view = await handle_view_player_detail(guild_id, user_id, custom_id.target, nonce)
 
+            elif custom_id.scope == "lineup":
+                if custom_id.action == "open" and custom_id.target == "main":
+                    new_view = await handle_open_lineup_screen(guild_id, user_id, nonce)
+                elif custom_id.action == "formation" and custom_id.target == "select":
+                    if not interaction.data.get("values"):
+                        raise ValueError("No formation selected.")
+                    selected_formation = interaction.data["values"][0]
+                    new_view = await handle_select_formation(guild_id, user_id, selected_formation, nonce)
+                elif custom_id.action == "auto" and custom_id.target == "best":
+                    new_view = await handle_auto_lineup(guild_id, user_id, nonce)
+                elif custom_id.action == "save" and custom_id.target == "active":
+                    new_view = await handle_save_lineup(guild_id, user_id, nonce)
+                elif custom_id.action == "refresh" and custom_id.target == "main":
+                    new_view = await handle_refresh_lineup(guild_id, user_id, nonce)
+
             elif custom_id.scope == "nav" and custom_id.action == "back":
                 if custom_id.target == "locker":
                     new_view = await handle_open_locker_room(guild_id, user_id, nonce)
@@ -191,7 +214,7 @@ class ClubCog(commands.Cog):
                     new_view = await handle_view_squad(guild_id, user_id, page=page, nonce=nonce)
 
             if new_view:
-                await interaction.response.edit_message(content=None, embed=None, view=new_view)
+                await interaction.edit_original_response(content=None, embed=None, view=new_view)
             else:
                 logger.warning(f"ui_interaction_rejected: reason=unhandled_routing, scope={custom_id.scope}, action={custom_id.action}")
                 await self.send_error_response(interaction, "Unhandled interaction action.")

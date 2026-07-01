@@ -6,3 +6,11 @@ from app.ui.handlers.player_handler import (
     handle_view_player_detail,
     handle_search_player_by_name
 )
+from app.ui.handlers.lineup_handler import (
+    handle_open_lineup_screen,
+    handle_select_formation,
+    handle_auto_lineup,
+    handle_save_lineup,
+    handle_refresh_lineup
+)
+

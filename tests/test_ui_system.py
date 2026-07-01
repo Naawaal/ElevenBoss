@@ -1,5 +1,11 @@
 import unittest
 import uuid
+import asyncio
+from unittest.mock import MagicMock
+mock_loop = MagicMock()
+mock_loop.create_future.return_value = MagicMock()
+asyncio.get_running_loop = MagicMock(return_value=mock_loop)
+
 from datetime import datetime, timedelta
 from app.ui.custom_ids import encode_custom_id, decode_custom_id, CustomId
 from app.ui.handlers.session import ui_session_manager, UiSession

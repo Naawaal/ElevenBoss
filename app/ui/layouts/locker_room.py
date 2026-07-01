@@ -25,6 +25,7 @@ def build_locker_room_layout(data: dict, nonce: str) -> V2View:
     players_id = encode_custom_id("player", "view", "search", nonce)
     dashboard_id = encode_custom_id("locker", "open", "club", nonce)
     help_id = encode_custom_id("locker", "view", "help", nonce)
+    lineup_id = encode_custom_id("lineup", "open", "main", nonce)
     
     comp_payload = [
         container([
@@ -32,6 +33,7 @@ def build_locker_room_layout(data: dict, nonce: str) -> V2View:
         ]),
         action_row([
             primary_button("👥 Squad", squad_id),
+            primary_button("📋 Lineup", lineup_id),
             primary_button("🏃 Players", players_id),
             success_button("📊 Dashboard", dashboard_id)
         ]),
