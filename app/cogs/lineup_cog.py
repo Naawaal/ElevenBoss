@@ -25,8 +25,12 @@ class LineupCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         try:
-            view = await handle_open_lineup_screen(interaction.guild_id, interaction.user.id)
-            await interaction.edit_original_response(content=None, view=view)
+            view, file = await handle_open_lineup_screen(
+                interaction.guild_id,
+                interaction.user.id,
+                manager_name=interaction.user.display_name
+            )
+            await interaction.edit_original_response(view=view, attachments=[file] if file else [])
         except ValueError as ve:
             await interaction.edit_original_response(content=f"❌ {str(ve)}")
         except Exception as e:

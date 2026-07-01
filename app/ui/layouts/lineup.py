@@ -8,6 +8,7 @@ from app.ui.components import (
     secondary_button,
     success_button,
     select_menu,
+    media_gallery,
     V2View
 )
 from app.ui.custom_ids import encode_custom_id
@@ -21,7 +22,8 @@ def build_lineup_layout(
     bench: list,             # list of Players
     warnings: list[str],
     is_dirty: bool,
-    nonce: str
+    nonce: str,
+    has_image: bool = True
 ) -> V2View:
     """
     Builds the Components V2 layout for the /lineup screen.
@@ -29,45 +31,56 @@ def build_lineup_layout(
     # 1. Format status and details
     status_str = "🔴 **Preview (Unsaved Changes)**" if is_dirty else "🟢 **Active / Saved**"
     
-    # 2. Build Pitch / Starting XI display
-    slots = get_slots_for_formation(formation)
-    starters_lines = []
-    for slot in slots:
-        player = starters.get(slot)
-        if player:
-            name = getattr(player, "display_name")
-            ovr = getattr(player, "overall")
-            fit = getattr(player, "fitness", 100)
-            pos = getattr(player, "position")
-            starters_lines.append(f"• **{slot}**: {name} ({ovr} OVR | {pos} | 💚 {fit}%)")
-        else:
-            starters_lines.append(f"• **{slot}**: *Vacant*")
+    # 2. Build content based on whether an image is shown
+    if has_image:
+        warnings_str = ""
+        if warnings:
+            warnings_str = "\n\n⚠️ **Warnings:**\n" + "\n".join(f"• {w}" for w in warnings)
             
-    starters_str = "\n".join(starters_lines)
-    
-    # 3. Format Bench
-    if bench:
-        bench_str = ", ".join(f"{getattr(p, 'display_name')} ({getattr(p, 'overall')} OVR | {getattr(p, 'position')})" for p in bench)
+        content = (
+            f"### 📋 LINEUP & FORMATION — {club_name}\n"
+            f"⚽ **Active Formation:** {formation}\n"
+            f"⚡ **Status:** {status_str}\n"
+            f"👥 **Bench Depth:** {len(bench)} players"
+            f"{warnings_str}"
+        )
     else:
-        bench_str = "*None*"
+        # Fallback text representation
+        slots = get_slots_for_formation(formation)
+        starters_lines = []
+        for slot in slots:
+            player = starters.get(slot)
+            if player:
+                name = getattr(player, "display_name")
+                ovr = getattr(player, "overall")
+                fit = getattr(player, "fitness", 100)
+                pos = getattr(player, "position")
+                starters_lines.append(f"• **{slot}**: {name} ({ovr} OVR | {pos} | 💚 {fit}%)")
+            else:
+                starters_lines.append(f"• **{slot}**: *Vacant*")
+                
+        starters_str = "\n".join(starters_lines)
         
-    # 4. Format Warnings
-    warnings_str = ""
-    if warnings:
-        warnings_str = "\n\n⚠️ **Warnings:**\n" + "\n".join(f"• {w}" for w in warnings)
-        
-    # Combine everything into markdown content
-    content = (
-        f"### 📋 LINEUP & FORMATION — {club_name}\n"
-        f"⚽ **Active Formation:** {formation}\n"
-        f"⚡ **Status:** {status_str}\n\n"
-        f"**Starting XI:**\n"
-        f"{starters_str}\n\n"
-        f"👥 **Bench (Top {len(bench)}):** {bench_str}"
-        f"{warnings_str}"
-    )
+        if bench:
+            bench_str = ", ".join(f"{getattr(p, 'display_name')} ({getattr(p, 'overall')} OVR | {getattr(p, 'position')})" for p in bench)
+        else:
+            bench_str = "*None*"
+            
+        warnings_str = ""
+        if warnings:
+            warnings_str = "\n\n⚠️ **Warnings:**\n" + "\n".join(f"• {w}" for w in warnings)
+            
+        content = (
+            f"### 📋 LINEUP & FORMATION — {club_name}\n"
+            f"⚽ **Active Formation:** {formation}\n"
+            f"⚡ **Status:** {status_str}\n\n"
+            f"**Starting XI:**\n"
+            f"{starters_str}\n\n"
+            f"👥 **Bench (Top {len(bench)}):** {bench_str}"
+            f"{warnings_str}"
+        )
     
-    # 5. Build Select Menu Options
+    # 3. Build Select Menu Options
     formation_options = [
         {"label": "4-4-2", "value": "4-4-2", "description": "Balanced, classic two-striker formation."},
         {"label": "4-3-3", "value": "4-3-3", "description": "Attacking shape with wingers and a single striker."},
@@ -86,10 +99,17 @@ def build_lineup_layout(
     # Disable save button if lineup is incomplete (less than 11 players selected)
     is_save_disabled = (len(starters) < 11)
     
-    comp_payload = [
-        container([
-            text_display(content)
-        ]),
+    comp_payload = []
+    if has_image:
+        comp_payload.append(media_gallery(["attachment://lineup.png"], ["Tactical Lineup Board"]))
+    else:
+        comp_payload.append(
+            container([
+                text_display(content)
+            ])
+        )
+        
+    comp_payload.extend([
         action_row([
             select_menu(
                 custom_id=select_id,
@@ -106,6 +126,6 @@ def build_lineup_layout(
             secondary_button("◀ Back to Locker Room", back_id),
             close_button(nonce)
         ])
-    ]
+    ])
     
     return V2View(comp_payload)

@@ -11,3 +11,7 @@ CONTAINER = 17
 
 # Discord Message Flags
 IS_COMPONENTS_V2 = 32768
+
+# Media & File Components
+MEDIA_GALLERY = 12
+FILE = 13

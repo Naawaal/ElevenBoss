@@ -38,7 +38,7 @@ class TestLineupUiPayloads(unittest.TestCase):
         ]
         self.warnings = ["Warning: No natural player available for LB."]
 
-    def test_lineup_payload_generation(self):
+    def test_lineup_payload_generation_with_image(self):
         view = build_lineup_layout(
             club_name="Kathmandu FC",
             formation="4-4-2",
@@ -46,7 +46,31 @@ class TestLineupUiPayloads(unittest.TestCase):
             bench=self.bench,
             warnings=self.warnings,
             is_dirty=True,
-            nonce="abc123"
+            nonce="abc123",
+            has_image=True
+        )
+        
+        self.assertTrue(isinstance(view, V2View))
+        payload = view.to_components()
+        
+        # Verify component types: Media Gallery display, Select Menu, Save/Auto-pick Action Row, Navigation Action Row
+        self.assertEqual(payload[0]["type"], 12) # Media Gallery
+        self.assertEqual(payload[0]["items"][0]["media"], {"url": "attachment://lineup.png"})
+        self.assertEqual(payload[0]["items"][0]["description"], "Tactical Lineup Board")
+        self.assertEqual(payload[1]["type"], 1)  # Action Row (Select Menu)
+        self.assertEqual(payload[2]["type"], 1)  # Action Row (Auto-pick / Save)
+        self.assertEqual(payload[3]["type"], 1)  # Action Row (Refresh / Back / Close)
+
+    def test_lineup_payload_generation_fallback(self):
+        view = build_lineup_layout(
+            club_name="Kathmandu FC",
+            formation="4-4-2",
+            starters=self.starters,
+            bench=self.bench,
+            warnings=self.warnings,
+            is_dirty=True,
+            nonce="abc123",
+            has_image=False
         )
         
         self.assertTrue(isinstance(view, V2View))
@@ -77,7 +101,8 @@ class TestLineupUiPayloads(unittest.TestCase):
             bench=self.bench,
             warnings=self.warnings,
             is_dirty=True,
-            nonce="abc123"
+            nonce="abc123",
+            has_image=True
         )
         
         payload = view.to_components()
@@ -95,7 +120,8 @@ class TestLineupUiPayloads(unittest.TestCase):
             bench=self.bench,
             warnings=self.warnings,
             is_dirty=True,
-            nonce="abc123"
+            nonce="abc123",
+            has_image=True
         )
         
         payload = view.to_components()

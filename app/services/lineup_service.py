@@ -225,3 +225,77 @@ class LineupService:
                 code="ERROR",
                 message="A database error occurred while saving your lineup. All changes rolled back."
             )
+
+    @staticmethod
+    def generate_board_image(
+        club_name: str,
+        manager_name: str,
+        formation: str,
+        starters: dict,
+        bench: list,
+        warnings: list[str],
+        is_dirty: bool = False
+    ) -> bytes | None:
+        """
+        Maps starting players to the board renderer and generates the PNG bytes.
+        """
+        try:
+            logger.info("lineup_board_render_started: club_name=%s, formation=%s", club_name, formation)
+            from app.ui.lineup_image_renderer import LineupBoardPlayer, LineupBoardData, render_lineup_board
+            from app.engine.formation_rules import get_slot_rules
+            
+            board_players = []
+            for slot, p in starters.items():
+                if p:
+                    board_players.append(LineupBoardPlayer(
+                        player_id=str(p.id),
+                        name=p.display_name,
+                        position=p.position,
+                        slot=slot,
+                        overall=p.overall,
+                        potential=p.potential,
+                        fitness=p.fitness,
+                        is_captain=False
+                    ))
+            
+            # Calculate average overall of playing starters
+            avg_ovr = 0.0
+            if starters:
+                playing_starters = [p for p in starters.values() if p]
+                if playing_starters:
+                    avg_ovr = sum(p.overall for p in playing_starters) / len(playing_starters)
+                    
+            # Calculate chemistry based on position suitability
+            count_chem = 60.0 * (len(board_players) / 11.0)
+            pos_score = 0.0
+            for slot, p in starters.items():
+                if p:
+                    rules = get_slot_rules(slot)
+                    if p.position in rules.get("natural", []):
+                        pos_score += 40.0 / 11.0
+                    elif p.position in rules.get("compatible", []):
+                        pos_score += 20.0 / 11.0
+            chemistry = min(100, max(0, int(count_chem + pos_score)))
+            
+            board_data = LineupBoardData(
+                club_name=club_name,
+                manager_name=manager_name,
+                formation=formation,
+                chemistry=chemistry,
+                average_overall=avg_ovr,
+                players=board_players,
+                bench_count=len(bench),
+                warnings=warnings,
+                is_dirty=is_dirty
+            )
+            
+            img_bytes = render_lineup_board(board_data)
+            logger.info(
+                "lineup_board_render_success: club_name=%s, formation=%s, player_count=%d",
+                club_name, formation, len(board_players)
+            )
+            return img_bytes
+        except Exception as e:
+            logger.error("lineup_board_render_failed: Failed to render visual lineup: %s", e, exc_info=e)
+            return None
+

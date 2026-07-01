@@ -1,5 +1,5 @@
 import discord
-from app.ui.constants import CONTAINER, SECTION, TEXT_DISPLAY, SEPARATOR, ACTION_ROW, BUTTON, STRING_SELECT
+from app.ui.constants import CONTAINER, SECTION, TEXT_DISPLAY, SEPARATOR, ACTION_ROW, BUTTON, STRING_SELECT, MEDIA_GALLERY, FILE
 
 class V2View(discord.ui.View):
     """
@@ -113,3 +113,36 @@ def select_menu(custom_id: str, options: list[dict], placeholder: str | None = N
     if placeholder:
         menu["placeholder"] = placeholder
     return menu
+
+def media_gallery(urls: list[str], descriptions: list[str] | None = None) -> dict:
+    """
+    Renders 1 to 10 images/media files in a grid or gallery format.
+    """
+    items = []
+    for i, url in enumerate(urls):
+        desc = descriptions[i] if descriptions and i < len(descriptions) else None
+        item = {
+            "media": {
+                "url": url
+            }
+        }
+        if desc:
+            item["description"] = desc
+        items.append(item)
+    return {
+        "type": MEDIA_GALLERY,
+        "items": items
+    }
+
+def file_component(url: str, spoiler: bool = False) -> dict:
+    """
+    Displays an attached file as a downloadable file card.
+    """
+    return {
+        "type": FILE,
+        "file": {
+            "url": url
+        },
+        "spoiler": spoiler
+    }
+

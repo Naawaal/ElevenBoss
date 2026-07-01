@@ -41,7 +41,7 @@ class ClubCog(commands.Cog):
 
         try:
             view = await handle_open_locker_room(interaction.guild_id, interaction.user.id)
-            await interaction.edit_original_response(content=None, view=view)
+            await interaction.edit_original_response(view=view)
         except ValueError as ve:
             await interaction.edit_original_response(content=f"❌ {str(ve)}")
         except Exception as e:
@@ -62,7 +62,7 @@ class ClubCog(commands.Cog):
 
         try:
             view = await handle_view_squad(interaction.guild_id, interaction.user.id, page=1)
-            await interaction.edit_original_response(content=None, view=view)
+            await interaction.edit_original_response(view=view)
         except ValueError as ve:
             await interaction.edit_original_response(content=f"❌ {str(ve)}")
         except Exception as e:
@@ -90,7 +90,7 @@ class ClubCog(commands.Cog):
 
         try:
             view = await handle_search_player_by_name(interaction.guild_id, interaction.user.id, trimmed_query)
-            await interaction.edit_original_response(content=None, view=view)
+            await interaction.edit_original_response(view=view)
         except ValueError as ve:
             await interaction.edit_original_response(content=f"❌ {str(ve)}")
         except Exception as e:
@@ -147,7 +147,7 @@ class ClubCog(commands.Cog):
                         text_display("❌ *Menu closed.*")
                     ])
                 ]
-                await interaction.response.edit_message(content=None, embed=None, view=V2View(comp_payload))
+                await interaction.response.edit_message(view=V2View(comp_payload))
                 logger.info(f"ui_interaction_received: closed session={nonce}, user_id={user_id}")
                 return
 
@@ -213,8 +213,11 @@ class ClubCog(commands.Cog):
                     page = session.metadata.get("squad_page", 1) if session else 1
                     new_view = await handle_view_squad(guild_id, user_id, page=page, nonce=nonce)
 
-            if new_view:
-                await interaction.edit_original_response(content=None, embed=None, view=new_view)
+            if isinstance(new_view, tuple):
+                view, file = new_view
+                await interaction.edit_original_response(view=view, attachments=[file] if file else [])
+            elif new_view:
+                await interaction.edit_original_response(view=new_view)
             else:
                 logger.warning(f"ui_interaction_rejected: reason=unhandled_routing, scope={custom_id.scope}, action={custom_id.action}")
                 await self.send_error_response(interaction, "Unhandled interaction action.")

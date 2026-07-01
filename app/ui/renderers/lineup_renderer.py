@@ -10,7 +10,8 @@ def render_lineup_screen(
     bench: list,
     warnings: list[str],
     is_dirty: bool,
-    nonce: str
+    nonce: str,
+    has_image: bool = True
 ) -> V2View:
     """
     Renders the Lineup management view payload.
@@ -22,5 +23,6 @@ def render_lineup_screen(
         bench=bench,
         warnings=warnings,
         is_dirty=is_dirty,
-        nonce=nonce
+        nonce=nonce,
+        has_image=has_image
     )

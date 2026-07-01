@@ -1,6 +1,8 @@
 # app/ui/handlers/lineup_handler.py
 
 import logging
+import io
+import discord
 from app.db.session import get_session
 from app.repositories import get_manager_by_discord_id, get_players_by_club_id
 from app.services.lineup_service import LineupService
@@ -19,6 +21,7 @@ async def _resolve_and_render(guild_id: int, discord_user_id: int, session, nonc
     warnings = session.metadata.get("warnings", [])
     is_dirty = session.metadata.get("is_dirty", False)
     club_name = session.metadata.get("club_name", "My Club")
+    manager_name = session.metadata.get("manager_name", "Manager")
     
     # Fetch active players of the club
     async with get_session() as db_session:
@@ -40,17 +43,37 @@ async def _resolve_and_render(guild_id: int, discord_user_id: int, session, nonc
         if pid in player_map:
             resolved_bench.append(player_map[pid])
             
-    return render_lineup_screen(
+    # Generate the tactical board image
+    img_bytes = LineupService.generate_board_image(
+        club_name=club_name,
+        manager_name=manager_name,
+        formation=formation,
+        starters=resolved_starters,
+        bench=resolved_bench,
+        warnings=warnings,
+        is_dirty=is_dirty
+    )
+    
+    file = None
+    has_image = False
+    if img_bytes:
+        file = discord.File(fp=io.BytesIO(img_bytes), filename="lineup.png")
+        has_image = True
+        
+    view = render_lineup_screen(
         club_name=club_name,
         formation=formation,
         starters=resolved_starters,
         bench=resolved_bench,
         warnings=warnings,
         is_dirty=is_dirty,
-        nonce=nonce
+        nonce=nonce,
+        has_image=has_image
     )
+    
+    return view, file
 
-async def handle_open_lineup_screen(guild_id: int, discord_user_id: int, nonce: str | None = None):
+async def handle_open_lineup_screen(guild_id: int, discord_user_id: int, nonce: str | None = None, manager_name: str = "Manager"):
     """
     Initializes or opens the lineup management screen.
     """
@@ -63,6 +86,7 @@ async def handle_open_lineup_screen(guild_id: int, discord_user_id: int, nonce: 
     else:
         session = ui_session_manager.create_session(discord_user_id, guild_id)
         nonce = session.session_id
+        session.metadata["manager_name"] = manager_name
         
     res = await LineupService.get_lineup_screen_data(guild_id, discord_user_id)
     if not res.success:

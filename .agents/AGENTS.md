@@ -51,5 +51,11 @@ Always follow the clean folder structure. Do not mix business logic, database qu
   1. The guild exists (no DMs allowed).
   2. The session has not expired and the clicking user is the verified owner of the session (using `ui_session_manager`).
   3. The requested player or club belongs to the manager (verified via the service layer).
+- **No Explicit Null Content/Embeds on Edits**: When editing a Components V2 message using `edit_original_response()` or `edit_message()`, do **NOT** pass `content=None` or `embed=None`. Discord's API rejects messages that contain any top-level `"content"` or `"embeds"` fields when the `IS_COMPONENTS_V2` flag is set. Omit these parameters entirely from the method calls so they are excluded from the PATCH payload.
+- **Inline Image Rendering (Media Gallery)**: To render an uploaded attachment image inline as a visual preview rather than a downloadable file card, use the **Media Gallery** component (type `12`) with nested structures:
+  `{"type": 12, "items": [{"media": {"url": "attachment://filename.png"}, "description": "Alt Text"}]}`.
+  Do not use the `File` component (type `13`), as it renders as a generic download widget. Note that both components require the file URL to be wrapped in an object under a `"url"` key, not passed as a raw string.
+- **Font Resiliency**: When using image rendering libraries like Pillow, always wrap font loading calls (`ImageFont.truetype()`) in a try-except block catching `IOError`, falling back to `ImageFont.load_default()` to guarantee cross-platform runtime safety.
+
 
 
