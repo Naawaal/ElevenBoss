@@ -15,6 +15,7 @@ from app.ui.handlers import (
     handle_search_player_by_name
 )
 from app.error_reporting import capture_exception
+from app.ui.components import container, text_display, V2View
 
 logger = logging.getLogger("app.cogs.club_cog")
 
@@ -136,7 +137,12 @@ class ClubCog(commands.Cog):
                         return
                     ui_session_manager._sessions.pop(nonce, None)
                 
-                await interaction.response.edit_message(content="❌ *Menu closed.*", view=None)
+                comp_payload = [
+                    container([
+                        text_display("❌ *Menu closed.*")
+                    ])
+                ]
+                await interaction.response.edit_message(content=None, embed=None, view=V2View(comp_payload))
                 logger.info(f"ui_interaction_received: closed session={nonce}, user_id={user_id}")
                 return
 

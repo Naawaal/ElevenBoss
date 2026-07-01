@@ -41,7 +41,9 @@ Always follow the clean folder structure. Do not mix business logic, database qu
 
 ## 5. Discord Components V2 UI & Session Guidelines
 - **Components V2 Only**: Interactive screens must use the Components V2 system (setting `IS_COMPONENTS_V2` message flag). Do not mix V2 messages with legacy `content` or `embeds`.
-- **Text as Components**: Render all text inside `TextDisplay` components nested in `Section` or `Container` blocks.
+- **Text as Components**: Render all text inside `TextDisplay` (type `10`) components.
+  * Note that `TextDisplay` components must use the `"content"` key (not `"text"`) for their markdown text content.
+  * Use a `Section` (type `9`) layout component only when you need to pair the text with an `accessory` (such as a button or thumbnail). If no accessory is needed, place the `TextDisplay` directly inside the `Container` (type `17`) instead of wrapping it in a Section.
 - **Bypass Serialization via V2View**: Use `V2View` from `app/ui/components.py` to transmit raw Components V2 payload dicts to Discord.
 - **Compact Custom IDs**: All button/select `custom_id`s must use the compact colon-separated format `fcm:v1:<scope>:<action>:<target>:<nonce>`. Always encode and decode custom IDs via `encode_custom_id` and `decode_custom_id` in `app/ui/custom_ids.py` to enforce length limits (max 100 chars) and white-listed scopes/actions.
 - **Global Event Interception**: Do not bind callbacks directly on View classes. All button and select clicks must be routed through the global `on_interaction` event listener in `app/cogs/club_cog.py`.
