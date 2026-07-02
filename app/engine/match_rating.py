@@ -31,8 +31,17 @@ def calculate_player_ratings(
         drew: bool
     ):
         for p in team.players:
-            # Base rating
-            base = rng.uniform(config.rating_base_min, config.rating_base_max)
+            # Base rating dynamically scaled by player consistency (Milestone F)
+            consistency = getattr(p, "consistency", 70)
+            if consistency is None:
+                consistency = 70
+            c_clamped = max(config.consistency_low_threshold, min(config.consistency_high_threshold, consistency))
+            span = config.consistency_high_threshold - config.consistency_low_threshold
+            frac = (c_clamped - config.consistency_low_threshold) / span if span > 0 else 1.0
+
+            min_val = config.rating_base_min_low + frac * (config.rating_base_min_high - config.rating_base_min_low)
+            max_val = config.rating_base_max_low + frac * (config.rating_base_max_high - config.rating_base_max_low)
+            base = rng.uniform(min_val, max_val)
             
             # Scorer / Assist bonuses
             goals_count = sum(1 for g in goals if g.club_id == team.club_id and g.scorer_id == p.player_id)

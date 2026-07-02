@@ -1,7 +1,7 @@
 import uuid
 import enum
 from datetime import datetime
-from sqlalchemy import String, Integer, DateTime, Enum, UniqueConstraint, Boolean
+from sqlalchemy import String, Integer, DateTime, Enum, UniqueConstraint, Boolean, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from app.db.base import Base
@@ -59,4 +59,10 @@ class League(Base):
 
     __table_args__ = (
         UniqueConstraint("guild_id", "name", name="uq_league_guild_name"),
+        Index(
+            "uq_active_league_guild",
+            "guild_id",
+            unique=True,
+            postgresql_where="status NOT IN ('cancelled', 'completed')"
+        ),
     )

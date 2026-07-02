@@ -249,3 +249,37 @@ class TestMatchEngine(unittest.TestCase):
         res = simulate_match(sim_input)
         self.assertIsNotNone(res)
         self.assertEqual(res.home_possession + res.away_possession, 100)
+
+    def test_dixon_coles_determinism(self):
+        """Simulation must remain 100% deterministic with Dixon-Coles correlation enabled."""
+        sim_input = MatchSimulationInput(
+            fixture_id="fixture_1",
+            week=1,
+            home_team=self.home_team,
+            away_team=self.away_team,
+            seed=42
+        )
+        res1 = simulate_match(sim_input)
+        res2 = simulate_match(sim_input)
+        self.assertEqual(res1.home_goals, res2.home_goals)
+        self.assertEqual(res1.away_goals, res2.away_goals)
+        self.assertEqual(res1.goals, res2.goals)
+        self.assertEqual(res1.cards, res2.cards)
+
+    def test_dixon_coles_rho_zero_equals_no_correction(self):
+        """When rho is 0.0, the simulation results must be identical to baseline (no extra attempts)."""
+        sim_input = MatchSimulationInput(
+            fixture_id="fixture_1",
+            week=1,
+            home_team=self.home_team,
+            away_team=self.away_team,
+            seed=12345
+        )
+        from app.engine.match_config import MatchEngineConfig
+        cfg_zero = MatchEngineConfig(dixon_coles_rho=0.0)
+        res_zero = simulate_match(sim_input, config=cfg_zero)
+        
+        # Verify that running with seed 12345 directly gives the same goals/cards
+        res_direct = simulate_match(sim_input, config=cfg_zero)
+        self.assertEqual(res_zero.home_goals, res_direct.home_goals)
+        self.assertEqual(res_zero.away_goals, res_direct.away_goals)

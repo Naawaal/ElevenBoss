@@ -319,6 +319,7 @@ class MatchdayService:
                                     potential=p.potential,
                                     fitness=p.fitness,
                                     morale=getattr(p, "morale", 80),
+                                    consistency=getattr(p, "consistency", 70),
                                     is_goalkeeper=(p.position == "GK")
                                 ))
                             return "4-4-2", starters_players
@@ -337,6 +338,7 @@ class MatchdayService:
                                     potential=p.potential,
                                     fitness=p.fitness,
                                     morale=getattr(p, "morale", 80),
+                                    consistency=getattr(p, "consistency", 70),
                                     is_goalkeeper=(p.position == "GK")
                                 ))
                         return lineup.formation, starters_players

@@ -64,3 +64,22 @@ Always follow the clean folder structure. Do not mix business logic, database qu
 - **Idempotency & Scheduler Locks**: Matchday simulation must check and create a running lock record in the `scheduler_runs` table using a unique lock key (format: `matchday:{guild_id}:{season_id}:{week}`) within a single transaction to prevent parallel executions.
 - **Lineup Resiliency**: If a club has no active or valid lineup prior to simulation, the service layer must automatically construct a fallback starting XI using squad players (e.g. via `build_auto_lineup`) and save it to the database before running the match simulation.
 - **Atomic Standings Consistency**: Updates to match results, standings, fixtures status, and scheduler run states must all occur atomically within a single database transaction context to prevent desynchronized statistics.
+
+### Interval-Based Simulation Engine (Milestone A+)
+
+The engine now uses a **per-interval loop** instead of a single-pass score-then-backfill approach. Agents extending `app/engine/` must understand and respect the following:
+
+- **`MatchState` is the single source of truth during simulation.** It lives in `app/engine/match_state.py` and holds the mutable active XI, current fitness, running score, and accumulated event log. Pass it through the loop — do not create parallel mutable state outside of it.
+- **Python dataclass field ordering**: `MatchState` (and any new dataclasses added to the engine) must declare all fields **without defaults before** fields with defaults. Violating this raises `TypeError` at import time.
+- **Per-interval rates, not per-match rates**: Card probabilities and any other per-player per-event rates are designed for a **single roll per interval**, not per match. When adding new per-event probabilities, derive per-interval values from the desired per-match total using:
+  `p_interval = 1 - (1 - p_match) ^ (1 / interval_count)`
+  Store both the conceptual per-match rate (as a comment) and the pre-computed per-interval rate field in `MatchEngineConfig`. Never hardcode rates inside loop logic.
+- **Per-interval xG clamps are separate from full-match clamps**: `min_xg` / `max_xg` apply to the old single-pass model and must not be reused inside the interval loop. Use `min_xg_interval` / `max_xg_interval` (scaled proportionally to `interval_length_minutes / 90`) inside `_compute_interval_xg()`.
+- **Causality lag is an accepted approximation**: Team strength is recomputed at the **start** of each interval; cards are rolled at the **end**. A red card therefore delays its strength impact by up to `interval_length_minutes`. Do not attempt to "fix" this mid-interval — it is documented behaviour. If finer granularity is needed, decrease `interval_count` (e.g. 18×5 min) rather than restructuring the loop.
+- **Mutation ownership**: The `_roll_and_apply_cards()` wrapper in `match_engine.py` is the **only place** that removes red-carded players from `state.home_active_xi` / `state.away_active_xi`. Pure functions (e.g. `roll_cards_for_interval()` in `match_event_generator.py`) must return events without mutating state — mutation lives in `match_engine.py` so the loop owns it.
+- **`fitness_override` is the live fitness source**: `MatchPlayerInput` is `frozen=True` and its `fitness` field reflects the pre-match value. During simulation, always read current fitness from `state.fitness[player_id]` via the `fitness_override` parameter on `calculate_team_strength()`. Do not read `player.fitness` directly inside the interval loop.
+- **All new config values belong in `MatchEngineConfig`**: Never hardcode numerical constants (thresholds, rates, multipliers) inside engine function bodies. Every tunable value must be a field in `app/engine/match_config.py`. This ensures the engine remains testable and parameterisable without code changes.
+- **Multiplier stacking order**: When Tactics (Milestone D) and Momentum (Milestone E) are added, apply multipliers in this order inside `_compute_interval_xg()`:
+  `base_strength × suitability × fitness × home_boost × tactic_mult × momentum_mult → clamp`
+  Cap the product of tactic and momentum multipliers combined using `config.max_combined_multiplier` (default `1.60`) to prevent runaway compounding.
+- **Engine purity**: `app/engine/` must never import from `app/models/`, `app/db/`, `app/services/`, `app/cogs/`, or any Discord library. Violations break testability and the clean simulation boundary.

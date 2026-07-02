@@ -24,6 +24,7 @@ class Player(Base):
     fitness: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
     sharpness: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
     morale: Mapped[int] = mapped_column(Integer, default=75, nullable=False)
+    consistency: Mapped[int] = mapped_column(Integer, default=70, nullable=False)
     preferred_foot: Mapped[str] = mapped_column(String(10), default="Right", nullable=False)
     weak_foot: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     skill_moves: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
