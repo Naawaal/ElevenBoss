@@ -21,7 +21,7 @@ class SchedulerRun(Base):
     job_key: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
     job_type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[SchedulerRunStatus] = mapped_column(
-        Enum(SchedulerRunStatus, name="scheduler_run_status"), 
+        Enum(SchedulerRunStatus, name="scheduler_run_status", values_callable=lambda obj: [item.value for item in obj]), 
         default=SchedulerRunStatus.RUNNING, 
         nullable=False
     )

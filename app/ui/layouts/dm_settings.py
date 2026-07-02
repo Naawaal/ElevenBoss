@@ -268,6 +268,7 @@ def build_settings_schedule_layout(
 
     enable_id = encode_custom_id("schedule", "enable", "main", nonce)
     disable_id = encode_custom_id("schedule", "disable", "main", nonce)
+    edit_id = encode_custom_id("schedule", "open_modal", "setup", nonce)
     back_id = encode_custom_id("dm_settings", "view", "overview", nonce)
     refresh_id = encode_custom_id("dm_settings", "view", "schedule", nonce)
 
@@ -278,6 +279,7 @@ def build_settings_schedule_layout(
             toggle_buttons.append(primary_button("🟢 Enable Schedule", enable_id))
         else:
             toggle_buttons.append(secondary_button("🔴 Disable Schedule", disable_id))
+        toggle_buttons.append(primary_button("📝 Configure Schedule", edit_id))
         rows.append(action_row(toggle_buttons))
 
     rows.append(action_row([

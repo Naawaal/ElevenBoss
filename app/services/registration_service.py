@@ -115,34 +115,12 @@ async def register_club(
 
             avg_ovr = sum(p.overall for p in players) / len(players)
             
-            # Auto-join draft league logic
-            from app.repositories.guild_config_repository import get_or_create_guild_config
-            from app.repositories.league_repository import get_draft_league_by_guild, count_league_clubs
-            
-            auto_join_note = ""
-            try:
-                config = await get_or_create_guild_config(session, guild_id)
-                if config.auto_join_draft_league:
-                    draft_league = await get_draft_league_by_guild(session, guild_id)
-                    if draft_league:
-                        joined_count = await count_league_clubs(session, guild_id, draft_league.id)
-                        if joined_count < draft_league.max_clubs:
-                            club.league_id = draft_league.id
-                            auto_join_note = " Joined draft league automatically."
-                            logger.info(f"auto_join_success: club_id={club.id} automatically joined draft league={draft_league.id} in guild_id={guild_id}")
-                        else:
-                            auto_join_note = " Auto-join skipped: league is full."
-                            logger.info(f"auto_join_skipped: draft league is full for guild_id={guild_id}")
-            except Exception as e:
-                logger.error(f"auto_join_failed: guild_id={guild_id}, error={e}", exc_info=e)
-                auto_join_note = " Auto-join failed due to a system error."
-            
             logger.info(
                 f"registration_success: guild_id={guild_id}, discord_user_id={discord_user_id}, club_name={validated_name}"
             )
             return RegistrationResult(
                 success=True,
-                message=f"Registration successful!{auto_join_note}",
+                message="Registration successful!",
                 manager_id=manager.id,
                 club_id=club.id,
                 club_name=validated_name,

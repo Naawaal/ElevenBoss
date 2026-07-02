@@ -14,6 +14,7 @@ class DMSettingsCog(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="settings", description="Open the private ElevenBoss Settings Console (DMs only).")
+    @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=False, dms=True, private_channels=True)
     async def settings(self, interaction: discord.Interaction):
         # Must be in DM

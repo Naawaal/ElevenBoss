@@ -35,6 +35,154 @@ from app.ui.components import container, text_display, V2View
 
 logger = logging.getLogger("app.cogs.club_cog")
 
+class ExtendDeadlineModal(discord.ui.Modal, title="Extend Registration Deadline"):
+    new_deadline = discord.ui.TextInput(
+        label="New Deadline",
+        placeholder="e.g. Sunday 20:00 or 2026-07-05 20:00",
+        required=True
+    )
+    timezone = discord.ui.TextInput(
+        label="Timezone",
+        placeholder="e.g. Asia/Kathmandu or UTC",
+        default="Asia/Kathmandu",
+        required=True
+    )
+
+    def __init__(self, guild_id: int, nonce: str, bot):
+        super().__init__()
+        self.guild_id = guild_id
+        self.nonce = nonce
+        self.bot = bot
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        from app.services.league_service import extend_deadline
+        from app.ui.handlers.dm_admin_handler import handle_open_admin_dashboard
+        
+        res = await extend_deadline(self.guild_id, self.new_deadline.value, self.timezone.value)
+        if res.success:
+            new_view = await handle_open_admin_dashboard(self.guild_id, interaction.user, self.nonce)
+            await interaction.followup.send(content=f"✅ {res.message}", ephemeral=True)
+            await interaction.message.edit(view=new_view)
+        else:
+            await interaction.followup.send(content=f"❌ {res.message}", ephemeral=True)
+
+class ScheduleSetupModal(discord.ui.Modal, title="Configure Matchday Schedule"):
+    day = discord.ui.TextInput(
+        label="Matchday Day of Week",
+        placeholder="e.g. Sunday",
+        required=True
+    )
+    time = discord.ui.TextInput(
+        label="Matchday Time (HH:MM)",
+        placeholder="e.g. 20:00",
+        required=True
+    )
+    timezone = discord.ui.TextInput(
+        label="Timezone",
+        placeholder="e.g. Asia/Kathmandu or UTC",
+        default="Asia/Kathmandu",
+        required=True
+    )
+    channel_id = discord.ui.TextInput(
+        label="Results Announcement Channel ID",
+        placeholder="Optional numeric ID",
+        required=False
+    )
+
+    def __init__(self, guild_id: int, nonce: str, bot):
+        super().__init__()
+        self.guild_id = guild_id
+        self.nonce = nonce
+        self.bot = bot
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        from app.services.settings_service import SettingsService
+        from app.ui.handlers.dm_settings_handler import handle_open_settings_schedule
+        
+        # Get values
+        d_val = self.day.value.strip()
+        t_val = self.time.value.strip()
+        tz_val = self.timezone.value.strip()
+        ch_val = self.channel_id.value.strip() or None
+        
+        guild_obj = self.bot.get_guild(self.guild_id) if self.bot else None
+        
+        success, message = await SettingsService.update_schedule_settings(
+            guild_id=self.guild_id,
+            guild_obj=guild_obj,
+            day=d_val,
+            time=t_val,
+            timezone=tz_val,
+            channel_id=ch_val
+        )
+        
+        if success:
+            new_view = await handle_open_settings_schedule(self.guild_id, interaction.user, self.nonce)
+            await interaction.followup.send(content=f"✅ {message}", ephemeral=True)
+            await interaction.message.edit(view=new_view)
+        else:
+            await interaction.followup.send(content=f"❌ {message}", ephemeral=True)
+
+class CreateLeagueModal(discord.ui.Modal, title="Create Draft League"):
+    name = discord.ui.TextInput(
+        label="League Name",
+        placeholder="e.g. Champions League",
+        required=True
+    )
+    size = discord.ui.TextInput(
+        label="League Size (8, 10, 12, 16)",
+        placeholder="e.g. 8",
+        default="8",
+        required=True
+    )
+    deadline = discord.ui.TextInput(
+        label="Registration Deadline",
+        placeholder="e.g. Sunday 20:00 (Optional)",
+        required=False
+    )
+    timezone = discord.ui.TextInput(
+        label="Timezone",
+        placeholder="e.g. Asia/Kathmandu",
+        default="Asia/Kathmandu",
+        required=True
+    )
+
+    def __init__(self, guild_id: int, nonce: str, bot):
+        super().__init__()
+        self.guild_id = guild_id
+        self.nonce = nonce
+        self.bot = bot
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        from app.services.league_service import create_league
+        from app.ui.handlers.dm_admin_handler import handle_open_admin_dashboard
+        
+        try:
+            sz = int(self.size.value.strip())
+            if sz not in (8, 10, 12, 16):
+                raise ValueError("Size must be 8, 10, 12, or 16.")
+        except ValueError:
+            await interaction.followup.send(content="❌ League size must be 8, 10, 12, or 16.", ephemeral=True)
+            return
+
+        res = await create_league(
+            guild_id=self.guild_id,
+            league_name=self.name.value.strip(),
+            league_size=sz,
+            registration_deadline=self.deadline.value.strip() or None,
+            registration_deadline_timezone=self.timezone.value.strip()
+        )
+        
+        if res.success:
+            new_view = await handle_open_admin_dashboard(self.guild_id, interaction.user, self.nonce)
+            await interaction.followup.send(content=f"✅ {res.message}", ephemeral=True)
+            await interaction.message.edit(view=new_view)
+        else:
+            await interaction.followup.send(content=f"❌ {res.message}", ephemeral=True)
+
 class ClubCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -169,8 +317,24 @@ class ClubCog(commands.Cog):
                 logger.info(f"ui_interaction_received: closed session={nonce}, user_id={user_id}")
                 return
 
-            # Defer response immediately to prevent 3-second Discord timeouts
-            await interaction.response.defer()
+            # Check if this is a public view action
+            is_public_view = custom_id.scope in ("table", "fixtures", "match") or (custom_id.scope == "league" and custom_id.action in ("view_table", "refresh"))
+            is_ephemeral_request = is_public_view and (interaction.guild_id is not None)
+
+            # Defer response immediately to prevent 3-second Discord timeouts unless opening a modal
+            is_opening_modal = (custom_id.scope == "dm_admin" and custom_id.action in ("extend_deadline", "open_modal")) or (custom_id.scope == "schedule" and custom_id.action == "open_modal")
+            if not is_opening_modal:
+                if is_ephemeral_request:
+                    await interaction.response.defer(ephemeral=True)
+                else:
+                    await interaction.response.defer()
+
+            # For public views, if session doesn't exist, is expired, or belongs to another user, create a temporary session
+            if is_public_view:
+                session = ui_session_manager.get_session(nonce)
+                if not session or session.discord_user_id != user_id:
+                    session = ui_session_manager.create_session(user_id, guild_id)
+                    nonce = session.session_id
 
             new_view = None
 
@@ -347,14 +511,46 @@ class ClubCog(commands.Cog):
                 elif custom_id.action == "disable":
                     await SettingsService.disable_schedule(guild_id)
                     new_view = await handle_open_settings_schedule(guild_id, interaction.user, nonce)
+                elif custom_id.action == "open_modal":
+                    modal = ScheduleSetupModal(guild_id, nonce, self.bot)
+                    await interaction.response.send_modal(modal)
+                    return
                 elif custom_id.action == "refresh":
                     new_view = await handle_open_settings_schedule(guild_id, interaction.user, nonce)
 
             elif custom_id.scope == "dm_admin":
                 from app.ui.handlers.dm_admin_handler import handle_open_admin_dashboard
-                if custom_id.action == "matchday_run":
+                
+                # Check permissions first for any admin action
+                from app.services.permission_service import can_run_admin_action
+                is_admin = await can_run_admin_action(guild_id, user_id)
+                if not is_admin:
+                    if custom_id.action == "extend_deadline":
+                        await interaction.response.send_message("❌ You do not have administrator permissions in that server.", ephemeral=True)
+                    else:
+                        await self.send_error_response(interaction, "You do not have administrator permissions.")
+                    return
+
+                if custom_id.action == "extend_deadline":
+                    modal = ExtendDeadlineModal(guild_id, nonce, self.bot)
+                    await interaction.response.send_modal(modal)
+                    return
+                elif custom_id.action == "open_modal" and custom_id.target == "create_league":
+                    modal = CreateLeagueModal(guild_id, nonce, self.bot)
+                    await interaction.response.send_modal(modal)
+                    return
+                elif custom_id.action == "cancel_league":
+                    from app.services.league_service import cancel_league
+                    res = await cancel_league(guild_id)
+                    new_view = await handle_open_admin_dashboard(guild_id, interaction.user, nonce)
+                    if res.success:
+                        await interaction.followup.send(content=f"✅ {res.message}", ephemeral=True)
+                    else:
+                        await interaction.followup.send(content=f"❌ {res.message}", ephemeral=True)
+                elif custom_id.action == "matchday_run":
                     from app.services.matchday_service import MatchdayService
                     from app.services.announcement_service import AnnouncementService
+                    from app.db.session import get_session
                     # Get current week
                     async with get_session() as db_sess:
                         from app.repositories.league_repository import get_active_league_by_guild
@@ -369,7 +565,7 @@ class ClubCog(commands.Cog):
                         AnnouncementService.bot = self.bot
                         await AnnouncementService.announce_matchday_summary(guild_id, week, res.results)
                         if res.season_completed:
-                            await AnnouncementService.announce_season_complete(guild_id, res.season_number)
+                            await AnnouncementService.announce_season_complete(guild_id, res.season_number, res.winner_name)
                     new_view = await handle_open_admin_dashboard(guild_id, interaction.user, nonce)
                 elif custom_id.action == "automation_check":
                     from app.services.game_loop_orchestrator import GameLoopOrchestrator
@@ -384,7 +580,7 @@ class ClubCog(commands.Cog):
                         AnnouncementService.bot = self.bot
                         await AnnouncementService.announce_league_start(guild_id, res.league_name)
                     new_view = await handle_open_admin_dashboard(guild_id, interaction.user, nonce)
-                elif custom_id.action == "refresh":
+                elif custom_id.action in ("refresh", "view"):
                     new_view = await handle_open_admin_dashboard(guild_id, interaction.user, nonce)
 
             elif custom_id.scope == "nav" and custom_id.action == "back":

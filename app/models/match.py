@@ -63,7 +63,7 @@ class MatchEvent(Base):
     guild_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     fixture_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("fixtures.id", ondelete="CASCADE"), nullable=False, index=True)
     minute: Mapped[int] = mapped_column(Integer, nullable=False)
-    event_type: Mapped[MatchEventType] = mapped_column(Enum(MatchEventType, name="match_event_type"), nullable=False)
+    event_type: Mapped[MatchEventType] = mapped_column(Enum(MatchEventType, name="match_event_type", values_callable=lambda obj: [item.value for item in obj]), nullable=False)
     club_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("clubs.id", ondelete="CASCADE"), nullable=True)
     player_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"), nullable=True)
     secondary_player_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"), nullable=True)

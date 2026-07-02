@@ -20,7 +20,7 @@ class Season(Base):
     league_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"), nullable=False, index=True)
     season_number: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[SeasonStatus] = mapped_column(
-        Enum(SeasonStatus, name="season_status"), 
+        Enum(SeasonStatus, name="season_status", values_callable=lambda obj: [item.value for item in obj]), 
         default=SeasonStatus.DRAFT, 
         nullable=False
     )

@@ -23,7 +23,7 @@ class Fixture(Base):
     home_club_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clubs.id", ondelete="CASCADE"), nullable=False)
     away_club_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clubs.id", ondelete="CASCADE"), nullable=False)
     status: Mapped[FixtureStatus] = mapped_column(
-        Enum(FixtureStatus, name="fixture_status"), 
+        Enum(FixtureStatus, name="fixture_status", values_callable=lambda obj: [item.value for item in obj]), 
         default=FixtureStatus.SCHEDULED, 
         nullable=False,
         index=True

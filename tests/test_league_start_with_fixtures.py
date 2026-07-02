@@ -1,6 +1,4 @@
-"""
-Tests for starting the league and verifying automatic fixture generation.
-"""
+# tests/test_league_start_with_fixtures.py
 
 import unittest
 from unittest.mock import patch, AsyncMock, MagicMock
@@ -15,16 +13,15 @@ from app.models.club import Club
 class TestLeagueStartWithFixtures(unittest.IsolatedAsyncioTestCase):
 
     @patch("app.services.league_service.get_session")
-    @patch("app.services.league_service.get_draft_league_by_guild")
+    @patch("app.services.league_service.claim_league_for_starting")
     @patch("app.services.league_service.get_active_league_by_guild")
-    @patch("app.services.league_service.get_active_season_for_league")
     @patch("app.services.league_service.create_season")
     @patch("app.services.league_service.generate_bot_clubs_for_league")
     @patch("app.services.league_service.initialize_standings")
     @patch("app.services.league_service.bulk_create_fixtures")
     async def test_league_start_generates_fixtures_for_8_clubs(
         self, mock_bulk, mock_standings, mock_generate_bots, mock_create_season,
-        mock_active_season, mock_active_league, mock_get_draft, mock_get_session
+        mock_active_league, mock_claim_league, mock_get_session
     ):
         """Starting a league with 8 clubs automatically generates 28 fixtures across 7 weeks."""
         session_mock = AsyncMock()
@@ -33,10 +30,12 @@ class TestLeagueStartWithFixtures(unittest.IsolatedAsyncioTestCase):
         league_mock = MagicMock()
         league_mock.id = uuid.uuid4()
         league_mock.name = "Golden League"
-        league_mock.max_clubs = 8
+        league_mock.target_club_count = 8
+        league_mock.fill_bots_after_deadline = True
+        league_mock.minimum_human_clubs = 2
         league_mock.status = LeagueStatus.DRAFT
-        mock_get_draft.return_value = league_mock
-        mock_active_season.return_value = None
+        mock_claim_league.return_value = league_mock
+        mock_active_league.return_value = None
 
         # 3 human clubs
         human_clubs = [MagicMock(id=uuid.uuid4(), is_bot_controlled=False) for _ in range(3)]
@@ -64,23 +63,21 @@ class TestLeagueStartWithFixtures(unittest.IsolatedAsyncioTestCase):
         mock_bulk.assert_called_once()
         created_fixtures = mock_bulk.call_args[0][1]
         self.assertEqual(len(created_fixtures), 28)
-        # Check that they have the right properties
         for f in created_fixtures:
             self.assertEqual(f.guild_id, "123")
             self.assertEqual(f.season_id, season_mock.id)
             self.assertTrue(1 <= f.week <= 7)
 
     @patch("app.services.league_service.get_session")
-    @patch("app.services.league_service.get_draft_league_by_guild")
+    @patch("app.services.league_service.claim_league_for_starting")
     @patch("app.services.league_service.get_active_league_by_guild")
-    @patch("app.services.league_service.get_active_season_for_league")
     @patch("app.services.league_service.create_season")
     @patch("app.services.league_service.generate_bot_clubs_for_league")
     @patch("app.services.league_service.initialize_standings")
     @patch("app.services.league_service.bulk_create_fixtures")
     async def test_league_start_generates_fixtures_for_16_clubs(
         self, mock_bulk, mock_standings, mock_generate_bots, mock_create_season,
-        mock_active_season, mock_active_league, mock_get_draft, mock_get_session
+        mock_active_league, mock_claim_league, mock_get_session
     ):
         """Starting a league with 16 clubs automatically generates 120 fixtures across 15 weeks."""
         session_mock = AsyncMock()
@@ -89,10 +86,12 @@ class TestLeagueStartWithFixtures(unittest.IsolatedAsyncioTestCase):
         league_mock = MagicMock()
         league_mock.id = uuid.uuid4()
         league_mock.name = "Super 16 League"
-        league_mock.max_clubs = 16
+        league_mock.target_club_count = 16
+        league_mock.fill_bots_after_deadline = True
+        league_mock.minimum_human_clubs = 2
         league_mock.status = LeagueStatus.DRAFT
-        mock_get_draft.return_value = league_mock
-        mock_active_season.return_value = None
+        mock_claim_league.return_value = league_mock
+        mock_active_league.return_value = None
 
         # 6 human clubs
         human_clubs = [MagicMock(id=uuid.uuid4(), is_bot_controlled=False) for _ in range(6)]
@@ -121,16 +120,15 @@ class TestLeagueStartWithFixtures(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(created_fixtures), 120)
 
     @patch("app.services.league_service.get_session")
-    @patch("app.services.league_service.get_draft_league_by_guild")
+    @patch("app.services.league_service.claim_league_for_starting")
     @patch("app.services.league_service.get_active_league_by_guild")
-    @patch("app.services.league_service.get_active_season_for_league")
     @patch("app.services.league_service.create_season")
     @patch("app.services.league_service.generate_bot_clubs_for_league")
     @patch("app.services.league_service.initialize_standings")
     @patch("app.services.league_service.bulk_create_fixtures")
     async def test_league_start_rollback_if_fixture_insert_fails(
         self, mock_bulk, mock_standings, mock_generate_bots, mock_create_season,
-        mock_active_season, mock_active_league, mock_get_draft, mock_get_session
+        mock_active_league, mock_claim_league, mock_get_session
     ):
         """If fixture bulk insert fails, start_league returns database_error and transaction rolls back."""
         session_mock = AsyncMock()
@@ -139,10 +137,12 @@ class TestLeagueStartWithFixtures(unittest.IsolatedAsyncioTestCase):
         league_mock = MagicMock()
         league_mock.id = uuid.uuid4()
         league_mock.name = "Pro League"
-        league_mock.max_clubs = 8
+        league_mock.target_club_count = 8
+        league_mock.fill_bots_after_deadline = True
+        league_mock.minimum_human_clubs = 2
         league_mock.status = LeagueStatus.DRAFT
-        mock_get_draft.return_value = league_mock
-        mock_active_season.return_value = None
+        mock_claim_league.return_value = league_mock
+        mock_active_league.return_value = None
 
         human_clubs = [MagicMock(id=uuid.uuid4(), is_bot_controlled=False) for _ in range(4)]
         result_mock = MagicMock()
@@ -164,16 +164,15 @@ class TestLeagueStartWithFixtures(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.code, "database_error")
 
     @patch("app.services.league_service.get_session")
-    @patch("app.services.league_service.get_draft_league_by_guild")
+    @patch("app.services.league_service.claim_league_for_starting")
     @patch("app.services.league_service.get_active_league_by_guild")
-    @patch("app.services.league_service.get_active_season_for_league")
     async def test_league_start_rejects_if_already_active(
-        self, mock_active_season, mock_active_league, mock_get_draft, mock_get_session
+        self, mock_active_league, mock_claim_league, mock_get_session
     ):
         """Starting a league that's already active returns league_already_active."""
         session_mock = AsyncMock()
         mock_get_session.return_value.__aenter__.return_value = session_mock
-        mock_get_draft.return_value = None  # No draft league
+        mock_claim_league.return_value = None  # No draft league
         mock_active_league.return_value = MagicMock()  # Active league exists
 
         res = await start_league("123")

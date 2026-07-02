@@ -15,48 +15,6 @@ class LeagueGroup(commands.GroupCog, name="league"):
         self.bot = bot
         super().__init__()
 
-    @app_commands.command(name="create", description="Create a new draft league for this server.")
-    @app_commands.describe(
-        league_name="The name of the league (3-40 characters).",
-        league_size="The number of clubs allowed in the league."
-    )
-    @app_commands.choices(league_size=[
-        app_commands.Choice(name="8 Clubs", value=8),
-        app_commands.Choice(name="10 Clubs", value=10),
-        app_commands.Choice(name="12 Clubs", value=12),
-        app_commands.Choice(name="16 Clubs", value=16)
-    ])
-    @app_commands.allowed_installs(guilds=True, users=False)
-    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
-    async def create_command(self, interaction: discord.Interaction, league_name: str, league_size: app_commands.Choice[int]):
-        # Check permissions
-        is_admin = await check_admin_permission(interaction.guild_id, interaction.user)
-        if not is_admin:
-            logger.warning(f"league_interaction_rejected: reason=permission_denied, user_id={interaction.user.id}, action=create")
-            await interaction.response.send_message("❌ Only server administrators or game admins can create a league.", ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=True)
-
-        res = await create_league(interaction.guild_id, league_name, league_size.value)
-        if not res.success:
-            logger.warning(f"league_create_failed: guild_id={interaction.guild_id}, reason={res.message}")
-            await interaction.edit_original_response(content=f"❌ {res.message}")
-            return
-
-        # Open the dashboard for the newly created league
-        try:
-            view, file = await handle_open_league_dashboard(
-                interaction.guild_id, 
-                interaction.user,
-                banner="✅ **League created successfully!**"
-            )
-            await interaction.edit_original_response(view=view, attachments=[file] if file else [])
-        except Exception as e:
-            logger.error(f"Failed to load league dashboard after create: {e}", exc_info=e)
-            capture_exception(e)
-            await interaction.edit_original_response(content="✅ League created successfully! Run `/league status` to view it.")
-
     @app_commands.command(name="join", description="Join the draft league with your registered club.")
     @app_commands.allowed_installs(guilds=True, users=False)
     @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
@@ -80,45 +38,6 @@ class LeagueGroup(commands.GroupCog, name="league"):
             logger.error(f"Failed to load league dashboard after join: {e}", exc_info=e)
             capture_exception(e)
             await interaction.edit_original_response(content=f"✅ {res.message}")
-
-    @app_commands.command(name="start", description="Bootstrap the league season. Fills empty slots with bots.")
-    @app_commands.allowed_installs(guilds=True, users=False)
-    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
-    async def start_command(self, interaction: discord.Interaction):
-        # Check permissions
-        is_admin = await check_admin_permission(interaction.guild_id, interaction.user)
-        if not is_admin:
-            logger.warning(f"league_interaction_rejected: reason=permission_denied, user_id={interaction.user.id}, action=start")
-            await interaction.response.send_message("❌ Only server administrators or game admins can start the league season.", ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=True)
-
-        res = await start_league(interaction.guild_id)
-        if not res.success:
-            await interaction.edit_original_response(content=f"❌ {res.message}")
-            return
-
-        # Return active season summary dashboard
-        try:
-            banner_content = (
-                f"✅ **League started — fixtures ready!**\n"
-                f"🏆 **League:** `{res.league_name}`\n"
-                f"👥 **Human Clubs:** `{res.human_clubs}`  |  🤖 **Bot Clubs:** `{res.bot_clubs}`\n"
-                f"📆 **Total Weeks:** `{res.total_weeks}`  |  🗂️ **Fixtures:** `{res.total_fixtures}`\n"
-                f"▶️ **Current Week:** Week `{res.current_week}`\n"
-                f"→ Use `/fixtures view` to see Week 1."
-            )
-            view, file = await handle_open_league_dashboard(
-                interaction.guild_id,
-                interaction.user,
-                banner=banner_content
-            )
-            await interaction.edit_original_response(view=view, attachments=[file] if file else [])
-        except Exception as e:
-            logger.error(f"Failed to load league dashboard after start: {e}", exc_info=e)
-            capture_exception(e)
-            await interaction.edit_original_response(content="✅ League started! Use `/fixtures view` to see Week 1.")
 
 
     @app_commands.command(name="status", description="View the current league status dashboard.")

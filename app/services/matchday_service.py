@@ -82,6 +82,7 @@ class MatchdayRunResult:
     results: list[MatchdayFixtureResult] = field(default_factory=list)
     table_updated: bool = False
     season_completed: bool = False
+    winner_name: str | None = None
 
 
 # ── Service Implementation ─────────────────────────────────────────
@@ -503,16 +504,21 @@ class MatchdayService:
                 max_week = week_range[1] if week_range else current_week
                 
                 season_completed = False
+                winner_name = None
                 if current_week == max_week:
-                    season.status = SeasonStatus.COMPLETED
-                    season.ended_at = datetime.utcnow()
-                    league.status = LeagueStatus.COMPLETED
-                    season_completed = True
-                    logger.info(f"season_completed: guild_id={guild_id}, season_id={season.id}")
+                     season.status = SeasonStatus.COMPLETED
+                     season.ended_at = datetime.utcnow()
+                     league.status = LeagueStatus.COMPLETED
+                     season_completed = True
+                     logger.info(f"season_completed: guild_id={guild_id}, season_id={season.id}")
+                     
+                     from app.repositories.standing_repository import get_ranked_table
+                     standings = await get_ranked_table(session, guild_id, season.id)
+                     winner_name = standings[0].club.name if standings else None
                 else:
-                    season.current_week += 1
-                    logger.info(f"season_week_advanced: guild_id={guild_id}, season_id={season.id}, next_week={season.current_week}")
-                    
+                     season.current_week += 1
+                     logger.info(f"season_week_advanced: guild_id={guild_id}, season_id={season.id}, next_week={season.current_week}")
+                     
                 # Mark job success
                 await mark_job_success(session, job_key)
                 
@@ -527,7 +533,8 @@ class MatchdayService:
                     simulated_week=current_week,
                     results=results_list,
                     table_updated=True,
-                    season_completed=season_completed
+                    season_completed=season_completed,
+                    winner_name=winner_name
                 )
                 
         except Exception as e:
