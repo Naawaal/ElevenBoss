@@ -190,6 +190,11 @@ class LeagueLifecycleService:
         season.status = SeasonStatus.COMPLETED
         season.ended_at = datetime.utcnow()
         league.status = LeagueStatus.COMPLETED
+        
+        # Age players and handle growth / decline / retirement
+        from app.services.player_service import PlayerService
+        await PlayerService.age_players(season.id, session)
+        
         await session.flush()
 
         # Check config for auto start

@@ -127,8 +127,9 @@ class TestLeagueRobustnessR(unittest.IsolatedAsyncioTestCase):
     @patch("app.repositories.guild_config_repository.get_or_create_guild_config")
     @patch("app.repositories.get_or_create_running_job")
     @patch("app.repositories.mark_job_success")
+    @patch("app.services.player_service.PlayerService.age_players")
     async def test_season_complete_auto_disabled_no_dangling_lock(
-        self, mock_mark_success, mock_get_or_create_job, mock_get_config
+        self, mock_age_players, mock_mark_success, mock_get_or_create_job, mock_get_config
     ):
         """Test that completing a season with auto_start disabled transitions the season and finalizes the lock."""
         session_mock = AsyncMock()
@@ -191,6 +192,7 @@ class TestLeagueRobustnessR(unittest.IsolatedAsyncioTestCase):
     @patch("app.services.matchday_service.get_current_week_fixtures_for_update")
     @patch("app.services.matchday_service.get_clubs_in_league")
     @patch("app.services.matchday_service.get_players_by_club_id")
+    @patch("app.services.player_service.PlayerService.get_available_players")
     @patch("app.services.matchday_service.get_active_lineup")
     @patch("app.services.matchday_service.save_lineup_with_players")
     @patch("app.services.matchday_service.simulate_match")
@@ -201,7 +203,7 @@ class TestLeagueRobustnessR(unittest.IsolatedAsyncioTestCase):
     @patch("app.services.matchday_service.mark_job_success")
     async def test_matchday_simulation_refreshes_bot_lineups(
         self, mock_mark_success, mock_complete_season, mock_get_fixture_week_range, mock_get_standing, mock_mark_played, mock_simulate,
-        mock_save_lineup, mock_get_active_lineup, mock_get_players, mock_get_clubs, mock_fixtures, mock_create_job,
+        mock_save_lineup, mock_get_active_lineup, mock_available_players, mock_get_players, mock_get_clubs, mock_fixtures, mock_create_job,
         mock_get_job_by_key, mock_season, mock_league, mock_get_session
     ):
         """Test that running matchday simulation automatically regenerates lineups for bot filler clubs."""
@@ -230,6 +232,7 @@ class TestLeagueRobustnessR(unittest.IsolatedAsyncioTestCase):
         # Mock players
         players = [MagicMock(id=uuid.uuid4(), position="GK" if i == 0 else "CB", overall=70, fitness=100, is_retired=False) for i in range(15)]
         mock_get_players.return_value = players
+        mock_available_players.return_value = players
         
         # Mock simulator output
         mock_simulate.return_value = MagicMock(home_goals=1, away_goals=0, home_possession=50, away_possession=50, home_shots=5, away_shots=5, home_shots_on_target=3, away_shots_on_target=2, goals=[], cards=[], substitutions=[], motm_player_id=str(players[0].id))

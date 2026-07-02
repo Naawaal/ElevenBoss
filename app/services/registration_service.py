@@ -3,8 +3,8 @@ import re
 import uuid
 from dataclasses import dataclass
 from app.db.session import get_session
-from app.repositories import get_manager_by_discord_id, create_manager, get_club_by_name, create_club, bulk_create_players
-from app.engine import generate_squad
+from app.repositories import get_manager_by_discord_id, create_manager, get_club_by_name, create_club
+from app.services.player_service import PlayerService
 
 logger = logging.getLogger("app.services.registration_service")
 
@@ -109,8 +109,7 @@ async def register_club(
 
             # Procedural Squad Generation
             logger.info(f"squad_generation_started: guild_id={guild_id}, club_id={club.id}")
-            players = generate_squad(str(guild_id), club.id)
-            await bulk_create_players(session, players)
+            players = await PlayerService.create_squad(club.id, session)
             logger.info(f"squad_generation_success: guild_id={guild_id}, club_id={club.id}, size={len(players)}")
 
             avg_ovr = sum(p.overall for p in players) / len(players)

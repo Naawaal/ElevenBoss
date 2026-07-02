@@ -83,3 +83,15 @@ The engine now uses a **per-interval loop** instead of a single-pass score-then-
   `base_strength × suitability × fitness × home_boost × tactic_mult × momentum_mult → clamp`
   Cap the product of tactic and momentum multipliers combined using `config.max_combined_multiplier` (default `1.60`) to prevent runaway compounding.
 - **Engine purity**: `app/engine/` must never import from `app/models/`, `app/db/`, `app/services/`, `app/cogs/`, or any Discord library. Violations break testability and the clean simulation boundary.
+
+---
+
+## 7. League Lifecycle & Robustness Guidelines (Milestone R)
+
+When modifying or extending the league lifecycle, season transitions, and bot management, adhere strictly to the following robustness patterns:
+
+- **Safe Concurrency & Retry Locks (R1)**: When guarding asynchronous workflows or slash commands against concurrent executions (e.g. `/league start`), always use `get_or_create_running_job(session, job_key, job_type, guild_id)` to acquire a transaction-safe lock. On validation failures that trigger transaction rollbacks, ensure the existing job lock status is recycled (resets `FAILED` or `SKIPPED` to `RUNNING`) to allow managers to retry starting the league without causing database unique constraint violations.
+- **Unconditional Lock Finalization (R3)**: When a season completes under `/league advance` or automated progression, transition the current season/league to `COMPLETED` and update the completion lock (`season_advance`) to `SUCCESS` unconditionally. This prevents dangling `RUNNING` locks when automation is disabled.
+- **Eager Shielding Check Order (R3)**: Validation shielding checks (e.g., rejecting manual `/league advance` commands if `auto_start_league` is enabled) must always execute **before** attempting to acquire any database locks or starting transactions. This protects the database from unnecessary locks and prevents deadlocks.
+- **Automated Bot Lineup Refreshes (R4)**: Before executing weekly matchday simulations in `run_current_matchday()`, always rebuild and save starting XI lineups for all bot filler clubs (`is_bot_controlled=True`) using squad players (e.g. via `build_auto_lineup`). This guarantees that bot clubs dynamically adjust their lineups to account for player fatigue, transfers, or retirement.
+

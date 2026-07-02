@@ -8,9 +8,9 @@ from app.repositories.guild_config_repository import (
     update_schedule_settings, set_matchday_enabled, get_settings_overview
 )
 from app.repositories.club_repository import (
-    get_club_by_name, create_club, get_club_by_manager_id,
+    get_club_by_name, create_club, create_club_no_commit, get_club_by_manager_id,
     get_user_club, get_clubs_in_league, assign_club_to_league,
-    assign_club_to_season, create_bot_club
+    assign_club_to_season, create_bot_club, get_club_by_normalized_name
 )
 from app.repositories.player_repository import bulk_create_players, get_players_by_club_id, get_player_by_id, get_players_by_name, get_players_by_ids
 from app.repositories.lineup_repository import get_active_lineup, save_lineup_with_players

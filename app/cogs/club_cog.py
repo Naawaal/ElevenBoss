@@ -270,7 +270,12 @@ class ClubCog(commands.Cog):
         if not custom_id_str or not custom_id_str.startswith("fcm:"):
             return
 
+        # Onboarding interactions are handled by registration_cog.py
+        if custom_id_str.startswith("fcm:v1:onboarding:"):
+            return
+
         logger.info(f"ui_interaction_received: custom_id={custom_id_str}, user_id={interaction.user.id}, guild_id={interaction.guild_id}")
+
 
         try:
             custom_id = decode_custom_id(custom_id_str)

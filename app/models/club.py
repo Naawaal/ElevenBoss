@@ -14,6 +14,8 @@ class Club(Base):
     season_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("seasons.id", ondelete="SET NULL"), nullable=True, index=True)
     manager_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managers.id", ondelete="SET NULL"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Casefold + whitespace-normalized version of name; used for uniqueness checks
+    normalized_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     short_name: Mapped[str | None] = mapped_column(String(32), nullable=True)
     is_bot_controlled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     budget: Mapped[int] = mapped_column(BigInteger, default=10000000, nullable=False)
@@ -60,4 +62,5 @@ class Club(Base):
 
     __table_args__ = (
         UniqueConstraint("guild_id", "name", name="uq_club_guild_name"),
+        UniqueConstraint("guild_id", "normalized_name", name="uq_club_guild_normalized_name"),
     )

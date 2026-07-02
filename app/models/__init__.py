@@ -9,6 +9,8 @@ from app.models.fixture import Fixture, FixtureStatus
 from app.models.match import MatchResult, MatchEvent, MatchEventType
 from app.models.standing import LeagueStanding
 from app.models.scheduler_run import SchedulerRun, SchedulerRunStatus
+from app.models.onboarding_session import OnboardingSession
+from app.models.squad_generation_run import SquadGenerationRun
 
 __all__ = [
     "GuildConfig",
@@ -29,4 +31,6 @@ __all__ = [
     "LeagueStanding",
     "SchedulerRun",
     "SchedulerRunStatus",
+    "OnboardingSession",
+    "SquadGenerationRun",
 ]

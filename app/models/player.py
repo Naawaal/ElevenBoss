@@ -30,6 +30,7 @@ class Player(Base):
     skill_moves: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     traits: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     is_retired: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    nationality: Mapped[str] = mapped_column(String(64), default="British", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 

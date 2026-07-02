@@ -30,6 +30,10 @@ class GuildConfig(Base):
     matchday_timezone: Mapped[str] = mapped_column(String(64), default="Asia/Kathmandu", nullable=False)
     matchday_announcement_channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     
+    # Onboarding / Thread Configuration
+    # NULL = unknown, TRUE = private threads worked before, FALSE = use public fallback
+    supports_private_threads: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
     # Automation Status Metrics
     automation_status: Mapped[str] = mapped_column(String(32), default="idle", nullable=False)
     last_automation_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

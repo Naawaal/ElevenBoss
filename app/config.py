@@ -22,6 +22,8 @@ class Config:
     GUILD_ID: str = os.getenv("GUILD_ID", "").strip()
     DATABASE_URL: str = os.getenv("DATABASE_URL", "").strip()
     DATABASE_ECHO: bool = os.getenv("DATABASE_ECHO", "false").strip().lower() == "true"
+    # Feature flag: enables the guided onboarding flow instead of the one-shot /register
+    REGISTRATION_ONBOARDING_ENABLED: bool = os.getenv("REGISTRATION_ONBOARDING_ENABLED", "false").strip().lower() == "true"
 
 # Create a singleton config instance
 config = Config()

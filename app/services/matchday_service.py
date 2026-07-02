@@ -296,7 +296,8 @@ class MatchdayService:
                         club_players = await get_players_by_club_id(session, club_id)
                         
                         # Verify we have at least 11 active players
-                        active_players = [p for p in club_players if not p.is_retired]
+                        from app.services.player_service import PlayerService
+                        active_players = await PlayerService.get_available_players(club_id, session)
                         if len(active_players) < 11:
                             raise ValueError(f"Club '{club_name}' does not have enough active players (has {len(active_players)}, requires 11).")
                             

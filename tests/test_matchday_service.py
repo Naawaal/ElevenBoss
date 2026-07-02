@@ -123,6 +123,7 @@ class TestMatchdayService(unittest.IsolatedAsyncioTestCase):
     @patch("app.services.matchday_service.get_clubs_in_league")
     @patch("app.services.matchday_service.get_active_lineup")
     @patch("app.services.matchday_service.get_players_by_club_id")
+    @patch("app.services.player_service.PlayerService.get_available_players")
     @patch("app.services.matchday_service.save_lineup_with_players")
     @patch("app.services.matchday_service.create_match_result")
     @patch("app.services.matchday_service.bulk_create_match_events")
@@ -133,7 +134,7 @@ class TestMatchdayService(unittest.IsolatedAsyncioTestCase):
     @patch("app.services.matchday_service.mark_fixture_played")
     async def test_run_matchday_success_with_lineup_fallbacks(
         self, mock_fixture_play, mock_job_fail, mock_job_ok, mock_week_range, mock_standing, mock_events, mock_result,
-        mock_save_lineup, mock_players, mock_lineup, mock_get_clubs, mock_fixtures, mock_create_job, mock_job, mock_season, mock_league, mock_session
+        mock_save_lineup, mock_available_players, mock_players, mock_lineup, mock_get_clubs, mock_fixtures, mock_create_job, mock_job, mock_season, mock_league, mock_session
     ):
         """run_current_matchday simulates, creates events, updates standings, advances week, and handles fallback lineups."""
         session_mock = AsyncMock()
@@ -210,6 +211,10 @@ class TestMatchdayService(unittest.IsolatedAsyncioTestCase):
         mock_players.side_effect = [
             home_players,  # Home players
             away_players   # Away club players
+        ]
+        mock_available_players.side_effect = [
+            home_players,
+            away_players
         ]
 
         mock_save_lineup.return_value = away_lineup

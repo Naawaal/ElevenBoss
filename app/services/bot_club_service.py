@@ -5,7 +5,7 @@ from sqlalchemy.future import select
 from app.models.club import Club
 from app.repositories import create_bot_club
 from app.engine.bot_club_generator import generate_bot_clubs_data
-from app.engine.player_generator import generate_squad
+from app.services.player_service import PlayerService
 
 logger = logging.getLogger("app.services.bot_club_service")
 
@@ -38,9 +38,7 @@ async def generate_bot_clubs_for_league(
         await session.flush()
         
         # Generate and save a balanced squad of 25 players
-        players = generate_squad(str(guild_id), club.id)
-        session.add_all(players)
-        await session.flush()
+        players = await PlayerService.create_squad(club.id, session)
         
         # Calculate overall rating
         avg_ovr = sum(p.overall for p in players) / len(players)
