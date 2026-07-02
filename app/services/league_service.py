@@ -26,6 +26,9 @@ from app.repositories import (
     create_season,
     get_latest_season_for_league,
     bulk_create_fixtures,
+    get_or_create_running_job,
+    mark_job_success,
+    mark_job_failed,
 )
 from app.repositories.manager_repository import get_manager_by_discord_id
 from app.services.bot_club_service import generate_bot_clubs_for_league
@@ -358,6 +361,22 @@ async def start_league(
                 )
 
             league_id = league.id
+            job_key = f"league_start:{guild_id}:{league_id}"
+            try:
+                await get_or_create_running_job(
+                    session=session,
+                    job_key=job_key,
+                    job_type="league_start",
+                    guild_id=guild_id
+                )
+                await session.flush()
+            except ValueError as ve:
+                logger.info(f"league_start_rejected: reason=already_starting, job_key={job_key}")
+                return LeagueResult(
+                    success=False,
+                    code="league_already_starting",
+                    message="The league bootstrap process is already in progress or has completed."
+                )
             league_name = league.name
             target_club_count = league.target_club_count
             fill_bots_after_deadline = league.fill_bots_after_deadline
@@ -431,6 +450,9 @@ async def start_league(
             
             season.status = SeasonStatus.ACTIVE
             season.current_week = 1
+
+            # Mark job lock as SUCCESS
+            await mark_job_success(session, job_key)
 
             await session.commit()
 
@@ -691,3 +713,114 @@ async def update_league_configuration(
             return LeagueResult(success=True, code="success", message="League configuration updated successfully.", league_id=league.id)
     except Exception as e:
         return LeagueResult(success=False, code="database_error", message=str(e))
+
+
+async def advance_season(guild_id: int | str) -> LeagueResult:
+    """
+    Manually archives a completed season and bootstraps the next season.
+    Admin-only check should be executed before calling this.
+    Checks auto_start_league to shield/reject manual advance when automation is enabled.
+    Locks row and uses season_bootstrap lock to prevent duplicate runs.
+    """
+    from app.repositories.guild_config_repository import get_or_create_guild_config
+    from app.repositories.season_repository import get_latest_season_for_league
+    from app.services.league_lifecycle_service import LeagueLifecycleService
+    from app.repositories import get_or_create_running_job, mark_job_success
+    
+    logger.info(f"league_advance_started: guild_id={guild_id}")
+    
+    try:
+        async with get_session() as session:
+            # 1. Command shielding: reject if auto_start_league is True
+            config = await get_or_create_guild_config(session, guild_id)
+            if config.auto_start_league:
+                return LeagueResult(
+                    success=False,
+                    code="automation_active",
+                    message="Manual season advancement is disabled because automated league lifecycle is active."
+                )
+                
+            # 2. Retrieve the active league and latest season
+            league = await get_active_league_by_guild(session, guild_id)
+            if not league:
+                # Check completed league
+                stmt = select(League).where(League.guild_id == str(guild_id), League.status == LeagueStatus.COMPLETED)
+                res = await session.execute(stmt)
+                league = res.scalar_one_or_none()
+                if not league:
+                    return LeagueResult(
+                        success=False,
+                        code="no_completed_league",
+                        message="No completed league was found in this server to advance."
+                    )
+            
+            # Row lock League row
+            stmt = select(League).where(League.id == league.id).with_for_update()
+            res = await session.execute(stmt)
+            league = res.scalar_one()
+
+            # Retrieve latest season
+            season = await get_latest_season_for_league(session, league.id)
+            if not season or season.status != SeasonStatus.COMPLETED:
+                return LeagueResult(
+                    success=False,
+                    code="no_completed_season",
+                    message="There is no completed season to advance. Matches must be finished first."
+                )
+                
+            # Row lock Season row
+            stmt = select(Season).where(Season.id == season.id).with_for_update()
+            res = await session.execute(stmt)
+            season = res.scalar_one()
+            
+            # 3. Concurrency Lock: season_bootstrap
+            next_season_number = season.season_number + 1
+            job_key = f"season_bootstrap:{guild_id}:{next_season_number}"
+            try:
+                await get_or_create_running_job(
+                    session=session,
+                    job_key=job_key,
+                    job_type="season_bootstrap",
+                    guild_id=guild_id
+                )
+                await session.flush()
+            except ValueError as ve:
+                logger.info(f"league_advance_rejected: already running/success, key={job_key}")
+                return LeagueResult(
+                    success=False,
+                    code="league_already_advancing",
+                    message="Season advancement is already in progress or has completed."
+                )
+                
+            # 4. Transition completed to archived
+            season.status = SeasonStatus.ARCHIVED
+            await session.flush()
+            
+            # 5. Bootstrap next season
+            new_season = await LeagueLifecycleService._bootstrap_season_internal(
+                session, guild_id, league, next_season_number
+            )
+            
+            # Mark lock success
+            await mark_job_success(session, job_key)
+            await session.commit()
+            
+            logger.info(f"league_advance_success: guild_id={guild_id}, season={next_season_number}")
+            return LeagueResult(
+                success=True,
+                code="success",
+                message=f"Season {season.season_number} has been archived! Season {next_season_number} is now active.",
+                league_id=league.id,
+                season_id=new_season.id,
+                league_name=league.name
+            )
+            
+    except Exception as e:
+        logger.error(f"league_advance_failed: error={e}", exc_info=e)
+        from app.error_reporting import capture_exception
+        capture_exception(e)
+        return LeagueResult(
+            success=False,
+            code="league_advance_failed",
+            message=f"Failed to advance season: {e}"
+        )

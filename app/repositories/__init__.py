@@ -43,5 +43,6 @@ from app.repositories.match_repository import (
 )
 from app.repositories.scheduler_run_repository import (
     create_running_job, mark_job_success,
-    mark_job_failed, get_job_by_key
+    mark_job_failed, get_job_by_key,
+    get_or_create_running_job
 )

@@ -120,6 +120,7 @@ class TestMatchdayService(unittest.IsolatedAsyncioTestCase):
     @patch("app.services.matchday_service.get_job_by_key")
     @patch("app.services.matchday_service.create_running_job")
     @patch("app.services.matchday_service.get_current_week_fixtures_for_update")
+    @patch("app.services.matchday_service.get_clubs_in_league")
     @patch("app.services.matchday_service.get_active_lineup")
     @patch("app.services.matchday_service.get_players_by_club_id")
     @patch("app.services.matchday_service.save_lineup_with_players")
@@ -132,7 +133,7 @@ class TestMatchdayService(unittest.IsolatedAsyncioTestCase):
     @patch("app.services.matchday_service.mark_fixture_played")
     async def test_run_matchday_success_with_lineup_fallbacks(
         self, mock_fixture_play, mock_job_fail, mock_job_ok, mock_week_range, mock_standing, mock_events, mock_result,
-        mock_save_lineup, mock_players, mock_lineup, mock_fixtures, mock_create_job, mock_job, mock_season, mock_league, mock_session
+        mock_save_lineup, mock_players, mock_lineup, mock_get_clubs, mock_fixtures, mock_create_job, mock_job, mock_season, mock_league, mock_session
     ):
         """run_current_matchday simulates, creates events, updates standings, advances week, and handles fallback lineups."""
         session_mock = AsyncMock()
@@ -141,7 +142,7 @@ class TestMatchdayService(unittest.IsolatedAsyncioTestCase):
         league = MagicMock()
         league.name = "Pro League"
         mock_league.return_value = league
-        
+
         season = MagicMock(id=uuid.uuid4(), current_week=2, season_number=1)
         mock_season.return_value = season
 
@@ -150,7 +151,10 @@ class TestMatchdayService(unittest.IsolatedAsyncioTestCase):
 
         # 1 fixture
         home_club = MagicMock(id=uuid.uuid4(), name="Home FC")
+        home_club.is_bot_controlled = False
         away_club = MagicMock(id=uuid.uuid4(), name="Away FC")
+        away_club.is_bot_controlled = False
+        mock_get_clubs.return_value = [home_club, away_club]
         fixture = MagicMock(id=uuid.uuid4(), home_club=home_club, away_club=away_club, status=FixtureStatus.SCHEDULED)
         mock_fixtures.return_value = [fixture]
 

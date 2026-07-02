@@ -1,8 +1,10 @@
 # app/services/league_lifecycle_service.py
 
 import logging
+import uuid
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.db.session import get_session
@@ -142,3 +144,138 @@ class LeagueLifecycleService:
                     logger.warning(f"league_transition_to_review_skipped: league_id={league_id} not in DRAFT status")
         except Exception as e:
             logger.error(f"league_transition_to_review_failed: league_id={league_id}, error={e}", exc_info=e)
+
+    @staticmethod
+    async def complete_current_season(session: AsyncSession, guild_id: int | str, season_id: uuid.UUID) -> bool:
+        """
+        Finalizes the current season, transitions it to COMPLETED.
+        If auto_start_league is enabled, automatically transitions it to ARCHIVED and bootstraps the next season.
+        Uses explicit row locking and scheduler locks to prevent concurrency.
+        """
+        from app.models.season import Season, SeasonStatus
+        from app.models.league import League, LeagueStatus
+        from app.repositories import get_or_create_running_job, mark_job_success
+        from app.repositories.guild_config_repository import get_or_create_guild_config
+        
+        # 1. Lock the Season row
+        stmt = select(Season).where(Season.id == season_id).with_for_update()
+        res = await session.execute(stmt)
+        season = res.scalar_one_or_none()
+        if not season or season.status != SeasonStatus.ACTIVE:
+            logger.warning(f"complete_season_skipped: season_id={season_id} not active or not found")
+            return False
+            
+        # 2. Lock the League row
+        stmt = select(League).where(League.id == season.league_id).with_for_update()
+        res = await session.execute(stmt)
+        league = res.scalar_one_or_none()
+        if not league:
+            logger.warning(f"complete_season_failed: league not found for season_id={season_id}")
+            return False
+
+        job_key = f"season_advance:{guild_id}:{season_id}"
+        try:
+            await get_or_create_running_job(
+                session=session,
+                job_key=job_key,
+                job_type="season_advance",
+                guild_id=guild_id
+            )
+            await session.flush()
+        except ValueError as ve:
+            logger.info(f"complete_season_rejected: reason=already_advancing, job_key={job_key}")
+            return False
+
+        # Transition status to completed
+        season.status = SeasonStatus.COMPLETED
+        season.ended_at = datetime.utcnow()
+        league.status = LeagueStatus.COMPLETED
+        await session.flush()
+
+        # Check config for auto start
+        config = await get_or_create_guild_config(session, guild_id)
+        if config.auto_start_league:
+            # Transition COMPLETED to ARCHIVED
+            season.status = SeasonStatus.ARCHIVED
+            
+            # Bootstrap next season
+            next_season_number = season.season_number + 1
+            bootstrap_key = f"season_bootstrap:{guild_id}:{next_season_number}"
+            try:
+                await get_or_create_running_job(
+                    session=session,
+                    job_key=bootstrap_key,
+                    job_type="season_bootstrap",
+                    guild_id=guild_id
+                )
+                await session.flush()
+            except ValueError as ve:
+                logger.info(f"complete_season_failed: next season bootstrap already running/completed, key={bootstrap_key}")
+                await mark_job_success(session, job_key)
+                return True
+
+            # Perform bootstrapping
+            await LeagueLifecycleService._bootstrap_season_internal(session, guild_id, league, next_season_number)
+            
+            # Mark both locks success
+            await mark_job_success(session, job_key)
+            await mark_job_success(session, bootstrap_key)
+        else:
+            # Unconditionally mark the completion lock success so it doesn't dangle
+            await mark_job_success(session, job_key)
+
+        return True
+
+    @staticmethod
+    async def _bootstrap_season_internal(session: AsyncSession, guild_id: int | str, league: League, next_season_number: int) -> "Season":
+        """
+        Helper method to archive old active states, create a new Season record,
+        associate all current league clubs, initialize new standings, and generate fixtures.
+        """
+        from app.repositories import create_season, bulk_create_fixtures
+        from app.models.season import Season, SeasonStatus
+        from app.models.fixture import Fixture, FixtureStatus
+        from app.services.standings_service import initialize_standings
+        from app.engine.fixture_generator import generate_round_robin_fixtures
+        
+        # 1. Create Season N+1
+        new_season = await create_season(session, guild_id, league.id, next_season_number)
+        await session.flush()
+        
+        # 2. Retrieve all clubs in the league
+        clubs = await get_clubs_in_league(session, guild_id, league.id)
+        
+        # 3. Associate clubs with new season
+        for club in clubs:
+            club.season_id = new_season.id
+            
+        # 4. Initialize standings
+        club_ids = [club.id for club in clubs]
+        await initialize_standings(session, guild_id, new_season.id, club_ids)
+        
+        # 5. Generate and persist fixtures
+        club_id_strings = [str(cid) for cid in club_ids]
+        generated = generate_round_robin_fixtures(club_id_strings, double_round_robin=False)
+        
+        fixture_objects = [
+            Fixture(
+                guild_id=str(guild_id),
+                season_id=new_season.id,
+                week=f.week,
+                home_club_id=uuid.UUID(f.home_club_id),
+                away_club_id=uuid.UUID(f.away_club_id),
+                status=FixtureStatus.SCHEDULED,
+            )
+            for f in generated
+        ]
+        await bulk_create_fixtures(session, fixture_objects)
+        await session.flush()
+        
+        # 6. Set league and new season to active
+        league.status = LeagueStatus.ACTIVE
+        new_season.status = SeasonStatus.ACTIVE
+        new_season.current_week = 1
+        await session.flush()
+        
+        logger.info(f"season_bootstrapped_successfully: league_id={league.id}, season_number={next_season_number}")
+        return new_season

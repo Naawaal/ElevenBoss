@@ -260,6 +260,27 @@ class MatchdayService:
                         code="matchday_already_played",
                         message="Some matches this week have already been simulated."
                     )
+
+                # 2. Refresh lineups for all bot filler clubs in the league
+                from app.engine.lineup_builder import build_auto_lineup
+
+                all_clubs = await get_clubs_in_league(session, guild_id, league.id)
+                bot_clubs = [c for c in all_clubs if c.is_bot_controlled]
+                for bot_club in bot_clubs:
+                    club_players = await get_players_by_club_id(session, bot_club.id)
+                    starters_objs, bench_objs, _ = build_auto_lineup(club_players, "4-4-2")
+                    starters_ids = {slot: p.id for slot, p in starters_objs.items()}
+                    bench_ids = [p.id for p in bench_objs]
+                    await save_lineup_with_players(
+                        session,
+                        guild_id,
+                        bot_club.id,
+                        "4-4-2",
+                        starters_ids,
+                        bench_ids
+                    )
+                await session.flush()
+                logger.info(f"bot_lineups_refreshed: guild_id={guild_id}, count={len(bot_clubs)}")
                     
                 results_list = []
                 
@@ -508,9 +529,8 @@ class MatchdayService:
                 season_completed = False
                 winner_name = None
                 if current_week == max_week:
-                     season.status = SeasonStatus.COMPLETED
-                     season.ended_at = datetime.utcnow()
-                     league.status = LeagueStatus.COMPLETED
+                     from app.services.league_lifecycle_service import LeagueLifecycleService
+                     await LeagueLifecycleService.complete_current_season(session, guild_id, season.id)
                      season_completed = True
                      logger.info(f"season_completed: guild_id={guild_id}, season_id={season.id}")
                      
