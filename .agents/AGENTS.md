@@ -95,3 +95,15 @@ When modifying or extending the league lifecycle, season transitions, and bot ma
 - **Eager Shielding Check Order (R3)**: Validation shielding checks (e.g., rejecting manual `/league advance` commands if `auto_start_league` is enabled) must always execute **before** attempting to acquire any database locks or starting transactions. This protects the database from unnecessary locks and prevents deadlocks.
 - **Automated Bot Lineup Refreshes (R4)**: Before executing weekly matchday simulations in `run_current_matchday()`, always rebuild and save starting XI lineups for all bot filler clubs (`is_bot_controlled=True`) using squad players (e.g. via `build_auto_lineup`). This guarantees that bot clubs dynamically adjust their lineups to account for player fatigue, transfers, or retirement.
 
+---
+
+## 8. Onboarding & Guided Registration Guidelines (Milestone R)
+
+When modifying the registration and onboarding system, adhere strictly to these architectural practices:
+- **Fast-Path Modals (UUID Serialization)**: Discord modals must be sent as the initial response and cannot follow a deferral. To prevent 3-second Discord timeouts, encode the full 32-character hex UUID of the onboarding session directly inside the button's `custom_id` (e.g. `fcm:v1:onboarding:club_name:uuid_hex:modal`). This allows routing logic to parse the ID synchronously and send the modal within milliseconds without querying the database.
+- **Legacy Fallback Compatibility**: To prevent breaking existing active threads, always maintain a parsing fallback that detects 8-character shortened prefix IDs and resolves them using a database query fallback.
+- **Immediate Deferral for Non-Modals**: For all non-modal onboarding interactions, call `await interaction.response.defer()` immediately on entry before performing any business logic or database queries.
+- **ORM Attribute Mutation over Raw SQL**: Modifying session attributes via direct SQL UPDATE statements (e.g. `session.execute(update(...))`) expires the ORM identity map. Accessing expired attributes synchronously triggers lazy-loading queries that fail with `MissingGreenlet` in asyncpg contexts. Always modify ORM object properties directly in Python so SQLAlchemy tracks and flushes changes automatically on commit.
+- **Cleanups and Thread Archiving**: Use `cleanup_old_threads_and_sessions` to sweep abandoned and failed onboarding sessions. Archive Discord threads asynchronously, and schedule completions to close setup threads cleanly after a brief success display delay.
+
+

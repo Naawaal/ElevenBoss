@@ -199,8 +199,12 @@ class ClubCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         try:
-            view = await handle_open_locker_room(interaction.guild_id, interaction.user.id)
-            await interaction.edit_original_response(view=view)
+            res = await handle_open_locker_room(interaction.guild_id, interaction.user.id)
+            if isinstance(res, tuple):
+                view, file = res
+                await interaction.edit_original_response(view=view, attachments=[file] if file else [])
+            else:
+                await interaction.edit_original_response(view=res)
         except ValueError as ve:
             await interaction.edit_original_response(content=f"❌ {str(ve)}")
         except Exception as e:
@@ -318,7 +322,7 @@ class ClubCog(commands.Cog):
                         text_display("❌ *Menu closed.*")
                     ])
                 ]
-                await interaction.response.edit_message(view=V2View(comp_payload))
+                await interaction.response.edit_message(view=V2View(comp_payload), attachments=[])
                 logger.info(f"ui_interaction_received: closed session={nonce}, user_id={user_id}")
                 return
 
@@ -603,7 +607,7 @@ class ClubCog(commands.Cog):
                 view, file = new_view
                 await interaction.edit_original_response(view=view, attachments=[file] if file else [])
             elif new_view:
-                await interaction.edit_original_response(view=new_view)
+                await interaction.edit_original_response(view=new_view, attachments=[])
             else:
                 logger.warning(f"ui_interaction_rejected: reason=unhandled_routing, scope={custom_id.scope}, action={custom_id.action}")
                 await self.send_error_response(interaction, "Unhandled interaction action.")
