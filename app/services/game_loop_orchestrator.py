@@ -15,6 +15,7 @@ from app.services.league_lifecycle_service import LeagueLifecycleService
 from app.services.matchday_service import MatchdayService
 from app.services.announcement_service import AnnouncementService
 from app.services.schedule_service import ScheduleService
+from app.services.daily_tick_service import DailyTickService
 from app.models.season import SeasonStatus
 from app.models.league import LeagueStatus
 from app.models.scheduler_run import SchedulerRunStatus
@@ -96,6 +97,15 @@ class GameLoopOrchestrator:
 
         logger.info(f"orchestrator_guild_check_started: guild_id={guild_id}")
         
+        # 0. Run daily tick (fitness recovery, injury tick-down)
+        try:
+            async with get_session() as session:
+                await DailyTickService.run_daily_tick(session, guild_id, now_utc)
+        except Exception as e:
+            logger.error(f"daily_tick_failed_in_orchestrator: guild_id={guild_id}: {e}", exc_info=e)
+            from app.error_reporting import capture_exception
+            capture_exception(e)
+
         # 1. Run league lifecycle check
         lifecycle_res = await self.run_league_lifecycle_check(guild_id)
         

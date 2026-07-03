@@ -101,6 +101,8 @@ class MatchSimulationResult:
     motm_player_id: str | None = None
     player_ratings: dict[str, float] = field(default_factory=dict)
     timeline_events: list = field(default_factory=list)
+    final_fitness: dict[str, float] = field(default_factory=dict)
+    played_minutes: dict[str, int] = field(default_factory=dict)
 
 
 def _poisson_sample(rng: random.Random, L: float) -> int:
@@ -467,6 +469,45 @@ def _finalize_result(
         away_won,
     )
 
+    # Calculate played minutes for all players
+    played_minutes = {}
+    all_players = (
+        list(input_data.home_team.players) + list(input_data.home_team.bench) +
+        list(input_data.away_team.players) + list(input_data.away_team.bench)
+    )
+    for p in all_players:
+        played_minutes[p.player_id] = 0
+
+    for team, active_starters in (
+        (input_data.home_team, input_data.home_team.players),
+        (input_data.away_team, input_data.away_team.players),
+    ):
+        entry_minute = {p.player_id: 0 for p in active_starters}
+        team_subs = [s for s in subs_list if s.club_id == team.club_id]
+        team_reds = [c for c in cards_list if c.club_id == team.club_id and c.card_type == "red"]
+        
+        events = []
+        for s in team_subs:
+            events.append((s.minute, "sub", s.player_out_id, s.player_in_id))
+        for r in team_reds:
+            events.append((r.minute, "red", r.player_id, None))
+            
+        events.sort(key=lambda x: x[0])
+        
+        for minute, etype, p1, p2 in events:
+            if etype == "sub":
+                if p1 in entry_minute:
+                    played_minutes[p1] += (minute - entry_minute[p1])
+                    del entry_minute[p1]
+                entry_minute[p2] = minute
+            elif etype == "red":
+                if p1 in entry_minute:
+                    played_minutes[p1] += (minute - entry_minute[p1])
+                    del entry_minute[p1]
+                    
+        for pid, start_min in entry_minute.items():
+            played_minutes[pid] += (90 - start_min)
+
     return MatchSimulationResult(
         home_goals=home_goals,
         away_goals=away_goals,
@@ -483,6 +524,8 @@ def _finalize_result(
         motm_player_id=motm_player_id,
         player_ratings=player_ratings,
         timeline_events=timeline,
+        final_fitness=state.fitness,
+        played_minutes=played_minutes,
     )
 
 

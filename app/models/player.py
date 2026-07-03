@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Integer, BigInteger, Boolean, DateTime, ForeignKey, CheckConstraint
+from decimal import Decimal
+from sqlalchemy import String, Integer, BigInteger, Boolean, DateTime, ForeignKey, CheckConstraint, Numeric
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -31,6 +32,16 @@ class Player(Base):
     traits: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     is_retired: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     nationality: Mapped[str] = mapped_column(String(64), default="British", nullable=False)
+
+    # Condition & Post-match Stats columns (PR 1)
+    injury_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    injury_severity: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    injury_days_remaining: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    injury_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    suspension_games_remaining: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    suspension_created_fixture_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("fixtures.id", ondelete="SET NULL"), nullable=True)
+    last_match_minutes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_match_rating: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 

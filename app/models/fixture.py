@@ -33,6 +33,7 @@ class Fixture(Base):
     simulation_seed: Mapped[str | None] = mapped_column(String(64), nullable=True)
     scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     played_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consequences_applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 

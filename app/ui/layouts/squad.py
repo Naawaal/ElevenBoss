@@ -20,6 +20,11 @@ def build_squad_table(players: list[dict], page: int, page_size: int) -> str:
     lines.append("`──────────────────────────────────────────────────`")
     for p in page_players:
         display_name = p["display_name"]
+        if p.get("injury_days_remaining", 0) > 0:
+            display_name += " 🏥"
+        elif p.get("suspension_games_remaining", 0) > 0:
+            display_name += " 🟥"
+            
         if len(display_name) > 20:
             display_name = display_name[:17] + "..."
             
@@ -63,10 +68,16 @@ def build_squad_layout(
     
     options = []
     for p in page_players:
+        desc = f"{p['position']} | Age {p['age']} | OVR {p['overall']} | POT {p['potential']}"
+        if p.get("injury_days_remaining", 0) > 0:
+            desc += f" | Injured ({p['injury_days_remaining']}d)"
+        elif p.get("suspension_games_remaining", 0) > 0:
+            desc += f" | Suspended ({p['suspension_games_remaining']}g)"
+            
         options.append({
             "label": p["display_name"],
             "value": p["id"],
-            "description": f"{p['position']} | Age {p['age']} | OVR {p['overall']} | POT {p['potential']}"
+            "description": desc[:100]
         })
         
     select_custom_id = encode_custom_id("player", "view", "select", nonce)

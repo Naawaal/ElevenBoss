@@ -52,13 +52,13 @@ def test_live_kickoff_layout_payloads():
     view = build_live_kickoff_layout("Club A", "Club B", "nonce123")
     assert isinstance(view, V2View)
     payload = view.to_components()
-    assert len(payload) == 1  # Only kickoff message container
+    assert len(payload) == 2  # Kickoff message container + Skip action row
 
 def test_live_chunk_layout_payloads():
     view = build_live_chunk_layout("Club A", "Club B", 1, 0, 30, "Some events", "nonce123")
     assert isinstance(view, V2View)
     payload = view.to_components()
-    assert len(payload) == 2  # Header Container + Events Container
+    assert len(payload) == 3  # Header Container + Events Container + Skip action row
     assert "Club A" in payload[0]["components"][0]["content"]
     assert "Some events" in payload[1]["components"][0]["content"]
 
@@ -66,7 +66,7 @@ def test_live_halftime_layout_payloads():
     view = build_live_halftime_layout("Club A", "Club B", 1, 1, "Events", "Stats", "nonce123")
     assert isinstance(view, V2View)
     payload = view.to_components()
-    assert len(payload) == 3  # Header + Events + Stats
+    assert len(payload) == 4  # Header + Events + Stats + Skip action row
     assert "Stats" in payload[2]["components"][0]["content"]
 
 def test_live_fulltime_layout_payloads():

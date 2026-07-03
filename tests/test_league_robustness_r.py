@@ -191,10 +191,10 @@ class TestLeagueRobustnessR(unittest.IsolatedAsyncioTestCase):
     @patch("app.services.matchday_service.create_running_job")
     @patch("app.services.matchday_service.get_current_week_fixtures_for_update")
     @patch("app.services.matchday_service.get_clubs_in_league")
-    @patch("app.services.matchday_service.get_players_by_club_id")
+    @patch("app.services.lineup_service.get_players_by_club_id")
     @patch("app.services.player_service.PlayerService.get_available_players")
-    @patch("app.services.matchday_service.get_active_lineup")
-    @patch("app.services.matchday_service.save_lineup_with_players")
+    @patch("app.services.lineup_service.get_active_lineup")
+    @patch("app.services.lineup_service.save_lineup_with_players")
     @patch("app.services.matchday_service.simulate_match")
     @patch("app.services.matchday_service.mark_fixture_played")
     @patch("app.services.matchday_service.get_standing_for_update")
@@ -247,7 +247,10 @@ class TestLeagueRobustnessR(unittest.IsolatedAsyncioTestCase):
         mock_complete_season.return_value = True
         
         # Run matchday simulation
-        res = await MatchdayService.run_current_matchday("123", 999, is_admin=True)
+        with patch("app.services.matchday_service.get_players_by_club_id", return_value=players), \
+             patch("app.services.matchday_service.save_lineup_with_players", mock_save_lineup), \
+             patch("app.services.match_consequence_service.MatchConsequenceService.apply_league_match_consequences"):
+            res = await MatchdayService.run_current_matchday("123", 999, is_admin=True)
         
         self.assertTrue(res.success)
         # Lineups should be auto-refreshed for both bot clubs + fallbacks

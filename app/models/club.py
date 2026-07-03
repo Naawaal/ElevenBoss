@@ -59,6 +59,12 @@ class Club(Base):
         back_populates="club", 
         cascade="all, delete-orphan"
     )
+    facilities: Mapped[list["Facility"]] = relationship(
+        "Facility",
+        back_populates="club",
+        cascade="all, delete-orphan",
+        foreign_keys="Facility.club_id"
+    )
 
     __table_args__ = (
         UniqueConstraint("guild_id", "name", name="uq_club_guild_name"),

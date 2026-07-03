@@ -30,6 +30,8 @@ from app.ui.handlers import (
     handle_run_matchday,
     handle_view_recent_match,
     handle_view_match_detail,
+    handle_view_upgrade_center,
+    handle_upgrade_facility,
 )
 from app.error_reporting import capture_exception
 from app.ui.components import container, text_display, V2View
@@ -358,6 +360,14 @@ class ClubCog(commands.Cog):
                     new_view = await handle_view_help(guild_id, user_id, nonce)
                 elif custom_id.action == "refresh" and custom_id.target == "club":
                     new_view = await handle_open_locker_room(guild_id, user_id, nonce)
+
+            elif custom_id.scope == "facility":
+                from app.models.facility import FacilityType
+                if custom_id.action == "view" and custom_id.target == "upgrade_center":
+                    new_view = await handle_view_upgrade_center(guild_id, user_id, nonce)
+                elif custom_id.action == "upgrade":
+                    f_type = FacilityType(custom_id.target)
+                    new_view = await handle_upgrade_facility(guild_id, user_id, f_type, nonce)
 
             elif custom_id.scope == "squad":
                 if custom_id.action == "page":

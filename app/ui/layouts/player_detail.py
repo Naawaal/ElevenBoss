@@ -17,10 +17,22 @@ def build_player_detail_layout(player: dict, nonce: str) -> V2View:
     traits_list = player["traits"].get("list", []) if isinstance(player["traits"], dict) else []
     traits_str = ", ".join(t.replace("_", " ").title() for t in traits_list) if traits_list else "None"
     
+    status_lines = []
+    if player.get("injury_days_remaining", 0) > 0:
+        status_lines.append(f"🏥 **Injury:** {player['injury_type']} ({player['injury_days_remaining']} days remaining)")
+    if player.get("suspension_games_remaining", 0) > 0:
+        status_lines.append(f"🟥 **Suspended:** {player['suspension_games_remaining']} game(s) remaining")
+    if player.get("last_match_minutes", 0) > 0:
+        rating_val = player.get("last_match_rating")
+        rating_str = f"{rating_val:.1f}" if rating_val is not None else "N/A"
+        status_lines.append(f"📊 **Last Match:** {player['last_match_minutes']} mins | Rating: {rating_str}")
+    status_str = "\n".join(status_lines) + "\n\n" if status_lines else ""
+
     text = (
         f"### 🏃 PLAYER DETAIL — {player['display_name']}\n"
         f"📋 **Position:** {player['position']} | **Age:** {player['age']} years\n"
         f"📈 **Overall:** {player['overall']} OVR | **Potential:** {player['potential']} POT\n\n"
+        f"{status_str}"
         f"💪 **Fitness:**   {fitness_bar}\n"
         f"🎯 **Sharpness:** {sharpness_bar}\n"
         f"😊 **Morale:**    {morale_bar}\n\n"

@@ -111,13 +111,18 @@ class ClubService:
                 f"The club name '{display_name}' is already taken in this server."
             )
 
-        return await _create_club_no_commit(
+        club = await _create_club_no_commit(
             session=session,
             guild_id=guild_id,
             manager_id=manager_id,
             name=display_name,
             normalized_name=normalized,
         )
+
+        from app.services.facility_service import FacilityService
+        await FacilityService.ensure_default_facilities(session, club.id)
+
+        return club
 
 
 # ── Backwards-compatible module-level function ───────────────────────────────
@@ -140,6 +145,9 @@ async def get_manager_club_summary(guild_id: int | str, discord_user_id: int | s
             club = await get_club_by_manager_id(session, guild_id, manager.id)
             if not club:
                 return None
+
+            from app.services.facility_service import FacilityService
+            facilities = await FacilityService.ensure_default_facilities(session, club.id)
 
             players = await get_players_by_club_id(session, club.id)
             squad_size = len(players)
@@ -180,6 +188,16 @@ async def get_manager_club_summary(guild_id: int | str, discord_user_id: int | s
                     elif league.status == LeagueStatus.COMPLETED:
                         league_status_str = f"{league.name} (Completed)"
 
+            facilities_data = {
+                fac.facility_type.value: {
+                    "level": fac.level,
+                    "status": fac.status.value,
+                    "upgrade_started_at": fac.upgrade_started_at.isoformat() if fac.upgrade_started_at else None,
+                    "upgrade_completes_at": fac.upgrade_completes_at.isoformat() if fac.upgrade_completes_at else None,
+                }
+                for fac in facilities
+            }
+
             return {
                 "club_id": str(club.id),
                 "club_name": club.name,
@@ -195,7 +213,8 @@ async def get_manager_club_summary(guild_id: int | str, discord_user_id: int | s
                 "league_status": league_status_str,
                 "next_suggested_action": "View your squad details or examine player stats.",
                 "discord_user_id": str(discord_user_id),
-                "guild_id": str(guild_id)
+                "guild_id": str(guild_id),
+                "facilities": facilities_data
             }
     except Exception as e:
         logger.error(f"Failed to fetch club summary: {e}", exc_info=e)

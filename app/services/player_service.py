@@ -149,10 +149,9 @@ class PlayerService:
     async def get_available_players(club_id: uuid.UUID, session: AsyncSession) -> list[Player]:
         """
         Squad minus injured/suspended/retired players.
-        Currently, filters out retired players since injury/suspension tracking is not in DB yet.
         """
-        from app.repositories.player_repository import get_players_by_club_id
-        return await get_players_by_club_id(session, club_id)
+        from app.repositories.player_repository import get_available_players_by_club_id
+        return await get_available_players_by_club_id(session, club_id)
 
     @staticmethod
     async def age_players(season_id: uuid.UUID, session: AsyncSession) -> None:
@@ -297,7 +296,13 @@ class PlayerService:
                     "weak_foot": player.weak_foot,
                     "skill_moves": player.skill_moves,
                     "traits": player.traits or {"list": []},
-                    "nationality": player.nationality
+                    "nationality": player.nationality,
+                    "injury_type": player.injury_type,
+                    "injury_severity": player.injury_severity,
+                    "injury_days_remaining": player.injury_days_remaining,
+                    "suspension_games_remaining": player.suspension_games_remaining,
+                    "last_match_minutes": player.last_match_minutes,
+                    "last_match_rating": float(player.last_match_rating) if player.last_match_rating else None
                 }
         except Exception as e:
             logger.error(f"Failed to fetch player detail: {e}", exc_info=e)
@@ -335,7 +340,13 @@ class PlayerService:
                         "weak_foot": p.weak_foot,
                         "skill_moves": p.skill_moves,
                         "traits": p.traits or {"list": []},
-                        "nationality": p.nationality
+                        "nationality": p.nationality,
+                        "injury_type": p.injury_type,
+                        "injury_severity": p.injury_severity,
+                        "injury_days_remaining": p.injury_days_remaining,
+                        "suspension_games_remaining": p.suspension_games_remaining,
+                        "last_match_minutes": p.last_match_minutes,
+                        "last_match_rating": float(p.last_match_rating) if p.last_match_rating else None
                     }
                     for p in players
                 ]

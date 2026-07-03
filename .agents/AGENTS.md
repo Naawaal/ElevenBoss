@@ -85,6 +85,16 @@ The engine now uses a **per-interval loop** instead of a single-pass score-then-
   Cap the product of tactic and momentum multipliers combined using `config.max_combined_multiplier` (default `1.60`) to prevent runaway compounding.
 - **Engine purity**: `app/engine/` must never import from `app/models/`, `app/db/`, `app/services/`, `app/cogs/`, or any Discord library. Violations break testability and the clean simulation boundary.
 
+### Substitution, Injury, and Ratings Engine (Milestone B)
+
+The engine supports player substitutions, injuries, and ratings calculations. To support this:
+
+- **Consolidated Lineup Resolution**: Starters and bench players must be resolved using `LineupService.resolve_team_lineup` to handle validation, fallback auto-lineups, DTO mapping, and persistence toggling (via `persist_fallback`). Never write duplicate lineup resolving blocks.
+- **Unique Bench Slots in Memory**: Bench players must be initialized with unique group-based slots (`SUB_GK_X`, `SUB_DEF_X`, `SUB_MID_X`, `SUB_ATT_X`). These slots allow `slot_group` in `substitution_service.py` to identify player categories without creating collisions.
+- **Slot Inheritance on Substitution**: In `_apply_sub`, the subbed-in player must inherit the subbed-out starter's slot string (via `dataclasses.replace`) to maintain slot uniqueness in the active XI and preserve correct positional ratings/weights.
+- **Ratings & MOTM Eligibility**: Player ratings calculated by `calculate_player_ratings` must only apply to starters who played and subbed-in players. Bench players who remained unused for 90 minutes must not receive ratings, preventing them from winning MOTM.
+- **Persisting Match Events**: Always save both `SUBSTITUTION` and `INJURY` events during league matchday simulation loops to preserve complete match history in the database.
+
 ---
 
 ## 7. League Lifecycle & Robustness Guidelines (Milestone R)

@@ -13,6 +13,8 @@ from app.models.onboarding_session import OnboardingSession
 from app.models.squad_generation_run import SquadGenerationRun
 from app.models.season_snapshot import SeasonSnapshot
 from app.models.friendly import FriendlyThreadBreadcrumb, FriendlyCooldown
+from app.models.daily_tick_runs import DailyTickRun, DailyTickRunStatus
+from app.models.facility import Facility, FacilityType, FacilityStatus
 
 __all__ = [
     "GuildConfig",
@@ -38,4 +40,9 @@ __all__ = [
     "SeasonSnapshot",
     "FriendlyThreadBreadcrumb",
     "FriendlyCooldown",
+    "DailyTickRun",
+    "DailyTickRunStatus",
+    "Facility",
+    "FacilityType",
+    "FacilityStatus",
 ]

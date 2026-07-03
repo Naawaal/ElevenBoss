@@ -20,6 +20,29 @@ async def get_players_by_club_id(session: AsyncSession, club_id: uuid.UUID) -> l
     result = await session.execute(stmt)
     return list(result.scalars().all())
 
+async def get_available_players_by_club_id(session: AsyncSession, club_id: uuid.UUID) -> list[Player]:
+    """
+    Fetch all active, uninjured, and non-suspended players belonging to a club, ordered by overall desc.
+    """
+    players = await get_players_by_club_id(session, club_id)
+    available = []
+    for p in players:
+        is_retired = getattr(p, "is_retired", False)
+        
+        inj_days = getattr(p, "injury_days_remaining", 0)
+        if not isinstance(inj_days, int):
+            inj_days = 0
+            
+        susp_games = getattr(p, "suspension_games_remaining", 0)
+        if not isinstance(susp_games, int):
+            susp_games = 0
+            
+        if not is_retired and inj_days <= 0 and susp_games <= 0:
+            available.append(p)
+            
+    available.sort(key=lambda x: getattr(x, "overall", 0) or 0, reverse=True)
+    return available
+
 async def get_player_by_id(session: AsyncSession, player_id: uuid.UUID) -> Player | None:
     """
     Fetch a player by their ID.

@@ -33,7 +33,13 @@ async def get_squad(guild_id: int | str, discord_user_id: int | str) -> list[dic
                     "preferred_foot": p.preferred_foot,
                     "weak_foot": p.weak_foot,
                     "skill_moves": p.skill_moves,
-                    "traits": p.traits or {"list": []}
+                    "traits": p.traits or {"list": []},
+                    "injury_type": p.injury_type,
+                    "injury_severity": p.injury_severity,
+                    "injury_days_remaining": p.injury_days_remaining,
+                    "suspension_games_remaining": p.suspension_games_remaining,
+                    "last_match_minutes": p.last_match_minutes,
+                    "last_match_rating": float(p.last_match_rating) if p.last_match_rating else None
                 }
                 for p in players
             ]

@@ -121,10 +121,10 @@ class TestMatchdayService(unittest.IsolatedAsyncioTestCase):
     @patch("app.services.matchday_service.create_running_job")
     @patch("app.services.matchday_service.get_current_week_fixtures_for_update")
     @patch("app.services.matchday_service.get_clubs_in_league")
-    @patch("app.services.matchday_service.get_active_lineup")
-    @patch("app.services.matchday_service.get_players_by_club_id")
+    @patch("app.services.lineup_service.get_active_lineup")
+    @patch("app.services.lineup_service.get_players_by_club_id")
     @patch("app.services.player_service.PlayerService.get_available_players")
-    @patch("app.services.matchday_service.save_lineup_with_players")
+    @patch("app.services.lineup_service.save_lineup_with_players")
     @patch("app.services.matchday_service.create_match_result")
     @patch("app.services.matchday_service.bulk_create_match_events")
     @patch("app.services.matchday_service.get_standing_for_update")
@@ -227,7 +227,10 @@ class TestMatchdayService(unittest.IsolatedAsyncioTestCase):
         # Fixture weeks max_week=5
         mock_week_range.return_value = (1, 5)
 
-        res = await MatchdayService.run_current_matchday("123", "user_123", is_admin=True)
+        with patch("app.services.matchday_service.get_players_by_club_id", side_effect=[home_players, away_players]), \
+             patch("app.services.matchday_service.save_lineup_with_players", mock_save_lineup), \
+             patch("app.services.match_consequence_service.MatchConsequenceService.apply_league_match_consequences"):
+            res = await MatchdayService.run_current_matchday("123", "user_123", is_admin=True)
         self.assertTrue(res.success)
         self.assertEqual(res.code, "success")
         self.assertEqual(res.simulated_week, 2)

@@ -329,6 +329,7 @@ class MatchdayService:
                 await session.flush()
                 logger.info(f"bot_lineups_refreshed: guild_id={guild_id}, count={len(bot_clubs)}")
                     
+                results_list = []
                 # Simulate each fixture
                 for fixture in fixtures:
                     home_club = fixture.home_club
@@ -474,6 +475,16 @@ class MatchdayService:
                         ))
                     await bulk_create_match_events(session, events_list)
                     logger.info(f"match_events_saved: fixture_id={fixture.id}, count={len(events_list)}")
+                    
+                    # Apply persistent match consequences (fitness decay, red cards, injuries)
+                    from app.services.match_consequence_service import MatchConsequenceService
+                    await MatchConsequenceService.apply_league_match_consequences(
+                        session=session,
+                        fixture_id=fixture.id,
+                        sim_result=sim_result,
+                        home_club_id=home_club.id,
+                        away_club_id=away_club.id
+                    )
                     
                     # Update standings
                     home_standing = await get_standing_for_update(session, guild_id, season.id, home_club.id)
