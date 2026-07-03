@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.models.manager import Manager
@@ -20,8 +21,16 @@ async def create_manager(session: AsyncSession, guild_id: int | str, discord_use
     manager = Manager(
         guild_id=str(guild_id),
         discord_user_id=str(discord_user_id),
-        reputation=100,
+        career_xp=0,
         coins=1000
     )
     session.add(manager)
     return manager
+
+async def get_manager_by_id(session: AsyncSession, manager_id: uuid.UUID) -> Manager | None:
+    """
+    Fetch a manager by their unique ID.
+    """
+    stmt = select(Manager).where(Manager.id == manager_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()

@@ -15,6 +15,8 @@ from app.models.season_snapshot import SeasonSnapshot
 from app.models.friendly import FriendlyThreadBreadcrumb, FriendlyCooldown
 from app.models.daily_tick_runs import DailyTickRun, DailyTickRunStatus
 from app.models.facility import Facility, FacilityType, FacilityStatus
+from app.models.manager_xp_event import ManagerXPEvent
+from app.models.club_transaction import ClubTransaction
 
 __all__ = [
     "GuildConfig",
@@ -45,4 +47,6 @@ __all__ = [
     "Facility",
     "FacilityType",
     "FacilityStatus",
+    "ManagerXPEvent",
+    "ClubTransaction",
 ]

@@ -18,7 +18,7 @@ class Club(Base):
     normalized_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     short_name: Mapped[str | None] = mapped_column(String(32), nullable=True)
     is_bot_controlled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    budget: Mapped[int] = mapped_column(BigInteger, default=10000000, nullable=False)
+    budget: Mapped[int] = mapped_column(BigInteger, default=400_000, nullable=False)
     reputation: Mapped[int] = mapped_column(Integer, default=500, nullable=False)
     stadium_capacity: Mapped[int] = mapped_column(Integer, default=10000, nullable=False)
     overall_rating: Mapped[int | None] = mapped_column(Integer, nullable=True)

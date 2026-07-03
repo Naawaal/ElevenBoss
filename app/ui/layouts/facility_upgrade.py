@@ -64,6 +64,8 @@ def build_facility_upgrade_layout(data: dict, nonce: str, success_message: str |
             cost = config.FACILITY_UPGRADE_COSTS.get(level, 0)
             duration = config.FACILITY_UPGRADE_DURATIONS_HOURS.get(level, 0)
             cost_str = f"Cost: `{format_money(cost)}` (Duration: `{duration}h`)"
+            if not info.get("manager_level_met", True):
+                cost_str += f" | 🔒 **Locked** — requires Manager Level `{info.get('required_manager_level')}`"
 
         lines.append(f"**{display_name}** [Level {level}] — {status_str}")
         lines.append(f"└─ {cost_str}\n")
@@ -80,7 +82,8 @@ def build_facility_upgrade_layout(data: dict, nonce: str, success_message: str |
         btn_label = display_name.split(" ")[1] # e.g. "Stadium", "Pitch", "Academy", "Clinic", "HQ"
         
         # Determine if disabled
-        is_disabled = (info["level"] >= config.FACILITY_MAX_LEVEL) or (info["status"] == "UPGRADING")
+        can_up = info.get("can_upgrade", True)
+        is_disabled = (info["level"] >= config.FACILITY_MAX_LEVEL) or (info["status"] == "UPGRADING") or (not can_up)
         upgrade_buttons.append(primary_button(f"Upgrade {btn_label}", btn_id, disabled=is_disabled))
 
     back_id = encode_custom_id("locker", "open", "club", nonce)

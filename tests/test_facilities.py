@@ -91,6 +91,14 @@ class TestFacilities(unittest.IsolatedAsyncioTestCase):
             mock_res = MagicMock()
             if "clubs" in stmt_str:
                 mock_res.scalar_one_or_none.return_value = self.club
+            elif "managers" in stmt_str:
+                from app.models.manager import Manager
+                mock_res.scalar_one_or_none.return_value = Manager(
+                    guild_id=str(self.guild_id),
+                    discord_user_id="123",
+                    club_id=self.club_id,
+                    career_xp=1000
+                )
             elif "facilities" in stmt_str:
                 if "for update" in stmt_str:
                     mock_res.scalar_one_or_none.return_value = fac
@@ -127,6 +135,14 @@ class TestFacilities(unittest.IsolatedAsyncioTestCase):
             mock_res = MagicMock()
             if "clubs" in stmt_str:
                 mock_res.scalar_one_or_none.return_value = self.club
+            elif "managers" in stmt_str:
+                from app.models.manager import Manager
+                mock_res.scalar_one_or_none.return_value = Manager(
+                    guild_id=str(self.guild_id),
+                    discord_user_id="123",
+                    club_id=self.club_id,
+                    career_xp=1000
+                )
             elif "facilities" in stmt_str:
                 if "for update" in stmt_str:
                     mock_res.scalar_one_or_none.return_value = fac

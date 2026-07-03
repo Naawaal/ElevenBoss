@@ -44,9 +44,24 @@ async def handle_upgrade_facility(guild_id: int, discord_user_id: int, facility_
             raise ValueError("Manager or club not found. Please register first.")
 
         try:
+            from app.repositories import get_club_by_manager_id
+            club = await get_club_by_manager_id(session, guild_id, manager.id)
+            if not club:
+                raise ValueError("Club not found")
+
+            budget_before = club.budget
             facility = await FacilityService.start_upgrade(session, manager.club_id, facility_type)
+            budget_after = club.budget
+            cost = budget_before - budget_after
+
+            from app.ui.formatters import format_money
+            success_msg = (
+                f"Upgrade Started!\n"
+                f"**{facility_type.value.replace('_', ' ').title()}** Lv. {facility.level} → Lv. {facility.level + 1}\n"
+                f"Cost: `{format_money(cost)}`\n"
+                f"Budget: `{format_money(budget_before)}` → `{format_money(budget_after)}`"
+            )
             await session.commit()
-            success_msg = f"Upgrade started for {facility_type.value.replace('_', ' ').title()} to Level {facility.level + 1}!"
         except ValueError as ve:
             await session.rollback()
             raise ve

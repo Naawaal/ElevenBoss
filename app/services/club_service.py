@@ -188,15 +188,36 @@ async def get_manager_club_summary(guild_id: int | str, discord_user_id: int | s
                     elif league.status == LeagueStatus.COMPLETED:
                         league_status_str = f"{league.name} (Completed)"
 
-            facilities_data = {
-                fac.facility_type.value: {
+            from app.services.manager_progress_service import ManagerProgressService
+            prog = ManagerProgressService.calculate_progress(manager.career_xp)
+
+            from app.services.facility_service import FacilityService
+            facilities_data = {}
+            for fac in facilities:
+                req_dto = await FacilityService.get_upgrade_requirement_dto(
+                    session=session,
+                    club_id=club.id,
+                    facility_type=fac.facility_type
+                )
+                facilities_data[fac.facility_type.value] = {
                     "level": fac.level,
                     "status": fac.status.value,
                     "upgrade_started_at": fac.upgrade_started_at.isoformat() if fac.upgrade_started_at else None,
                     "upgrade_completes_at": fac.upgrade_completes_at.isoformat() if fac.upgrade_completes_at else None,
+                    "required_manager_level": req_dto.required_manager_level,
+                    "current_manager_level": req_dto.current_manager_level,
+                    "manager_level_met": req_dto.manager_level_met,
+                    "cost": req_dto.cost,
+                    "budget_met": req_dto.budget_met,
+                    "is_max_level": req_dto.is_max_level,
+                    "is_already_upgrading": req_dto.is_already_upgrading,
+                    "another_upgrade_active": req_dto.another_upgrade_active,
+                    "can_upgrade": req_dto.can_upgrade,
+                    "lock_reason": req_dto.lock_reason,
                 }
-                for fac in facilities
-            }
+
+            from app.services.economy_service import EconomyService
+            recent_tx_dtos = await EconomyService.get_recent_transaction_dtos(session, club_id=club.id, limit=3)
 
             return {
                 "club_id": str(club.id),
@@ -214,7 +235,28 @@ async def get_manager_club_summary(guild_id: int | str, discord_user_id: int | s
                 "next_suggested_action": "View your squad details or examine player stats.",
                 "discord_user_id": str(discord_user_id),
                 "guild_id": str(guild_id),
-                "facilities": facilities_data
+                "facilities": facilities_data,
+                "manager_progress": {
+                    "career_xp": prog.career_xp,
+                    "manager_level": prog.manager_level,
+                    "current_level_xp": prog.current_level_xp,
+                    "next_level_xp": prog.next_level_xp,
+                    "xp_into_level": prog.xp_into_level,
+                    "xp_needed_for_next_level": prog.xp_needed_for_next_level,
+                    "progress_percent": prog.progress_percent,
+                },
+                "recent_transactions": [
+                    {
+                        "amount": tx.amount,
+                        "source_type": tx.source_type,
+                        "source_id": tx.source_id,
+                        "description": tx.description,
+                        "balance_before": tx.balance_before,
+                        "balance_after": tx.balance_after,
+                        "created_at": tx.created_at,
+                    }
+                    for tx in recent_tx_dtos
+                ]
             }
     except Exception as e:
         logger.error(f"Failed to fetch club summary: {e}", exc_info=e)

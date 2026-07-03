@@ -54,10 +54,10 @@ class Config:
     FACILITY_MAX_LEVEL: int = 5
 
     FACILITY_UPGRADE_COSTS: dict[int, int] = field(default_factory=lambda: {
-        1: 10_000,
-        2: 35_000,
-        3: 90_000,
-        4: 200_000,
+        1: 250_000,
+        2: 750_000,
+        3: 1_600_000,
+        4: 3_500_000,
     })
 
     FACILITY_UPGRADE_DURATIONS_HOURS: dict[int, int] = field(default_factory=lambda: {
@@ -90,6 +90,95 @@ class Config:
         4: 40_000,
         5: 60_000,
     })
+
+    MANAGER_LEVEL_XP_THRESHOLDS: dict[int, int] = field(default_factory=lambda: {
+        1: 0,
+        2: 100,
+        3: 240,
+        4: 420,
+        5: 650,
+        6: 930,
+        7: 1260,
+        8: 1640,
+        9: 2070,
+        10: 2550,
+        11: 3080,
+        12: 3660,
+        13: 4290,
+        14: 4970,
+        15: 5700,
+        16: 6480,
+        17: 7310,
+        18: 8190,
+        19: 9120,
+        20: 10100,
+        21: 11130,
+        22: 12210,
+        23: 13340,
+        24: 14520,
+        25: 15750,
+        26: 17030,
+        27: 18360,
+        28: 19740,
+        29: 21170,
+        30: 22650,
+        31: 24180,
+        32: 25760,
+        33: 27390,
+        34: 29070,
+        35: 30800,
+        36: 32580,
+    })
+
+    FACILITY_MANAGER_LEVEL_REQUIREMENTS: dict[int, int] = field(default_factory=lambda: {
+        2: 2,
+        3: 4,
+        4: 7,
+        5: 10,
+        6: 14,
+        7: 18,
+        8: 23,
+        9: 29,
+        10: 36,
+    })
+
+    MANAGER_XP_LEAGUE_PLAYED: int = 40
+    MANAGER_XP_LEAGUE_WIN: int = 30
+    MANAGER_XP_LEAGUE_DRAW: int = 15
+    MANAGER_XP_LEAGUE_LOSS: int = 10
+    MANAGER_XP_CLEAN_SHEET: int = 10
+    MANAGER_XP_SCORED_3_PLUS: int = 10
+
+    CLUB_REVENUE_LEAGUE_PLAYED: int = 35_000
+    CLUB_REVENUE_LEAGUE_WIN:    int = 25_000
+    CLUB_REVENUE_LEAGUE_DRAW:   int = 12_000
+    CLUB_REVENUE_LEAGUE_LOSS:   int =  5_000
+    CLUB_REVENUE_CLEAN_SHEET:   int =  8_000
+    CLUB_REVENUE_SCORED_3_PLUS: int =  8_000
+    CLUB_REVENUE_SPONSOR_BASE:  int = 15_000
+
+    STADIUM_REVENUE_MULTIPLIER_BY_LEVEL: dict[int, float] = field(default_factory=lambda: {
+        1: 1.00,
+        2: 1.08,
+        3: 1.16,
+        4: 1.28,
+        5: 1.42,
+    })
+
+    HQ_SPONSOR_REVENUE_MULTIPLIER_BY_LEVEL: dict[int, float] = field(default_factory=lambda: {
+        1: 1.00,
+        2: 1.05,
+        3: 1.10,
+        4: 1.18,
+        5: 1.25,
+    })
+
+    CLUB_TREASURY_CAP_BASE:              int = 5_000_000
+    CLUB_TREASURY_CAP_PER_MANAGER_LEVEL: int =   200_000
+    CLUB_TREASURY_CAP_PER_HQ_LEVEL:      int = 1_000_000
+
+    ECONOMY_SOURCE_LEAGUE_MATCH_REVENUE: str = "league_match_revenue"
+    ECONOMY_SOURCE_FACILITY_UPGRADE_COST: str = "facility_upgrade_cost"
 
 # Create a singleton config instance
 config = Config()

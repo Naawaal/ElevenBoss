@@ -97,9 +97,26 @@ def build_club_dashboard_layout(data: dict, nonce: str, has_image: bool = False)
     offices_desc = f" HQ Level {hq_lvl}{hq_bar}"
     offices_line_2 = f"║{offices_desc:<53}║"
 
+    prog_data = data.get("manager_progress", {})
+    m_level = prog_data.get("manager_level", 1)
+    c_xp = prog_data.get("career_xp", 0)
+    next_xp = prog_data.get("next_level_xp")
+    prog_pct = prog_data.get("progress_percent", 0.0)
+
+    # Build Career XP progress bar (10 blocks)
+    filled_blocks = min(10, max(0, int(prog_pct / 10)))
+    xp_bar = "▰" * filled_blocks + "▱" * (10 - filled_blocks)
+
+    if next_xp is not None:
+        xp_display = f"`{c_xp} / {next_xp}` XP ({prog_pct}%) {xp_bar}"
+    else:
+        xp_display = f"`{c_xp}` XP (MAX LEVEL) {xp_bar}"
+
     text = (
         f"📊 **{data['club_name'].upper()} CAMPUS MAP**\n"
         f"👤 **Manager:** <@{data['discord_user_id']}>\n"
+        f"👔 **Manager Level:** `{m_level}`\n"
+        f"⭐ **Career XP:** {xp_display}\n"
         f"💰 **Budget:** `{budget_str}`\n"
         f"🏆 **League Status:** `{data['league_status']}`\n"
         f"```yaml\n"
@@ -123,6 +140,19 @@ def build_club_dashboard_layout(data: dict, nonce: str, has_image: bool = False)
         f"└─ 🔮 **Top Prospect:** **{data['highest_pot_name']}** (POT `{data['highest_pot_val']}`)\n\n"
         f"⭐ **Reputation:** `⭐⭐⭐` (3.0/5)"
     )
+
+    recent_transactions = data.get("recent_transactions", [])
+    activity_lines = []
+    activity_lines.append("\n💵 **Recent Money Activity**")
+    if recent_transactions:
+        for tx in recent_transactions:
+            sign = "+" if tx["amount"] >= 0 else "-"
+            formatted_val = format_money(abs(tx["amount"]))
+            activity_lines.append(f"• {sign}{formatted_val} {tx['description']}")
+    else:
+        activity_lines.append("• *No recent activity*")
+    
+    text += "\n" + "\n".join(activity_lines)
     
     squad_id = encode_custom_id("locker", "view", "squad", nonce)
     upgrade_center_id = encode_custom_id("facility", "view", "upgrade_center", nonce)

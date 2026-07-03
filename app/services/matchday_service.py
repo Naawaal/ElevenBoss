@@ -485,6 +485,28 @@ class MatchdayService:
                         home_club_id=home_club.id,
                         away_club_id=away_club.id
                     )
+
+                    # Award Manager XP (League fixtures only, checked inside the service)
+                    from app.services.manager_progress_service import ManagerProgressService
+                    await ManagerProgressService.award_league_fixture_xp(
+                        session=session,
+                        fixture=fixture,
+                        home_club=home_club,
+                        away_club=away_club,
+                        sim_result=sim_result
+                    )
+
+                    await session.flush()
+
+                    # Award Club Economy Matchday Revenue (League fixtures only, checked inside the service)
+                    from app.services.economy_service import EconomyService
+                    await EconomyService.award_league_fixture_revenue(
+                        session=session,
+                        fixture=fixture,
+                        home_club=home_club,
+                        away_club=away_club,
+                        sim_result=sim_result
+                    )
                     
                     # Update standings
                     home_standing = await get_standing_for_update(session, guild_id, season.id, home_club.id)

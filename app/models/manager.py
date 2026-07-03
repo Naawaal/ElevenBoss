@@ -12,7 +12,7 @@ class Manager(Base):
     guild_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     discord_user_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     club_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("clubs.id", ondelete="SET NULL"), nullable=True)
-    reputation: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    career_xp: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     coins: Mapped[int] = mapped_column(Integer, default=1000, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -21,6 +21,13 @@ class Manager(Base):
         onupdate=func.now(), 
         nullable=False
     )
+
+    def __init__(self, **kwargs):
+        if "career_xp" not in kwargs:
+            kwargs["career_xp"] = 0
+        if "coins" not in kwargs:
+            kwargs["coins"] = 1000
+        super().__init__(**kwargs)
 
     # Relationships
     club: Mapped["Club"] = relationship(

@@ -1,7 +1,13 @@
 """
 Database repositories for data access logic
 """
-from app.repositories.manager_repository import get_manager_by_discord_id, create_manager
+from app.repositories.manager_repository import get_manager_by_discord_id, create_manager, get_manager_by_id
+from app.repositories.manager_progress_repository import (
+    get_manager_by_club_id, insert_xp_event_if_new, add_career_xp
+)
+from app.repositories.economy_repository import (
+    insert_transaction_if_new, get_recent_transactions_by_club_id
+)
 from app.repositories.guild_config_repository import (
     get_or_create_guild_config, get_or_create_config,
     update_channels, update_admin_role, update_automation_settings,
