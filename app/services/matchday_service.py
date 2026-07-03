@@ -40,7 +40,7 @@ from app.models.fixture import Fixture, FixtureStatus
 from app.models.match import MatchEvent, MatchEventType
 from app.models.season import SeasonStatus
 from app.models.league import LeagueStatus
-from app.models.scheduler_run import SchedulerRunStatus
+from app.models.scheduler_run import SchedulerRun, SchedulerRunStatus
 
 logger = logging.getLogger("app.services.matchday_service")
 
@@ -223,13 +223,59 @@ class MatchdayService:
                         message=f"Week {current_week} matches have already been simulated."
                     )
                 elif existing_job and existing_job.status == SchedulerRunStatus.RUNNING:
-                    logger.info(f"matchday_run_rejected: reason=job_in_progress, job_key={job_key}")
-                    return MatchdayRunResult(
-                        success=False,
-                        code="matchday_in_progress",
-                        message=f"Week {current_week} simulation is already in progress."
+                    from datetime import timedelta, timezone
+                    from sqlalchemy import update as sa_update
+                    from app.repositories import STALE_MATCHDAY_LOCK_HOURS
+
+                    stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=STALE_MATCHDAY_LOCK_HOURS)
+
+                    # Atomic conditional UPDATE — only one concurrent caller can win this.
+                    # If both the startup sweep and this inline check race on the same stale
+                    # lock, the one that executes the UPDATE first will get rowcount=1 and
+                    # proceed; the second will get rowcount=0 and branch to the re-fetch below.
+                    update_stmt = (
+                        sa_update(SchedulerRun)
+                        .where(
+                            SchedulerRun.job_key == job_key,
+                            SchedulerRun.status == SchedulerRunStatus.RUNNING,
+                            SchedulerRun.started_at < stale_cutoff,
+                        )
+                        .values(
+                            status=SchedulerRunStatus.FAILED,
+                            finished_at=datetime.now(timezone.utc),
+                            error="stale_lock_recovered_inline",
+                        )
+                        .execution_options(synchronize_session="fetch")
                     )
-                    
+                    recovery_result = await session.execute(update_stmt)
+
+                    if recovery_result.rowcount == 0:
+                        # Zero rows updated: either the lock isn't stale yet,
+                        # or the startup sweep already won the race.
+                        # Re-fetch to distinguish.
+                        current_job = await get_job_by_key(session, job_key)
+                        if current_job and current_job.status == SchedulerRunStatus.RUNNING:
+                            # Genuinely still in-progress (not stale) — reject as normal
+                            logger.info(f"matchday_run_rejected: reason=job_in_progress, job_key={job_key}")
+                            return MatchdayRunResult(
+                                success=False,
+                                code="matchday_in_progress",
+                                message=f"Week {current_week} simulation is already in progress.",
+                            )
+                        # Sweep already recovered it to FAILED — fall through to fresh lock
+                        logger.info(
+                            f"matchday_stale_lock_already_recovered: job_key={job_key}, "
+                            f"recovered_by=startup_sweep"
+                        )
+                    else:
+                        # This caller won the race — lock flipped to FAILED, fall through
+                        logger.warning(
+                            f"matchday_stale_lock_recovered: job_key={job_key}, "
+                            f"recovered_by=inline_check, "
+                            f"started_at={existing_job.started_at}"
+                        )
+                    # Fall through — create_running_job below creates the fresh RUNNING lock
+
                 # Setup job run lock
                 job = await create_running_job(
                     session=session,

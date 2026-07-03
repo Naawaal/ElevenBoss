@@ -44,5 +44,13 @@ from app.repositories.match_repository import (
 from app.repositories.scheduler_run_repository import (
     create_running_job, mark_job_success,
     mark_job_failed, get_job_by_key,
-    get_or_create_running_job
+    get_or_create_running_job,
+    mark_stale_running_jobs_failed,
+    STALE_MATCHDAY_LOCK_HOURS,
 )
+from app.repositories.friendly_repository import (
+    get_friendly_cooldown, set_friendly_cooldown, clean_expired_cooldowns,
+    create_thread_breadcrumb, update_breadcrumb_status, get_cleanup_due_breadcrumbs,
+    get_dangling_breadcrumbs, delete_breadcrumb, update_breadcrumb_cleanup_error
+)
+

@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import discord
+from datetime import datetime, timezone, timedelta
 
 from app.db.session import get_session
 from app.repositories.guild_config_repository import get_or_create_guild_config
@@ -43,7 +44,7 @@ class FriendlyLivePlaybackService:
 
     def cancel_playback(self, session_id: str):
         """
-        Cancels the active playback task if it exists.
+        Cancels the active playback task if it exists (does not await).
         """
         task = self._active_playback_tasks.pop(session_id, None)
         if task and not task.done():
@@ -57,11 +58,19 @@ class FriendlyLivePlaybackService:
         interaction: discord.Interaction
     ) -> discord.ui.View:
         """
-        Cancels the active playback, marks session as completed, and returns the final Full-Time layout.
-        Also schedules thread auto-cleanup.
+        Cancels the active playback, awaits task cancellation to prevent races,
+        marks session as completed, and returns the final Full-Time layout.
+        Also schedules thread auto-cleanup in the database.
         """
-        self.cancel_playback(session_id)
-        
+        task = self._active_playback_tasks.pop(session_id, None)
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            logger.info(f"friendly_playback_task_cancelled_and_awaited: session={session_id}")
+            
         session_obj = ui_session_manager.get_session(session_id)
         if session_obj:
             session_obj.metadata["status"] = "completed"
@@ -83,33 +92,38 @@ class FriendlyLivePlaybackService:
             session_id
         )
         
-        # Schedule deferred deletion of thread if thread details are stored
+        # Schedule cleanup in DB instead of in-process sleep
+        thread_id = None
         if session_obj:
             thread_id = session_obj.metadata.get("thread_id")
-            starter_msg_id = session_obj.metadata.get("starter_message_id")
-            if thread_id and interaction and interaction.guild:
-                thread = interaction.guild.get_thread(thread_id) or await interaction.guild.fetch_channel(thread_id)
-                if thread:
-                    # Notify thread of upcoming deletion
-                    try:
-                        await thread.send(content="🏁 *This match thread and its logs will be automatically deleted in 2 minutes.*")
-                    except Exception:
-                        pass
-                    
-                    starter_msg = None
-                    if starter_msg_id:
-                        try:
-                            parent = thread.parent
-                            if parent:
-                                starter_msg = await parent.fetch_message(int(starter_msg_id))
-                        except Exception:
-                            pass
-                            
-                    asyncio.create_task(self._delete_thread_after_delay(thread, starter_msg, delay_seconds=120))
             
-            # Clean up practice session immediately
-            if session_obj.metadata.get("type") == "friendly_practice":
-                ui_session_manager._sessions.pop(session_id, None)
+        if not thread_id and interaction:
+            if isinstance(interaction.channel, discord.Thread):
+                thread_id = interaction.channel.id
+                
+        if thread_id:
+            try:
+                from app.repositories.friendly_repository import update_breadcrumb_status
+                cleanup_after = datetime.now(timezone.utc) + timedelta(minutes=2)
+                async with get_session() as session:
+                    await update_breadcrumb_status(session, thread_id, "COMPLETED", cleanup_after)
+                    await session.commit()
+                logger.info(f"friendly_playback_skip_complete: scheduled cleanup in DB for thread {thread_id}")
+            except Exception as be:
+                logger.error(f"Failed to update thread breadcrumb to completed on skip: {be}", exc_info=be)
+                
+            # Send notification to the thread if possible
+            if interaction and interaction.guild:
+                try:
+                    thread = interaction.guild.get_thread(thread_id) or await interaction.guild.fetch_channel(thread_id)
+                    if thread:
+                        await thread.send(content="🏁 *This match thread and its logs will be automatically deleted in 2 minutes.*")
+                except Exception:
+                    pass
+            
+        # Clean up practice session immediately
+        if session_obj and session_obj.metadata.get("type") == "friendly_practice":
+            ui_session_manager._sessions.pop(session_id, None)
                 
         return view
 
@@ -165,6 +179,30 @@ class FriendlyLivePlaybackService:
                 if starter_msg:
                     session_obj.metadata["starter_message_id"] = starter_msg.id
                     
+            # Create thread breadcrumb in DB for crash resilience
+            try:
+                participant_ids = []
+                if session_obj:
+                    challenger_id = session_obj.metadata.get("challenger_user_id") or session_obj.discord_user_id
+                    participant_ids.append(int(challenger_id))
+                    opponent_id = session_obj.metadata.get("opponent_user_id")
+                    if opponent_id:
+                        participant_ids.append(int(opponent_id))
+                        
+                from app.repositories.friendly_repository import create_thread_breadcrumb
+                async with get_session() as session:
+                    await create_thread_breadcrumb(
+                        session=session,
+                        thread_id=thread.id,
+                        parent_message_id=starter_msg.id if starter_msg else None,
+                        guild_id=interaction.guild_id,
+                        participant_ids=participant_ids,
+                        status="PLAYING"
+                    )
+                    await session.commit()
+            except Exception as be:
+                logger.error(f"Failed to create thread breadcrumb in DB: {be}", exc_info=be)
+
             # 2. Add Users to Thread
             if session_obj:
                 # Add Challenger
@@ -246,7 +284,7 @@ class FriendlyLivePlaybackService:
                 if step < 90:
                     await asyncio.sleep(self.step_delay_seconds)
                     
-            # 5. Thread Complete: Schedule auto-cleanup
+            # 5. Thread Complete: Schedule auto-cleanup in DB instead of in-process sleep
             session_obj = ui_session_manager.get_session(session_id)
             if session_obj:
                 session_obj.metadata["status"] = "completed"
@@ -256,7 +294,15 @@ class FriendlyLivePlaybackService:
             except Exception:
                 pass
                 
-            asyncio.create_task(self._delete_thread_after_delay(thread, starter_msg, delay_seconds=120))
+            try:
+                from app.repositories.friendly_repository import update_breadcrumb_status
+                cleanup_after = datetime.now(timezone.utc) + timedelta(minutes=2)
+                async with get_session() as session:
+                    await update_breadcrumb_status(session, thread.id, "COMPLETED", cleanup_after)
+                    await session.commit()
+                logger.info(f"friendly_playback_complete: scheduled cleanup in DB for thread {thread.id}")
+            except Exception as be:
+                logger.error(f"Failed to update thread breadcrumb to completed in DB: {be}", exc_info=be)
             
             # Clean up practice session
             if session_obj and session_obj.metadata.get("type") == "friendly_practice":
@@ -270,27 +316,6 @@ class FriendlyLivePlaybackService:
         except Exception as e:
             logger.error(f"Error in friendly match playback loop: {e}", exc_info=e)
             self._active_playback_tasks.pop(session_id, None)
-
-    async def _delete_thread_after_delay(
-        self,
-        thread: discord.Thread,
-        starter_msg: discord.Message | None,
-        delay_seconds: int = 120
-    ):
-        """
-        Waits for delay_seconds then deletes the friendly match thread and its public starter message.
-        """
-        await asyncio.sleep(delay_seconds)
-        try:
-            if starter_msg:
-                try:
-                    await starter_msg.delete()
-                except Exception:
-                    pass
-            await thread.delete()
-            logger.info(f"Deleted friendly match thread {thread.id} after delay.")
-        except Exception as e:
-            logger.warning(f"Failed to delete friendly match thread {thread.id}: {e}")
 
 # Global singleton playback service
 friendly_playback_service = FriendlyLivePlaybackService()

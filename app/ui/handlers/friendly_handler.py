@@ -1,7 +1,9 @@
 import logging
 import uuid
 import discord
-from datetime import datetime, timezone
+import asyncio
+import random
+from datetime import datetime, timezone, timedelta
 
 from app.db.session import get_session
 from app.ui.handlers.session import ui_session_manager, UiSession
@@ -18,10 +20,33 @@ from app.ui.components import V2View, container, text_display
 
 logger = logging.getLogger("app.ui.handlers.friendly_handler")
 
+async def expire_invite_after_delay(interaction: discord.Interaction, nonce: str, delay_seconds: int = 300):
+    """
+    Background task that sleeps for 5 minutes and then updates the invite card to show it has expired
+    and removes interactive buttons.
+    """
+    await asyncio.sleep(delay_seconds)
+    session_obj = ui_session_manager.get_session(nonce)
+    if session_obj and session_obj.metadata.get("status") == "pending":
+        session_obj.metadata["status"] = "expired"
+        ui_session_manager._sessions.pop(nonce, None)
+        
+        expired_payload = [
+            container([
+                text_display("❌ *This friendly challenge has expired (timeout after 5 minutes).*")
+            ])
+        ]
+        try:
+            await interaction.edit_original_response(view=V2View(expired_payload))
+            logger.info(f"friendly_challenge_expired_timeout: session={nonce}")
+        except Exception as e:
+            logger.warning(f"Failed to update expired invite message for session {nonce}: {e}")
+
 async def handle_friendly_challenge(
     guild_id: int,
     challenger_user: discord.Member,
-    opponent_member: discord.Member
+    opponent_member: discord.Member,
+    interaction: discord.Interaction = None
 ) -> V2View:
     """
     Creates a friendly challenge invitation card.
@@ -33,16 +58,16 @@ async def handle_friendly_challenge(
     if opponent_member.bot:
         raise ValueError("You cannot challenge a Discord bot user.")
 
-    # Check challenger cooldown against this opponent
-    expiry = FriendlyService.get_cooldown_expiry(challenger_user.id, opponent_member.id)
-    if expiry:
-        secs = int((expiry - datetime.now(timezone.utc)).total_seconds())
-        mins = secs // 60
-        secs_rem = secs % 60
-        time_str = f"{mins}m {secs_rem}s" if mins > 0 else f"{secs}s"
-        raise ValueError(f"You are on challenge cooldown against this opponent. Please wait {time_str}.")
-
     async with get_session() as session:
+        # Check challenger cooldown against this opponent
+        expiry = await FriendlyService.get_cooldown_expiry(session, guild_id, challenger_user.id, opponent_member.id)
+        if expiry:
+            secs = int((expiry - datetime.now(timezone.utc)).total_seconds())
+            mins = secs // 60
+            secs_rem = secs % 60
+            time_str = f"{mins}m {secs_rem}s" if mins > 0 else f"{secs}s"
+            raise ValueError(f"You are on challenge cooldown against this opponent. Please wait {time_str}.")
+
         # Fetch challenger club
         challenger_club = await get_user_club(session, guild_id, challenger_user.id)
         if not challenger_club:
@@ -57,6 +82,12 @@ async def handle_friendly_challenge(
         if challenger_club.guild_id != opponent_club.guild_id:
             raise ValueError("Both clubs must be in the same server to play a friendly match.")
 
+        # Set cooldown in database
+        await FriendlyService.set_cooldown(session, guild_id, challenger_user.id, opponent_member.id, duration_minutes=5)
+
+        # Generate a fresh random seed for this match session
+        session_seed = random.getrandbits(64) & 0xFFFFFFFF
+
         # Create challenge session owned by the OPPONENT so only they can accept/decline
         ui_session = ui_session_manager.create_session(
             discord_user_id=opponent_member.id,
@@ -69,15 +100,19 @@ async def handle_friendly_challenge(
                 "challenger_club_id": str(challenger_club.id),
                 "opponent_club_id": str(opponent_club.id),
                 "challenger_club_name": challenger_club.name,
-                "opponent_club_name": opponent_club.name
+                "opponent_club_name": opponent_club.name,
+                "session_seed": session_seed
             }
         )
-        # Set challenge expiry to 2 minutes
-        ui_session.refresh(duration_minutes=2)
+        # Set challenge expiry to 5 minutes
+        ui_session.refresh(duration_minutes=5)
         nonce = ui_session.session_id
         
-        # Set cooldown
-        FriendlyService.set_cooldown(challenger_user.id, opponent_member.id, duration_minutes=5)
+        await session.commit()
+        
+        # Trigger background expiration task if interaction is provided
+        if interaction:
+            asyncio.create_task(expire_invite_after_delay(interaction, nonce, delay_seconds=300))
         
         logger.info(f"friendly_challenge_created: challenger={challenger_club.name}, opponent={opponent_club.name}, session={nonce}")
         expires_timestamp = int(ui_session.expires_at.replace(tzinfo=timezone.utc).timestamp())
@@ -95,7 +130,7 @@ async def handle_friendly_accept(
     """
     session_obj = ui_session_manager.get_session(nonce)
     if not session_obj or session_obj.metadata.get("type") != "friendly_challenge":
-        raise ValueError("This challenge has expired (challenges only last 2 minutes).")
+        raise ValueError("This challenge has expired (challenges only last 5 minutes).")
         
     opponent_id = session_obj.metadata.get("opponent_user_id")
     challenger_id = session_obj.metadata.get("challenger_user_id")
@@ -112,6 +147,8 @@ async def handle_friendly_accept(
         raise ValueError("This friendly challenge has already been simulated.")
     if status == "declined":
         raise ValueError("This friendly challenge was declined.")
+    if status == "expired":
+        raise ValueError("This friendly challenge has expired.")
     if status != "pending":
         raise ValueError("This challenge session is not pending.")
 
@@ -155,9 +192,13 @@ async def handle_friendly_accept(
             is_home=False
         )
 
-        # Generate a seed and run match simulation
-        import secrets
-        seed = secrets.randbits(32)
+        # Retrieve seed from session or generate fallback
+        seed = session_obj.metadata.get("session_seed")
+        if seed is None:
+            seed = random.getrandbits(64) & 0xFFFFFFFF
+            session_obj.metadata["session_seed"] = seed
+
+        # Run match simulation
         report = FriendlyService.simulate_friendly(home_input, away_input, seed)
 
         # Store report in-memory on the session object
@@ -292,6 +333,9 @@ async def handle_friendly_practice(
         if not club:
             raise ValueError("You must register a club first before playing practice matches.")
 
+        # Generate a fresh random seed for this practice session
+        session_seed = random.getrandbits(64) & 0xFFFFFFFF
+
         # Create practice session owned by the manager
         ui_session = ui_session_manager.create_session(
             discord_user_id=user.id,
@@ -300,7 +344,8 @@ async def handle_friendly_practice(
                 "type": "friendly_practice",
                 "status": "pending",
                 "club_id": str(club.id),
-                "club_name": club.name
+                "club_name": club.name,
+                "session_seed": session_seed
             }
         )
         nonce = ui_session.session_id
@@ -348,9 +393,13 @@ async def handle_friendly_practice_select(
             # Resolve lineup
             home_formation, home_starters = await FriendlyService.resolve_team_lineup(session, guild_id, club)
 
+        # Retrieve seed from session or generate fallback
+        seed = session_obj.metadata.get("session_seed")
+        if seed is None:
+            seed = random.getrandbits(64) & 0xFFFFFFFF
+            session_obj.metadata["session_seed"] = seed
+
         # Generate transient bot team based on difficulty
-        import secrets
-        seed = secrets.randbits(32)
         bot_club_name = f"{selected_difficulty.title()} Bot FC"
         bot_team_input = FriendlyService.generate_transient_bot_team(selected_difficulty, bot_club_name, seed ^ 0xFAF)
 

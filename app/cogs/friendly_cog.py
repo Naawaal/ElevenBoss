@@ -35,6 +35,35 @@ class FriendlyGroup(commands.GroupCog, name="friendly"):
             )
             return
 
+        # Check challenger & opponent registration before deferring so we can respond ephemerally
+        try:
+            from app.db.session import get_session
+            from app.repositories.club_repository import get_user_club
+            
+            async with get_session() as session:
+                challenger_club = await get_user_club(session, interaction.guild_id, interaction.user.id)
+                if not challenger_club:
+                    await interaction.response.send_message(
+                        "❌ You must register a club first using `/register` before challenging others.",
+                        ephemeral=True
+                    )
+                    return
+
+                opponent_club = await get_user_club(session, interaction.guild_id, opponent.id)
+                if not opponent_club:
+                    await interaction.response.send_message(
+                        f"❌ {opponent.display_name} hasn't registered a club yet — they'll need to run `/register` first.",
+                        ephemeral=True
+                    )
+                    return
+        except Exception as e:
+            logger.error(f"Error checking registration in challenge command: {e}", exc_info=e)
+            await interaction.response.send_message(
+                "❌ An unexpected error occurred while verifying player registrations.",
+                ephemeral=True
+            )
+            return
+
         # Defer non-ephemerally so the challenge invite is visible publicly to the opponent
         await interaction.response.defer(ephemeral=False)
 
@@ -42,7 +71,8 @@ class FriendlyGroup(commands.GroupCog, name="friendly"):
             view = await handle_friendly_challenge(
                 interaction.guild_id,
                 interaction.user,
-                opponent
+                opponent,
+                interaction
             )
             # Edit the deferred message to show the challenge invite view
             await interaction.edit_original_response(view=view)

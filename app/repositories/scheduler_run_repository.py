@@ -1,9 +1,18 @@
 # app/repositories/scheduler_run_repository.py
 
-from datetime import datetime
+from datetime import datetime, timezone
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.models.scheduler_run import SchedulerRun, SchedulerRunStatus
+
+# Shared staleness threshold for matchday job locks.
+# Both the startup sweep (bot.py) and the inline check (matchday_service.py) import
+# this constant so the two recovery mechanisms always agree on the same cutoff.
+# Must comfortably exceed the worst-case matchday simulation runtime (16 clubs, 8
+# fixtures simulated serially). Observed runtimes are well under 15 minutes; 2 hours
+# gives ~8× headroom while still being short enough not to delay automated weekly runs.
+STALE_MATCHDAY_LOCK_HOURS: int = 2
 
 async def create_running_job(
     session: AsyncSession,
@@ -108,3 +117,35 @@ async def get_or_create_running_job(
         )
         session.add(new_job)
         return new_job
+
+
+async def mark_stale_running_jobs_failed(
+    session: AsyncSession,
+    job_key_prefix: str,
+    started_before: datetime,
+    reason: str = "stale_lock_recovered_on_startup",
+) -> int:
+    """
+    Atomically bulk-marks all RUNNING scheduler_run rows whose job_key starts with
+    job_key_prefix and whose started_at is older than started_before as FAILED.
+
+    Returns the number of rows updated. Safe to call concurrently — the UPDATE is
+    atomic; a second concurrent caller will find zero matching RUNNING rows and
+    update nothing, avoiding duplicate-recovery conflicts.
+    """
+    stmt = (
+        sa_update(SchedulerRun)
+        .where(
+            SchedulerRun.job_key.like(f"{job_key_prefix}%"),
+            SchedulerRun.status == SchedulerRunStatus.RUNNING,
+            SchedulerRun.started_at < started_before,
+        )
+        .values(
+            status=SchedulerRunStatus.FAILED,
+            finished_at=datetime.now(timezone.utc),
+            error=reason,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    result = await session.execute(stmt)
+    return result.rowcount

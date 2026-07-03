@@ -54,6 +54,8 @@ async def run_bot(sync_mode: str):
                     import discord
                     guild = discord.Object(id=int(config.GUILD_ID))
                     bot.tree.copy_global_to(guild=guild)
+                    bot.tree.remove_command("admin", guild=guild)
+                    bot.tree.remove_command("settings", guild=guild)
                     synced = await bot.tree.sync(guild=guild)
                     logger.info(f"Successfully synced {len(synced)} commands to guild: {config.GUILD_ID}")
                 else:

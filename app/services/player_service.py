@@ -98,6 +98,45 @@ class PlayerService:
 
 
     @staticmethod
+    async def retire_squad(
+        club_id: uuid.UUID, session: AsyncSession
+    ) -> int:
+        """
+        Soft-retire all active players in a bot club's squad for seasonal reset.
+
+        Sets is_retired=True and detaches club_id (sets to NULL) so active-squad queries
+        no longer return these players, while historical MatchEvent rows referencing their
+        IDs remain fully intact — no cascade wipe of goals, cards, or assist events.
+
+        Also deletes the squad_generation_run record so PlayerService.create_squad() can
+        run a fresh generation for this club without the idempotency guard blocking it.
+
+        Returns the number of players retired.
+        """
+        from sqlalchemy import update as sa_update
+        from app.repositories.squad_generation_repository import delete_run
+
+        stmt = (
+            sa_update(Player)
+            .where(
+                Player.club_id == club_id,
+                Player.is_retired == False,
+            )
+            .values(is_retired=True, club_id=None)
+            .execution_options(synchronize_session=False)
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+
+        # Reset idempotency guard so create_squad() runs a fresh generation,
+        # not the COMPLETED guard from the previous season.
+        await delete_run(session, club_id)
+        await session.flush()
+
+        logger.info(f"retire_squad: club_id={club_id}, retired_count={result.rowcount}")
+        return result.rowcount
+
+    @staticmethod
     async def get_squad(club_id: uuid.UUID, session: AsyncSession) -> list[Player]:
         """
         All players belonging to a club.
@@ -148,7 +187,12 @@ class PlayerService:
                 # Fetch player's club relation (eager load or check via session/query)
                 club = await session.get(Club, player.club_id)
                 if club and club.is_bot_controlled:
-                    # Auto-regenerate a replacement player (young prospect: age 18, overall 50-58)
+                    # NOTE (Option A — Bot Squad Seasonal Reset): Under normal operation,
+                    # bot squads are fully replaced at season bootstrap via retire_squad() +
+                    # create_squad() before age_players() runs for the new season.
+                    # This branch is therefore unreachable for bot clubs in the happy path.
+                    # It is retained as a safety net for any edge case where a bot player
+                    # survives into age_players() unexpectedly (e.g. missed bootstrap).
                     replacement_overall = random.randint(50, 58)
                     replacement = generate_player(
                         guild_id=player.guild_id,
@@ -156,7 +200,6 @@ class PlayerService:
                         position=player.position,
                         overall=replacement_overall
                     )
-                    # Set replacement's nationality randomly
                     session.add(replacement)
                     backfill_count += 1
                     logger.info(

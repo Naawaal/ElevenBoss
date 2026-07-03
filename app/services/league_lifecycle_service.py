@@ -257,7 +257,25 @@ class LeagueLifecycleService:
         # 3. Associate clubs with new season
         for club in clubs:
             club.season_id = new_season.id
-            
+
+        # 3b. Reset bot club squads (Option A — seasonal reset).
+        # Soft-retire the outgoing players so historical MatchEvent references remain
+        # intact, then generate a fresh 25-man squad for consistent bot difficulty.
+        from app.services.player_service import PlayerService
+        for club in clubs:
+            if club.is_bot_controlled:
+                await PlayerService.retire_squad(club.id, session)
+                result = await PlayerService.create_squad(club.id, session)
+                if result.players:
+                    avg_ovr = sum(p.overall for p in result.players) / len(result.players)
+                    club.overall_rating = int(avg_ovr)
+                logger.info(
+                    f"bot_squad_reset: club_id={club.id}, "
+                    f"new_squad_size={len(result.players)}, "
+                    f"new_overall_rating={club.overall_rating}"
+                )
+        await session.flush()
+
         # 4. Initialize standings
         club_ids = [club.id for club in clubs]
         await initialize_standings(session, guild_id, new_season.id, club_ids)

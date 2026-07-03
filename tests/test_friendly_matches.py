@@ -73,7 +73,9 @@ async def cleanup_singleton_states():
 @pytest.mark.asyncio
 @patch("app.ui.handlers.friendly_handler.get_session")
 @patch("app.ui.handlers.friendly_handler.get_user_club")
-async def test_challenge_rejected_no_club(mock_get_club, mock_get_session):
+@patch("app.repositories.friendly_repository.get_friendly_cooldown")
+async def test_challenge_rejected_no_club(mock_get_cooldown, mock_get_club, mock_get_session):
+    mock_get_cooldown.return_value = None
     session_mock = AsyncMock()
     mock_get_session.return_value.__aenter__.return_value = session_mock
     
@@ -106,7 +108,9 @@ async def test_challenge_rejected_against_self():
 @pytest.mark.asyncio
 @patch("app.ui.handlers.friendly_handler.get_session")
 @patch("app.ui.handlers.friendly_handler.get_user_club")
-async def test_challenge_cooldown_and_anti_spam(mock_get_club, mock_get_session):
+@patch("app.repositories.friendly_repository.get_friendly_cooldown")
+@patch("app.repositories.friendly_repository.set_friendly_cooldown")
+async def test_challenge_cooldown_and_anti_spam(mock_set_cooldown, mock_get_cooldown, mock_get_club, mock_get_session):
     session_mock = AsyncMock()
     mock_get_session.return_value.__aenter__.return_value = session_mock
     
@@ -117,6 +121,22 @@ async def test_challenge_cooldown_and_anti_spam(mock_get_club, mock_get_session)
     club_opponent = Club(id=uuid.uuid4(), name="Opponent FC", guild_id="12345")
     mock_get_club.side_effect = [club_challenger, club_opponent, club_challenger, club_opponent]
     
+    cooldowns_cache = {}
+    
+    async def mock_get(session, guild_id, challenger_id, opponent_id):
+        expiry = cooldowns_cache.get((challenger_id, opponent_id))
+        if expiry and datetime.now(timezone.utc) < expiry:
+            m = MagicMock()
+            m.expires_at = expiry
+            return m
+        return None
+        
+    async def mock_set(session, guild_id, challenger_id, opponent_id, expires_at):
+        cooldowns_cache[(challenger_id, opponent_id)] = expires_at
+
+    mock_get_cooldown.side_effect = mock_get
+    mock_set_cooldown.side_effect = mock_set
+    
     # First challenge succeeds
     view = await handle_friendly_challenge("12345", challenger, opponent)
     assert isinstance(view, V2View)
@@ -124,10 +144,6 @@ async def test_challenge_cooldown_and_anti_spam(mock_get_club, mock_get_session)
     # Second challenge immediately gets blocked by cooldown
     with pytest.raises(ValueError, match="challenge cooldown"):
         await handle_friendly_challenge("12345", challenger, opponent)
-        
-    # Reset cooldown for subsequent tests
-    from app.services.friendly_service import _friendly_cooldowns
-    _friendly_cooldowns.clear()
 
 
 @pytest.mark.asyncio

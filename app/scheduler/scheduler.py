@@ -4,6 +4,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.scheduler.game_loop_jobs import run_game_loop_tick
 from app.onboarding.sweeper import sweep_onboarding_sessions
+from app.scheduler.friendly_sweeper import sweep_friendly_threads
 
 logger = logging.getLogger("app.scheduler.scheduler")
 _scheduler: AsyncIOScheduler | None = None
@@ -35,6 +36,15 @@ def start_scheduler(bot) -> None:
             minutes=2,
             args=[bot],
             id="onboarding_sweeper",
+            replace_existing=True
+        )
+        # Friendly match sweeper: delete completed and orphaned threads
+        _scheduler.add_job(
+            sweep_friendly_threads,
+            "interval",
+            minutes=2,
+            args=[bot],
+            id="friendly_sweeper",
             replace_existing=True
         )
         _scheduler.start()

@@ -22,9 +22,6 @@ from app.engine.match_engine import (
 
 logger = logging.getLogger("app.services.friendly_service")
 
-# In-memory challenge cooldowns cache: (challenger_user_id, opponent_user_id) -> expiry_time
-_friendly_cooldowns: dict[tuple[int, int], datetime] = {}
-
 # Simple pool of names for transient bot player generation
 BOT_FIRST_NAMES = [
     "Adam", "Alex", "Ben", "Chris", "Daniel", "David", "Eric", "Frank", "George", "Henry",
@@ -58,23 +55,24 @@ class FriendlyMatchReport:
 class FriendlyService:
 
     @staticmethod
-    def get_cooldown_expiry(challenger_id: int, opponent_id: int) -> datetime | None:
+    async def get_cooldown_expiry(session: AsyncSession, guild_id: int | str, challenger_id: int | str, opponent_id: int | str) -> datetime | None:
         """
         Gets cooldown expiry time if the challenger is on cooldown against the opponent.
         """
-        now = datetime.now(timezone.utc)
-        expiry = _friendly_cooldowns.get((challenger_id, opponent_id))
-        if expiry and now < expiry:
-            return expiry
+        from app.repositories.friendly_repository import get_friendly_cooldown
+        cooldown = await get_friendly_cooldown(session, guild_id, challenger_id, opponent_id)
+        if cooldown:
+            return cooldown.expires_at
         return None
 
     @staticmethod
-    def set_cooldown(challenger_id: int, opponent_id: int, duration_minutes: int = 5):
+    async def set_cooldown(session: AsyncSession, guild_id: int | str, challenger_id: int | str, opponent_id: int | str, duration_minutes: int = 5):
         """
         Sets a friendly match challenge cooldown.
         """
-        now = datetime.now(timezone.utc)
-        _friendly_cooldowns[(challenger_id, opponent_id)] = now + timedelta(minutes=duration_minutes)
+        from app.repositories.friendly_repository import set_friendly_cooldown
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=duration_minutes)
+        await set_friendly_cooldown(session, guild_id, challenger_id, opponent_id, expires_at)
 
     @staticmethod
     async def resolve_team_lineup(session: AsyncSession, guild_id: int | str, club: Club) -> tuple[str, list[MatchPlayerInput]]:

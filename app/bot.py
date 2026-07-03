@@ -56,8 +56,21 @@ class ElevenBossBot(commands.Bot):
         if config.ENVIRONMENT == "development" and config.GUILD_ID:
             try:
                 guild = discord.Object(id=int(config.GUILD_ID))
+                # 1. Copy global commands into guild scope for instant slash-command updates
                 self.tree.copy_global_to(guild=guild)
+                # Remove the DM-only commands from the guild tree so they are not synced to the guild
+                self.tree.remove_command("admin", guild=guild)
+                self.tree.remove_command("settings", guild=guild)
                 synced = await self.tree.sync(guild=guild)
+                
+                # 2. To avoid duplicates of the guild commands, we want to clear them from the global scope.
+                # But we must keep "admin" and "settings" in the global scope so they work in DMs.
+                # So we remove all commands from the global tree *except* "admin" and "settings".
+                global_cmds = self.tree.get_commands(guild=None)
+                for cmd in global_cmds:
+                    if cmd.name not in ("admin", "settings"):
+                        self.tree.remove_command(cmd.name, guild=None)
+                await self.tree.sync()
                 logger.info(f"Development Auto-Sync: Successfully synced {len(synced)} slash commands to guild: {config.GUILD_ID}")
             except Exception as e:
                 logger.error(f"Development Auto-Sync: Failed to sync commands to guild {config.GUILD_ID}: {e}", exc_info=e)
@@ -68,6 +81,13 @@ class ElevenBossBot(commands.Bot):
         # Run database migrations asynchronously in the background so it doesn't block bot startup/connection
         import asyncio
         asyncio.create_task(self._run_migrations_async())
+
+        # Sweep any matchday locks left stuck in RUNNING state by a previous hard crash.
+        # Runs concurrently with migrations — the sweep is DML only, no DDL conflict.
+        # The scheduler starts after both tasks are *created* (not after they complete),
+        # so the first game-loop tick (~1 min) could fire before the sweep finishes;
+        # the inline staleness check in matchday_service.py covers that narrow window.
+        asyncio.create_task(self._sweep_stale_locks_on_startup())
 
         # Start scheduler
         from app.scheduler.scheduler import start_scheduler
@@ -85,6 +105,39 @@ class ElevenBossBot(commands.Bot):
             await asyncio.to_thread(run_migrations)
         except Exception as e:
             logger.error(f"Background database migrations check failed: {e}", exc_info=e)
+            capture_exception(e)
+
+    async def _sweep_stale_locks_on_startup(self):
+        """
+        On every bot (re)start, atomically mark any matchday job locks stuck in RUNNING
+        state (older than STALE_MATCHDAY_LOCK_HOURS hours) as FAILED, so the next
+        scheduler tick can acquire a fresh lock and proceed normally.
+
+        This covers the common crash-then-restart scenario. The inline staleness check
+        in matchday_service.py covers the rarer crash-without-restart case.
+        """
+        from datetime import timedelta, timezone, datetime
+        from app.db.session import get_session
+        from app.repositories import mark_stale_running_jobs_failed, STALE_MATCHDAY_LOCK_HOURS
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=STALE_MATCHDAY_LOCK_HOURS)
+        try:
+            async with get_session() as session:
+                count = await mark_stale_running_jobs_failed(
+                    session,
+                    job_key_prefix="matchday:",
+                    started_before=cutoff,
+                )
+                await session.commit()
+            if count:
+                logger.warning(
+                    f"startup_stale_lock_sweep: recovered {count} stuck matchday lock(s) "
+                    f"(threshold={STALE_MATCHDAY_LOCK_HOURS}h)"
+                )
+            else:
+                logger.debug("startup_stale_lock_sweep: no stale matchday locks found")
+        except Exception as e:
+            logger.error(f"startup_stale_lock_sweep failed: {e}", exc_info=e)
             capture_exception(e)
 
     async def on_ready(self):

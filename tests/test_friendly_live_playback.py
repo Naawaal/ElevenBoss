@@ -176,7 +176,13 @@ async def test_accept_starts_playback_task(
 
 
 @pytest.mark.asyncio
-async def test_skip_to_full_time_ends_playback():
+@patch("app.services.friendly_live_playback_service.get_session")
+@patch("app.repositories.friendly_repository.update_breadcrumb_status")
+async def test_skip_to_full_time_ends_playback(mock_update_status, mock_get_session):
+    session_mock = AsyncMock()
+    mock_get_session.return_value.__aenter__.return_value = session_mock
+    mock_update_status.return_value = MagicMock()
+
     challenger_id = 111
     opponent_id = 222
     challenger_club_id = uuid.uuid4()
@@ -239,25 +245,20 @@ async def test_skip_to_full_time_ends_playback():
         await handle_friendly_skip("1", 999, nonce, interaction)
         
     # Opponent clicks Skip -> succeeds
-    # Mock delete_thread_after_delay sleep to delete immediately
-    original_sleep = asyncio.sleep
-    async def mock_sleep(seconds, *args, **kwargs):
-        if seconds == 120:
-            await original_sleep(0)
-        else:
-            await original_sleep(seconds)
-    with patch("app.services.friendly_live_playback_service.asyncio.sleep", mock_sleep):
-        view = await handle_friendly_skip("1", opponent_id, nonce, interaction)
-        assert isinstance(view, V2View)
-        assert ui_session.metadata["status"] == "completed"
-        
-        # Verify task was cancelled and registry popped
-        await asyncio.sleep(0.1)
-        assert task.cancelled() or task.cancelling()
-        assert nonce not in friendly_playback_service._active_playback_tasks
-        
-        # Verify thread delete was called
-        mock_thread.delete.assert_called_once()
+    view = await handle_friendly_skip("1", opponent_id, nonce, interaction)
+    assert isinstance(view, V2View)
+    assert ui_session.metadata["status"] == "completed"
+    
+    # Verify task was cancelled and registry popped
+    await asyncio.sleep(0.1)
+    assert task.cancelled() or task.cancelling()
+    assert nonce not in friendly_playback_service._active_playback_tasks
+    
+    # Verify database update status was called
+    mock_update_status.assert_called_once()
+    args, kwargs = mock_update_status.call_args
+    assert args[1] == 9999
+    assert args[2] == "COMPLETED"
 
 
 def test_progressive_renderer_calculations():

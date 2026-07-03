@@ -80,7 +80,11 @@ def build_live_kickoff_layout(home_name: str, away_name: str, nonce: str) -> V2V
         f"**{home_name}** vs **{away_name}**\n\n"
         f"0' 📢 The referee blows the whistle!"
     )
-    return V2View([container([text_display(msg)])])
+    skip_id = encode_custom_id("friendly", "skip", "match", nonce)
+    return V2View([
+        container([text_display(msg)]),
+        action_row([danger_button("⏭️ Skip to Full-Time", skip_id)])
+    ])
 
 def build_live_chunk_layout(
     home_name: str,
@@ -99,9 +103,11 @@ def build_live_chunk_layout(
         f"**{home_name}**  {home_score}–{away_score}  **{away_name}**\n\n"
         f"⏳ **{minute}'**"
     )
+    skip_id = encode_custom_id("friendly", "skip", "match", nonce)
     return V2View([
         container([text_display(header)]),
-        container([text_display(events_text)])
+        container([text_display(events_text)]),
+        action_row([danger_button("⏭️ Skip to Full-Time", skip_id)])
     ])
 
 def build_live_halftime_layout(
@@ -120,10 +126,12 @@ def build_live_halftime_layout(
         f"### ⏸️ **HALF-TIME**\n"
         f"**{home_name}**  {home_score}–{away_score}  **{away_name}**\n"
     )
+    skip_id = encode_custom_id("friendly", "skip", "match", nonce)
     return V2View([
         container([text_display(header)]),
         container([text_display(events_text)]),
-        container([text_display(stats_text)])
+        container([text_display(stats_text)]),
+        action_row([danger_button("⏭️ Skip to Full-Time", skip_id)])
     ])
 
 def build_live_fulltime_layout(
