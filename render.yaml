@@ -1,0 +1,21 @@
+# render.yaml — Render Infrastructure as Code Blueprint
+# Reference: https://render.com/docs/yaml-spec
+# To deploy, connect your GitHub repository and import this blueprint on Render.
+
+services:
+  - type: web
+    name: elevenboss-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false  # Paste your Supabase or Render PostgreSQL URL
+      - key: DISCORD_TOKEN
+        sync: false  # Paste your Discord Bot Token
+      - key: SENTRY_DSN
+        sync: false  # Optional: Paste your Sentry DSN

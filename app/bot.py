@@ -97,6 +97,51 @@ class ElevenBossBot(commands.Bot):
             logger.error(f"Failed to start background scheduler: {e}", exc_info=e)
             capture_exception(e)
 
+        # Start a simple web server for Render health checks and UptimeRobot pings if PORT env var exists
+        port = os.getenv("PORT")
+        if port:
+            self.loop.create_task(self.start_web_server(int(port)))
+
+    async def start_web_server(self, port: int):
+        """
+        Starts a lightweight web server on the bot's existing event loop.
+        Allows Render to perform successful HTTP health checks and UptimeRobot to ping the service.
+        """
+        from aiohttp import web
+        
+        async def handle_health(request):
+            return web.json_response({
+                "status": "ok",
+                "bot": self.user.name if self.user else "connecting"
+            })
+
+        app = web.Application()
+        app.router.add_get("/", handle_health)
+        app.router.add_get("/health", handle_health)
+        
+        self._web_runner = web.AppRunner(app)
+        await self._web_runner.setup()
+        self._web_site = web.TCPSite(self._web_runner, "0.0.0.0", port)
+        await self._web_site.start()
+        logger.info(f"Web server started on port {port} for Render health checks.")
+
+    async def close(self):
+        """
+        Cleanly closes the bot and shuts down the background web server if running.
+        """
+        logger.info("Stopping background web server...")
+        if hasattr(self, "_web_site") and self._web_site:
+            try:
+                await self._web_site.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping web site: {e}")
+        if hasattr(self, "_web_runner") and self._web_runner:
+            try:
+                await self._web_runner.cleanup()
+            except Exception as e:
+                logger.warning(f"Error cleaning up web runner: {e}")
+        await super().close()
+
     async def _run_migrations_async(self):
         import asyncio
         try:
