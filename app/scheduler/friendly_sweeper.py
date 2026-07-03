@@ -111,20 +111,20 @@ async def _delete_thread_and_parent(
     """
     Helper to delete the thread and its parent starter message, if exists.
     """
-    # Fetch thread
-    try:
-        channel = await bot.fetch_channel(int(thread_id))
-    except discord.NotFound:
-        raise discord.NotFound(None, "Thread channel not found")
-    except discord.Forbidden:
-        raise discord.Forbidden(None, "No permission to access thread channel")
+    # Fetch thread (exceptions like NotFound/Forbidden will bubble up naturally with correct response objects)
+    channel = await bot.fetch_channel(int(thread_id))
         
     if not isinstance(channel, discord.Thread):
-        raise discord.NotFound(None, "Channel is not a thread")
+        raise ValueError("Channel is not a thread")
 
     # Delete parent starter message if provided
     if parent_message_id:
         parent = channel.parent
+        if not parent and hasattr(channel, "parent_id") and channel.parent_id:
+            try:
+                parent = await bot.fetch_channel(channel.parent_id)
+            except Exception:
+                parent = None
         if parent:
             try:
                 starter_msg = await parent.fetch_message(int(parent_message_id))
