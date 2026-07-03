@@ -369,6 +369,56 @@ class ClubCog(commands.Cog):
                     f_type = FacilityType(custom_id.target)
                     new_view = await handle_upgrade_facility(guild_id, user_id, f_type, nonce)
 
+            elif custom_id.scope == "training":
+                from app.ui.handlers import (
+                    handle_open_training_dashboard,
+                    handle_open_intensity_screen,
+                    handle_set_intensity,
+                    handle_open_default_plan_screen,
+                    handle_set_default_plan,
+                    handle_open_player_plans,
+                    handle_open_set_player_plan,
+                    handle_set_player_plan,
+                    handle_open_condition_report,
+                    handle_open_development_outlook,
+                )
+                if custom_id.action == "view" and custom_id.target == "overview":
+                    new_view = await handle_open_training_dashboard(guild_id, user_id, nonce)
+                elif custom_id.action == "open" and custom_id.target == "intensity":
+                    new_view = await handle_open_intensity_screen(guild_id, user_id, nonce)
+                elif custom_id.action == "set_intensity" and custom_id.target == "select":
+                    if not interaction.data.get("values"):
+                        raise ValueError("No intensity selected.")
+                    new_view = await handle_set_intensity(guild_id, user_id, interaction.data["values"][0], nonce)
+                elif custom_id.action == "open" and custom_id.target == "default_plan":
+                    new_view = await handle_open_default_plan_screen(guild_id, user_id, nonce)
+                elif custom_id.action == "set_default_plan" and custom_id.target == "select":
+                    if not interaction.data.get("values"):
+                        raise ValueError("No default plan selected.")
+                    new_view = await handle_set_default_plan(guild_id, user_id, interaction.data["values"][0], nonce)
+                elif custom_id.action == "open" and custom_id.target == "player_plans":
+                    new_view = await handle_open_player_plans(guild_id, user_id, nonce, page=1)
+                elif custom_id.action == "open_plans_page":
+                    new_view = await handle_open_player_plans(guild_id, user_id, nonce, page=int(custom_id.target))
+                elif custom_id.action == "open" and custom_id.target == "set_player_plan":
+                    if not interaction.data.get("values"):
+                        raise ValueError("No player selected.")
+                    new_view = await handle_open_set_player_plan(guild_id, user_id, interaction.data["values"][0], nonce)
+                elif custom_id.action == "set_player_plan":
+                    if not interaction.data.get("values"):
+                        raise ValueError("No plan selected.")
+                    new_view = await handle_set_player_plan(
+                        guild_id, user_id, custom_id.target, interaction.data["values"][0], nonce
+                    )
+                elif custom_id.action == "open" and custom_id.target == "condition":
+                    new_view = await handle_open_condition_report(guild_id, user_id, nonce, page=1)
+                elif custom_id.action == "open_condition_page":
+                    new_view = await handle_open_condition_report(guild_id, user_id, nonce, page=int(custom_id.target))
+                elif custom_id.action == "open" and custom_id.target == "outlook":
+                    new_view = await handle_open_development_outlook(guild_id, user_id, nonce, page=1)
+                elif custom_id.action == "open_outlook_page":
+                    new_view = await handle_open_development_outlook(guild_id, user_id, nonce, page=int(custom_id.target))
+
             elif custom_id.scope == "squad":
                 if custom_id.action == "page":
                     page = int(custom_id.target)

@@ -158,4 +158,16 @@ class MatchConsequenceService:
 
         # Mark fixture consequences as applied
         fixture.consequences_applied_at = datetime.utcnow()
+        
+        # Step 6: Record match development XP (league path only; friendlies never reach here)
+        from app.services.training_service import TrainingService
+        await TrainingService.record_match_development_events(
+            session=session,
+            fixture=fixture,
+            sim_result=sim_result,
+            home_club_id=home_club_id,
+            away_club_id=away_club_id,
+            players_by_id=players_by_id,
+        )
+        
         await session.flush()

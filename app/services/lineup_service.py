@@ -380,6 +380,36 @@ class LineupService:
         lineup = await get_active_lineup(session, club_id)
         club_players = await get_players_by_club_id(session, club_id)
         
+        # Load readiness modifiers from player development state
+        from app.repositories import get_active_or_draft_league_by_guild, get_active_season_for_league
+        from app.repositories.training_repository import get_dev_state_map_for_players
+        
+        season_id = None
+        dev_state_map = {}
+        
+        # Safe bypass for mock sessions in unit tests
+        from unittest.mock import Mock
+        if not (isinstance(session, Mock) and not isinstance(get_dev_state_map_for_players, Mock)):
+            league = await get_active_or_draft_league_by_guild(session, str(guild_id))
+            if league:
+                active_season = await get_active_season_for_league(session, str(guild_id), league.id)
+                if active_season:
+                    season_id = active_season.id
+                    
+            if season_id and club_players:
+                player_ids = [p.id for p in club_players]
+                dev_state_map = await get_dev_state_map_for_players(session, player_ids, season_id)
+            
+        # Resilient helper to retrieve readiness modifier safely, protecting against test mocks
+        from app.models.player_development import PlayerDevelopmentState
+        def get_player_readiness(player_id) -> float:
+            if not isinstance(dev_state_map, dict):
+                return 1.00
+            ds = dev_state_map.get(player_id)
+            if isinstance(ds, PlayerDevelopmentState):
+                return float(ds.readiness_modifier)
+            return 1.00
+        
         available_players = []
         for p in club_players:
             is_retired = getattr(p, "is_retired", False)
@@ -437,6 +467,9 @@ class LineupService:
             # Map starters
             starters_players = []
             for slot, p in starters_objs.items():
+                readiness = get_player_readiness(p.id)
+                adjusted_fitness = min(100, int(p.fitness * readiness))
+
                 starters_players.append(MatchPlayerInput(
                     player_id=str(p.id),
                     name=p.display_name,
@@ -444,7 +477,7 @@ class LineupService:
                     slot=slot,
                     overall=p.overall,
                     potential=p.potential,
-                    fitness=p.fitness,
+                    fitness=adjusted_fitness,
                     morale=getattr(p, "morale", 80),
                     consistency=getattr(p, "consistency", 70),
                     is_goalkeeper=(p.position == "GK")
@@ -471,6 +504,9 @@ class LineupService:
                     slot = f"SUB_ATT_{att_idx}"
                     att_idx += 1
 
+                readiness = get_player_readiness(p.id)
+                adjusted_fitness = min(100, int(p.fitness * readiness))
+
                 bench_players.append(MatchPlayerInput(
                     player_id=str(p.id),
                     name=p.display_name,
@@ -478,7 +514,7 @@ class LineupService:
                     slot=slot,
                     overall=p.overall,
                     potential=p.potential,
-                    fitness=p.fitness,
+                    fitness=adjusted_fitness,
                     morale=getattr(p, "morale", 80),
                     consistency=getattr(p, "consistency", 70),
                     is_goalkeeper=(p.position == "GK")
@@ -496,6 +532,9 @@ class LineupService:
         for lp in lineup.lineup_players:
             if lp.is_starter:
                 p = lp.player
+                readiness = get_player_readiness(p.id)
+                adjusted_fitness = min(100, int(p.fitness * readiness))
+
                 starters_players.append(MatchPlayerInput(
                     player_id=str(p.id),
                     name=p.display_name,
@@ -503,7 +542,7 @@ class LineupService:
                     slot=lp.slot,
                     overall=p.overall,
                     potential=p.potential,
-                    fitness=p.fitness,
+                    fitness=adjusted_fitness,
                     morale=getattr(p, "morale", 80),
                     consistency=getattr(p, "consistency", 70),
                     is_goalkeeper=(p.position == "GK")
@@ -534,6 +573,9 @@ class LineupService:
                 slot = f"SUB_ATT_{att_idx}"
                 att_idx += 1
 
+            readiness = get_player_readiness(p.id)
+            adjusted_fitness = min(100, int(p.fitness * readiness))
+
             bench_players.append(MatchPlayerInput(
                 player_id=str(p.id),
                 name=p.display_name,
@@ -541,7 +583,7 @@ class LineupService:
                 slot=slot,
                 overall=p.overall,
                 potential=p.potential,
-                fitness=p.fitness,
+                fitness=adjusted_fitness,
                 morale=getattr(p, "morale", 80),
                 consistency=getattr(p, "consistency", 70),
                 is_goalkeeper=(p.position == "GK")

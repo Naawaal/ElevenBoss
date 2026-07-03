@@ -154,6 +154,24 @@ class MatchService:
                 "secondary_player_name": e.secondary_player.display_name if e.secondary_player else None,
             })
             
+        # Sort timeline chronologically, with secondary priority for same-minute events
+        def event_sort_key(item):
+            minute = item["minute"]
+            etype = item["type"]
+            priority_map = {
+                "match_start": 0,
+                "goal": 10,
+                "yellow_card": 20,
+                "red_card": 21,
+                "injury": 30,
+                "substitution": 31,
+                "half_time": 90,
+                "full_time": 100,
+            }
+            return (minute, priority_map.get(etype, 50))
+            
+        timeline_list.sort(key=event_sort_key)
+        
         motm_name = res.motm_player.display_name if res.motm_player else "None"
         
         return MatchDetailResult(

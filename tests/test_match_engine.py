@@ -283,3 +283,91 @@ class TestMatchEngine(unittest.TestCase):
         res_direct = simulate_match(sim_input, config=cfg_zero)
         self.assertEqual(res_zero.home_goals, res_direct.home_goals)
         self.assertEqual(res_zero.away_goals, res_direct.away_goals)
+
+    def test_build_timeline_halftime_score_ignores_second_half_goals(self):
+        """Test that goals scored in the second half do not affect the halftime score description."""
+        from app.engine.match_event_generator import build_timeline
+        from app.engine.match_engine import MatchGoalEvent
+        
+        goals = [
+            MatchGoalEvent(minute=22, club_id="club_home", scorer_id="h_st1", assist_id=None, description="Home scores"),
+            MatchGoalEvent(minute=89, club_id="club_away", scorer_id="a_st1", assist_id=None, description="Away scores")
+        ]
+        
+        timeline = build_timeline(
+            self.home_team,
+            self.away_team,
+            home_goals=1,
+            away_goals=1,
+            goals=goals,
+            cards=[]
+        )
+        
+        # Find the half-time event
+        ht_event = next(e for e in timeline if e["type"] == "half_time")
+        self.assertIn("1–0", ht_event["description"])
+        
+        # Find the full-time event
+        ft_event = next(e for e in timeline if e["type"] == "full_time")
+        self.assertIn("1–1", ft_event["description"])
+
+    def test_build_timeline_own_goals_counted_correctly(self):
+        """Test that own goals before half-time are counted towards the opponent's score correctly."""
+        from app.engine.match_event_generator import build_timeline
+        from app.engine.match_engine import MatchGoalEvent
+        
+        goals = [
+            # Home player scores own goal -> Away team benefits (so club_id is club_away)
+            MatchGoalEvent(minute=13, club_id="club_away", scorer_id="h_cb1", assist_id=None, description="Own goal", goal_source="own_goal"),
+            MatchGoalEvent(minute=20, club_id="club_home", scorer_id="h_st1", assist_id=None, description="Home scores"),
+            MatchGoalEvent(minute=28, club_id="club_home", scorer_id="h_st2", assist_id=None, description="Home scores"),
+            MatchGoalEvent(minute=41, club_id="club_home", scorer_id="h_lm", assist_id=None, description="Home scores"),
+            MatchGoalEvent(minute=70, club_id="club_home", scorer_id="h_rm", assist_id=None, description="Home scores"),
+            MatchGoalEvent(minute=82, club_id="club_home", scorer_id="h_st1", assist_id=None, description="Home scores")
+        ]
+        
+        timeline = build_timeline(
+            self.home_team,
+            self.away_team,
+            home_goals=5,
+            away_goals=1,
+            goals=goals,
+            cards=[]
+        )
+        
+        # Find half-time event
+        ht_event = next(e for e in timeline if e["type"] == "half_time")
+        self.assertIn("3–1", ht_event["description"])
+        
+        # Find full-time event
+        ft_event = next(e for e in timeline if e["type"] == "full_time")
+        self.assertIn("5–1", ft_event["description"])
+
+    def test_build_timeline_injury_sorted_before_substitution(self):
+        """Test that injury events are sorted before substitution events when they occur in the same minute."""
+        from app.engine.match_event_generator import build_timeline
+        from app.engine.match_engine import MatchSubstitutionEvent, MatchInjuryEvent
+        
+        substitutions = [
+            MatchSubstitutionEvent(minute=14, club_id="club_away", player_out_id="a_st1", player_in_id="a_st2", reason="injury", description="Substitution description")
+        ]
+        injuries = [
+            MatchInjuryEvent(minute=14, club_id="club_away", player_id="a_st1", description="Injury description")
+        ]
+        
+        timeline = build_timeline(
+            self.home_team,
+            self.away_team,
+            home_goals=0,
+            away_goals=0,
+            goals=[],
+            cards=[],
+            substitutions=substitutions,
+            injuries=injuries
+        )
+        
+        # Filter for injury and substitution events at minute 14
+        m14_events = [e for e in timeline if e["minute"] == 14]
+        self.assertEqual(len(m14_events), 2)
+        self.assertEqual(m14_events[0]["type"], "injury")
+        self.assertEqual(m14_events[1]["type"], "substitution")

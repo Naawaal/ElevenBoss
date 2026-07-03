@@ -17,6 +17,12 @@ from app.models.daily_tick_runs import DailyTickRun, DailyTickRunStatus
 from app.models.facility import Facility, FacilityType, FacilityStatus
 from app.models.manager_xp_event import ManagerXPEvent
 from app.models.club_transaction import ClubTransaction
+from app.models.player_development import (
+    PlayerDevelopmentState,
+    ClubTrainingSettings,
+    WeeklyTrainingLog,
+    MatchDevelopmentEvent,
+)
 
 __all__ = [
     "GuildConfig",
@@ -49,4 +55,8 @@ __all__ = [
     "FacilityStatus",
     "ManagerXPEvent",
     "ClubTransaction",
+    "PlayerDevelopmentState",
+    "ClubTrainingSettings",
+    "WeeklyTrainingLog",
+    "MatchDevelopmentEvent",
 ]

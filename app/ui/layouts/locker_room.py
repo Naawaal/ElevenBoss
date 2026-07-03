@@ -46,6 +46,7 @@ def build_locker_room_layout(data: dict, nonce: str, has_image: bool = False) ->
     dashboard_id = encode_custom_id("locker", "open", "club", nonce)
     help_id = encode_custom_id("locker", "view", "help", nonce)
     lineup_id = encode_custom_id("lineup", "open", "main", nonce)
+    training_id = encode_custom_id("training", "view", "overview", nonce)
     
     comp_payload = []
     if has_image:
@@ -66,6 +67,7 @@ def build_locker_room_layout(data: dict, nonce: str, has_image: bool = False) ->
         ]),
         action_row([
             refresh_button("locker", "club", nonce),
+            secondary_button("🏋️ Training", training_id),
             secondary_button("❓ Help", help_id),
             close_button(nonce)
         ])
@@ -81,6 +83,7 @@ def build_help_layout(nonce: str) -> V2View:
         "Manage your club, squad, and players using Discord Slash Commands and Components V2.\n\n"
         "**Available Commands:**\n"
         "• `/club` — Opens your private Locker Room hub.\n"
+        "• `/training` — Manage player training plans and intensity.\n"
         "• `/squad` — View your squad list (paginated).\n"
         "• `/player [name]` — Search for a player or view their details.\n\n"
         "**Navigation:**\n"

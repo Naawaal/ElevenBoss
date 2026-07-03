@@ -43,4 +43,16 @@ from app.ui.handlers.friendly_handler import (
     handle_friendly_practice,
     handle_friendly_practice_select
 )
+from app.ui.handlers.training_handler import (
+    handle_open_training_dashboard,
+    handle_open_intensity_screen,
+    handle_set_intensity,
+    handle_open_default_plan_screen,
+    handle_set_default_plan,
+    handle_open_player_plans,
+    handle_open_set_player_plan,
+    handle_set_player_plan,
+    handle_open_condition_report,
+    handle_open_development_outlook,
+)
 

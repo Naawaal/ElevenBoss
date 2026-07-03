@@ -62,4 +62,11 @@ from app.repositories.friendly_repository import (
     create_thread_breadcrumb, update_breadcrumb_status, get_cleanup_due_breadcrumbs,
     get_dangling_breadcrumbs, delete_breadcrumb, update_breadcrumb_cleanup_error
 )
+from app.repositories.training_repository import (
+    get_or_create_dev_state, get_dev_state_map_for_players,
+    get_or_create_training_settings, get_human_club_players_for_training,
+    insert_weekly_training_log_returning_id, insert_match_development_event_returning_id,
+    get_season_dev_states_for_bonus, mark_bonus_applied
+)
+
 

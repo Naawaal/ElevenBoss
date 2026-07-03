@@ -337,7 +337,7 @@ def build_timeline(
         "description": f"The referee blows the whistle and the match between {home_team.club_name} and {away_team.club_name} begins!"
     })
     
-    # 2. Merge all timed events (goals, cards, subs, injuries) and sort chronologically
+    # 2. Merge all timed events (goals, cards, subs, injuries)
     all_events = []
     for g in goals:
         all_events.append((g.minute, "goal", g))
@@ -348,7 +348,26 @@ def build_timeline(
     for inj in (injuries or []):
         all_events.append((inj.minute, "injury", inj))
 
-    all_events.sort(key=lambda x: x[0])
+    # Sort with chronological priority map to handle same-minute order
+    def sort_key(item):
+        minute = item[0]
+        etype = item[1]
+        priority_map = {
+            "goal": 10,
+            "yellow": 20,
+            "yellow_card": 20,
+            "red": 21,
+            "red_card": 21,
+            "injury": 30,
+            "substitution": 31,
+        }
+        return (minute, priority_map.get(etype, 50))
+        
+    all_events.sort(key=sort_key)
+    
+    # Track running scores for half-time snapshot
+    running_home_goals = 0
+    running_away_goals = 0
     
     halftime_inserted = False
     for minute, etype, obj in all_events:
@@ -357,11 +376,16 @@ def build_timeline(
             timeline.append({
                 "minute": 45,
                 "type": "half_time",
-                "description": f"Half-Time: {home_team.club_name} {home_goals}–{away_goals} {away_team.club_name}."
+                "description": f"Half-Time: {home_team.club_name} {running_home_goals}–{running_away_goals} {away_team.club_name}."
             })
             halftime_inserted = True
             
         if etype == "goal":
+            if str(obj.club_id) == str(home_team.club_id):
+                running_home_goals += 1
+            else:
+                running_away_goals += 1
+                
             entry = {
                 "minute": minute,
                 "type": etype,
@@ -373,7 +397,7 @@ def build_timeline(
         elif etype in ("yellow", "red"):
             entry = {
                 "minute": minute,
-                "type": etype,
+                "type": "yellow_card" if etype == "yellow" else "red_card",
                 "description": obj.description,
                 "club_id": obj.club_id,
                 "player_id": obj.player_id,
@@ -404,7 +428,7 @@ def build_timeline(
         timeline.append({
             "minute": 45,
             "type": "half_time",
-            "description": f"Half-Time: {home_team.club_name} {home_goals}–{away_goals} {away_team.club_name}."
+            "description": f"Half-Time: {home_team.club_name} {running_home_goals}–{running_away_goals} {away_team.club_name}."
         })
         
     # 3. Full Time

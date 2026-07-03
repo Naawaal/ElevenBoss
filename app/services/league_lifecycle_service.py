@@ -199,6 +199,11 @@ class LeagueLifecycleService:
         from app.services.player_service import PlayerService
         await PlayerService.age_players(season.id, session)
         
+        # Calculate and apply training bonuses
+        from app.services.training_service import TrainingService
+        bonus_map = await TrainingService.calculate_season_training_bonuses(session, season.id)
+        await PlayerService.apply_training_bonuses_after_aging(session, season.id, bonus_map)
+        
         await session.flush()
 
         # Check config for auto start

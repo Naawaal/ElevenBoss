@@ -40,5 +40,8 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             await session.commit()
         except Exception as e:
             await session.rollback()
-            logger.error(f"Database transaction error: {e}", exc_info=e)
+            if isinstance(e, ValueError):
+                logger.warning(f"Database transaction rolled back due to validation: {e}")
+            else:
+                logger.error(f"Database transaction error: {e}", exc_info=e)
             raise e

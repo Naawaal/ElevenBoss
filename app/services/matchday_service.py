@@ -411,13 +411,16 @@ class MatchdayService:
                         event_type=MatchEventType.MATCH_START,
                         description=f"The referee blows the whistle and the match between {home_club.name} and {away_club.name} begins!"
                     ))
+                    # Half-time score snapshot based on goals scored in the first 45 minutes
+                    ht_home = sum(1 for g in sim_result.goals if g.minute <= 45 and str(g.club_id) == str(home_club.id))
+                    ht_away = sum(1 for g in sim_result.goals if g.minute <= 45 and str(g.club_id) == str(away_club.id))
                     # Half time
                     events_list.append(MatchEvent(
                         guild_id=str(guild_id),
                         fixture_id=fixture.id,
                         minute=45,
                         event_type=MatchEventType.HALF_TIME,
-                        description=f"Half-Time: {home_club.name} {sim_result.home_goals}–{sim_result.away_goals} {away_club.name}."
+                        description=f"Half-Time: {home_club.name} {ht_home}–{ht_away} {away_club.name}."
                     ))
                     # Full time
                     events_list.append(MatchEvent(
@@ -552,6 +555,15 @@ class MatchdayService:
                 # Advance Season Week
                 week_range = await get_fixture_week_range(session, guild_id, season.id)
                 max_week = week_range[1] if week_range else current_week
+                
+                # Run training tick for the week that just concluded
+                from app.services.training_service import TrainingService
+                await TrainingService.run_weekly_training_tick(
+                    session=session,
+                    guild_id=str(guild_id),
+                    season_id=season.id,
+                    week=current_week,   # the week that just concluded
+                )
                 
                 season_completed = False
                 winner_name = None

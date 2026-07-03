@@ -8,4 +8,13 @@ from app.ui.layouts.player_detail import (
     build_player_match_select_layout
 )
 from app.ui.layouts.lineup import build_lineup_layout
+from app.ui.layouts.training import (
+    build_training_dashboard_layout,
+    build_training_intensity_layout,
+    build_training_default_plan_layout,
+    build_player_plans_layout,
+    build_set_player_plan_layout,
+    build_training_condition_layout,
+    build_training_outlook_layout,
+)
 

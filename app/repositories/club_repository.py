@@ -28,6 +28,7 @@ async def create_club(
         import re
         normalized_name = re.sub(r"\s+", " ", name.strip()).casefold()
     club = Club(
+        id=uuid.uuid4(),
         guild_id=str(guild_id),
         manager_id=manager_id,
         name=name,
@@ -54,6 +55,7 @@ async def create_club_no_commit(
     must be persisted in the SAME caller-owned transaction.
     """
     club = Club(
+        id=uuid.uuid4(),
         guild_id=str(guild_id),
         manager_id=manager_id,
         name=name,

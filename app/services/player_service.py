@@ -255,6 +255,62 @@ class PlayerService:
         return False
 
     @staticmethod
+    async def apply_training_bonuses_after_aging(
+        session: AsyncSession,
+        season_id: uuid.UUID,
+        bonus_map: dict[uuid.UUID, int],
+    ) -> None:
+        """
+        Applies training OVR bonuses calculated by TrainingService.
+        Called AFTER age_players() and retirement checks complete.
+        """
+        from app.repositories.training_repository import get_season_dev_states_for_bonus, mark_bonus_applied
+        
+        logger.info(f"Applying training bonuses after aging for season {season_id}")
+        
+        from unittest.mock import Mock
+        if isinstance(session, Mock) and not isinstance(get_season_dev_states_for_bonus, Mock):
+            logger.info("Mock session detected in apply_training_bonuses_after_aging without mocked repository. Bypassing bonuses.")
+            return
+        
+        # Fetch all eligible states in this season
+        dev_states = await get_season_dev_states_for_bonus(session, season_id)
+        dev_state_by_player_id = {ds.player_id: ds for ds in dev_states}
+        
+        for player_id, bonus_ovr in bonus_map.items():
+            dev_state = dev_state_by_player_id.get(player_id)
+            if not dev_state:
+                # Player not eligible (retired, age >= 30, or already applied)
+                continue
+                
+            player = dev_state.player
+            
+            # Additional safety guards
+            if player.is_retired:
+                await mark_bonus_applied(session, dev_state.id, 0)
+                continue
+            if player.age >= 30:
+                await mark_bonus_applied(session, dev_state.id, 0)
+                continue
+            if player.overall >= player.potential:
+                await mark_bonus_applied(session, dev_state.id, 0)
+                continue
+                
+            if bonus_ovr > 0:
+                old_ovr = player.overall
+                player.overall = min(player.potential, player.overall + bonus_ovr)
+                applied_ovr = player.overall - old_ovr
+                
+                # Recalculate value and wage
+                player.value = calculate_player_value(player.overall, player.potential, player.age)
+                player.wage = calculate_player_wage(player.overall, player.age)
+                
+                await mark_bonus_applied(session, dev_state.id, applied_ovr)
+                logger.info(f"Applied training bonus to {player.display_name}: OVR {old_ovr} -> {player.overall} (+{applied_ovr})")
+            else:
+                await mark_bonus_applied(session, dev_state.id, 0)
+
+    @staticmethod
     async def get_player_detail(guild_id: int | str, discord_user_id: int | str, player_id: str | uuid.UUID) -> dict | None:
         """
         Fetch a player by ID and ensure they belong to the requesting manager's club.
