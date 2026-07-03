@@ -190,6 +190,10 @@ class LeagueLifecycleService:
         season.status = SeasonStatus.COMPLETED
         season.ended_at = datetime.utcnow()
         league.status = LeagueStatus.COMPLETED
+
+        # Save standings snapshot
+        from app.services.season_completion_service import SeasonCompletionService
+        await SeasonCompletionService.save_final_snapshot(session, guild_id, season.id)
         
         # Age players and handle growth / decline / retirement
         from app.services.player_service import PlayerService

@@ -292,10 +292,9 @@ class GameLoopOrchestrator:
         logger.info(f"scheduled_matchday_success: week={current_week} simulated, sending announcements...")
         announced = await AnnouncementService.announce_matchday_summary(guild_id, current_week, sim_res.results)
         
-        # Check if season completed
         if sim_res.season_completed:
             # Announce season completion
-            await AnnouncementService.announce_season_complete(guild_id, sim_res.season_number)
+            await AnnouncementService.announce_season_complete(guild_id, sim_res.season_number, sim_res.winner_name)
 
         if not announced:
             logger.warning(f"scheduled_matchday_success: Discord announcement failed for guild_id={guild_id}")

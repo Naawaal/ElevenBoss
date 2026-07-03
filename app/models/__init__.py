@@ -11,6 +11,7 @@ from app.models.standing import LeagueStanding
 from app.models.scheduler_run import SchedulerRun, SchedulerRunStatus
 from app.models.onboarding_session import OnboardingSession
 from app.models.squad_generation_run import SquadGenerationRun
+from app.models.season_snapshot import SeasonSnapshot
 
 __all__ = [
     "GuildConfig",
@@ -33,4 +34,5 @@ __all__ = [
     "SchedulerRunStatus",
     "OnboardingSession",
     "SquadGenerationRun",
+    "SeasonSnapshot",
 ]

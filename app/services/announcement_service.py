@@ -138,28 +138,58 @@ class AnnouncementService:
 
     @classmethod
     async def announce_season_complete(cls, guild_id: int | str, season_number: int, winner_name: str | None = None) -> bool:
-        msg = (
-            f"🏁 **SEASON {season_number} COMPLETED!**\n\n"
-            f"The final week has been simulated and the season is officially over. "
-        )
-        if winner_name:
-            msg += f"Congratulations to our champions, **{winner_name}**! 🏆\n\n"
-        else:
-            msg += "Congratulations to everyone on finishing the season!\n\n"
-        msg += "📈 The final standings table is now available. Click below to view the final table."
+        # 1. Retrieve champion club_id and season_id for buttons
+        champion_club_id = "_"
+        season_id = "_"
+        
+        from app.db.session import get_session
+        from sqlalchemy.future import select
+        from app.models.season import Season
+        from app.repositories.season_snapshot_repository import get_season_snapshot
 
-        # Build V2View with button
+        try:
+            async with get_session() as db_sess:
+                stmt = select(Season).where(
+                    Season.guild_id == str(guild_id),
+                    Season.season_number == season_number
+                )
+                res = await db_sess.execute(stmt)
+                season = res.scalar_one_or_none()
+                if season:
+                    season_id = str(season.id)
+                    snapshot = await get_season_snapshot(db_sess, season.id)
+                    if snapshot and snapshot.champion_club_id:
+                        champion_club_id = str(snapshot.champion_club_id)
+        except Exception as e:
+            logger.warning(f"Failed to fetch snapshot info for announcement: {e}")
+
+        # 2. Formulate message
+        msg = f"🏁 **Season Completed**\n\n"
+        if winner_name:
+            msg += f"🏆 **{winner_name}** are the Season {season_number} champions!\n"
+        else:
+            msg += f"Congratulations on finishing Season {season_number}!\n"
+        msg += "Final standings table and summary are now available."
+
+        # 3. Build V2View with buttons
         from app.ui.components import container, text_display, action_row, secondary_button, V2View
         from app.ui.custom_ids import encode_custom_id
 
         table_id = encode_custom_id("league", "view_table", "main", "_")
+        champion_id = encode_custom_id("locker", "view", champion_club_id, "_")
+        summary_id = encode_custom_id("season", "view_summary", season_id, "_")
+
+        buttons = [secondary_button("📈 View Final Table", table_id)]
+        if champion_club_id != "_":
+            buttons.append(secondary_button("🏆 View Champion Club", champion_id))
+        if season_id != "_":
+            buttons.append(secondary_button("📊 View Season Summary", summary_id))
+
         view = V2View([
             container([
                 text_display(msg)
             ]),
-            action_row([
-                secondary_button("🏆 View Final Table", table_id)
-            ])
+            action_row(buttons)
         ])
 
         return await cls.send_announcement_v2(guild_id, view)

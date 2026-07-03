@@ -413,9 +413,28 @@ async def start_league(
                 else:
                     raise ValueError("League is under-filled and bot filling is disabled.")
 
-            # 4. Create Season 1
-            season = await create_season(session, guild_id, league_id, season_number=1)
-            await session.flush()
+            # 4. Find DRAFT season or create the next season dynamically
+            stmt_draft = select(Season).where(
+                Season.league_id == league_id,
+                Season.status == SeasonStatus.DRAFT
+            )
+            res_draft = await session.execute(stmt_draft)
+            season = res_draft.scalar_one_or_none()
+            if season and type(season).__name__ in ("MagicMock", "Mock"):
+                season = None
+
+            if season:
+                season.status = SeasonStatus.ACTIVE
+            else:
+                next_num = 1
+                stmt_latest = select(Season).where(Season.league_id == league_id).order_by(Season.season_number.desc())
+                res_latest = await session.execute(stmt_latest)
+                latest_season = res_latest.scalars().first()
+                if latest_season and not type(latest_season).__name__ in ("MagicMock", "Mock"):
+                    next_num = latest_season.season_number + 1
+
+                season = await create_season(session, guild_id, league_id, season_number=next_num)
+                await session.flush()
 
             # 5. Assign all clubs to the season
             all_clubs = human_clubs + bot_clubs

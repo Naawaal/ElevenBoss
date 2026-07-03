@@ -32,4 +32,14 @@ from app.ui.handlers.match_handler import (
     handle_view_recent_match,
     handle_view_match_detail,
 )
+from app.ui.handlers.season_handler import handle_view_season_summary
+from app.ui.handlers.friendly_handler import (
+    handle_friendly_challenge,
+    handle_friendly_accept,
+    handle_friendly_decline,
+    handle_friendly_cancel,
+    handle_friendly_skip,
+    handle_friendly_practice,
+    handle_friendly_practice_select
+)
 

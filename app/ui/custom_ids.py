@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
-KNOWN_SCOPES = {"locker", "squad", "player", "nav", "lineup", "league", "table", "fixtures", "matchday", "match", "setup", "automation", "schedule", "settings", "admin", "dm_settings", "dm_admin", "onboarding"}
-KNOWN_ACTIONS = {"open", "view", "page", "back", "close", "refresh", "help", "formation", "auto", "save", "join", "start", "view_table", "week", "prev", "next", "generate", "run", "recent", "status", "toggle", "run_now", "run_check", "go_schedule", "go_league", "automation", "matchday_run", "automation_check", "enable", "disable", "guild_select", "switch", "channel_game", "channel_match", "role_admin", "league_start", "extend_deadline", "cancel_league", "open_modal", "edit", "save_modal", "club_name", "finish"}
+KNOWN_SCOPES = {"locker", "squad", "player", "nav", "lineup", "league", "table", "fixtures", "matchday", "match", "setup", "automation", "schedule", "settings", "admin", "dm_settings", "dm_admin", "onboarding", "season", "friendly"}
+KNOWN_ACTIONS = {"open", "view", "page", "back", "close", "refresh", "help", "formation", "auto", "save", "join", "start", "view_table", "week", "prev", "next", "generate", "run", "recent", "status", "toggle", "run_now", "run_check", "go_schedule", "go_league", "automation", "matchday_run", "automation_check", "enable", "disable", "guild_select", "switch", "channel_game", "channel_match", "role_admin", "league_start", "extend_deadline", "cancel_league", "open_modal", "edit", "save_modal", "club_name", "finish", "prepare_next_season", "view_summary", "accept", "decline", "practice", "simulate", "skip", "cancel"}
 
 
 

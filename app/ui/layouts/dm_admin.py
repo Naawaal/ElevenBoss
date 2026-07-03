@@ -41,6 +41,7 @@ def build_admin_dashboard_layout(
     
     extend_deadline_id = encode_custom_id("dm_admin", "extend_deadline", "main", nonce)
     cancel_league_id = encode_custom_id("dm_admin", "cancel_league", "main", nonce)
+    prepare_next_season_id = encode_custom_id("dm_admin", "prepare_next_season", "main", nonce)
 
     rows = []
     
@@ -67,6 +68,11 @@ def build_admin_dashboard_layout(
                 primary_button("⚡ Sim Matchday", sim_matchday_id),
                 primary_button("🔍 Run Check", run_check_id),
                 danger_button("❌ Cancel League", cancel_league_id)
+            ]))
+        elif status_key == "completed":
+            rows.append(action_row([
+                primary_button("✨ Prepare Next Season", prepare_next_season_id),
+                primary_button("🔍 Run Check", run_check_id)
             ]))
         else:
             rows.append(action_row([

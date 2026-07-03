@@ -1,4 +1,5 @@
 import logging
+import uuid
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -327,7 +328,7 @@ class ClubCog(commands.Cog):
                 return
 
             # Check if this is a public view action
-            is_public_view = custom_id.scope in ("table", "fixtures", "match") or (custom_id.scope == "league" and custom_id.action in ("view_table", "refresh"))
+            is_public_view = custom_id.scope in ("table", "fixtures", "match", "season") or (custom_id.scope == "league" and custom_id.action in ("view_table", "refresh"))
             is_ephemeral_request = is_public_view and (interaction.guild_id is not None)
 
             # Defer response immediately to prevent 3-second Discord timeouts unless opening a modal
@@ -442,6 +443,37 @@ class ClubCog(commands.Cog):
                     new_view = await handle_view_recent_match(guild_id, interaction.user, nonce)
                 elif custom_id.action == "view":
                     new_view = await handle_view_match_detail(guild_id, interaction.user, custom_id.target, nonce)
+
+            elif custom_id.scope == "season":
+                if custom_id.action == "view_summary":
+                    try:
+                        season_uuid = uuid.UUID(custom_id.target)
+                    except ValueError:
+                        raise ValueError(f"Invalid season UUID in custom ID target: {custom_id.target}")
+                    from app.ui.handlers.season_handler import handle_view_season_summary
+                    new_view = await handle_view_season_summary(season_uuid, user_id, nonce)
+
+            elif custom_id.scope == "friendly":
+                from app.ui.handlers.friendly_handler import (
+                    handle_friendly_accept,
+                    handle_friendly_decline,
+                    handle_friendly_cancel,
+                    handle_friendly_skip,
+                    handle_friendly_practice_select
+                )
+                if custom_id.action == "accept":
+                    new_view = await handle_friendly_accept(custom_id.target, user_id, nonce, interaction)
+                elif custom_id.action == "decline":
+                    new_view = await handle_friendly_decline(custom_id.target, user_id, nonce)
+                elif custom_id.action == "cancel":
+                    new_view = await handle_friendly_cancel(custom_id.target, user_id, nonce)
+                elif custom_id.action == "skip":
+                    new_view = await handle_friendly_skip(custom_id.target, user_id, nonce, interaction)
+                elif custom_id.action == "practice" and custom_id.target == "select":
+                    if not interaction.data.get("values"):
+                        raise ValueError("No practice bot difficulty selected.")
+                    selected_val = interaction.data["values"][0]
+                    new_view = await handle_friendly_practice_select(selected_val, user_id, nonce, interaction)
 
             elif custom_id.scope == "dm_settings":
                 from app.ui.handlers.dm_settings_handler import (
@@ -589,6 +621,14 @@ class ClubCog(commands.Cog):
                         AnnouncementService.bot = self.bot
                         await AnnouncementService.announce_league_start(guild_id, res.league_name)
                     new_view = await handle_open_admin_dashboard(guild_id, interaction.user, nonce)
+                elif custom_id.action == "prepare_next_season":
+                    from app.services.season_reset_service import SeasonResetService
+                    res = await SeasonResetService.prepare_next_season(guild_id)
+                    new_view = await handle_open_admin_dashboard(guild_id, interaction.user, nonce)
+                    if res["success"]:
+                        await interaction.followup.send(content=f"✅ {res['message']}", ephemeral=True)
+                    else:
+                        await interaction.followup.send(content=f"❌ {res['message']}", ephemeral=True)
                 elif custom_id.action in ("refresh", "view"):
                     new_view = await handle_open_admin_dashboard(guild_id, interaction.user, nonce)
 
@@ -616,6 +656,22 @@ class ClubCog(commands.Cog):
             # Handle user validation failures (e.g. session expired, not owner)
             logger.info(f"ui_interaction_rejected: reason=validation_error, message={ve}, user_id={user_id}")
             await self.send_error_response(interaction, str(ve))
+        except (discord.NotFound, discord.HTTPException) as e:
+            # Handle expired/unknown interactions gracefully
+            is_unknown_interaction = False
+            if isinstance(e, discord.NotFound) and getattr(e, "code", 0) == 10062:
+                is_unknown_interaction = True
+            elif isinstance(e, discord.HTTPException) and getattr(e, "code", 0) in (10062, 50027):
+                is_unknown_interaction = True
+                
+            if is_unknown_interaction:
+                logger.warning(f"ui_interaction_expired: Interaction {interaction.id} expired or is unknown: {e}")
+                return
+                
+            # Otherwise treat as unexpected error
+            logger.error(f"ui_error: unexpected error in on_interaction: {e}", exc_info=e)
+            capture_exception(e)
+            await self.send_error_response(interaction, "An unexpected error occurred. Please open a new menu.")
         except Exception as e:
             # Handle unexpected crashes, report to Sentry
             logger.error(f"ui_error: unexpected error in on_interaction: {e}", exc_info=e)
