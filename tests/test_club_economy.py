@@ -546,11 +546,12 @@ class TestClubEconomy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.club.budget, 1_500_000)
 
     async def test_facility_upgrade_level_gate_still_runs_before_spending(self):
-        # We verify that level gating check (manager is Level 1, requires Level 2) blocks BEFORE transaction is executed
+        # Option A: Lv.2 facility requires Manager Level 1 (open to all).
+        # Lv.3 facility requires Manager Level 4. Verify gate fires BEFORE budget deduction.
         session_mock = AsyncMock()
-        fac = Facility(id=uuid.uuid4(), club_id=self.club_id, facility_type=FacilityType.STADIUM, level=1, status=FacilityStatus.IDLE)
-        self.manager.career_xp = 0  # Level 1
-        
+        fac = Facility(id=uuid.uuid4(), club_id=self.club_id, facility_type=FacilityType.STADIUM, level=2, status=FacilityStatus.IDLE)
+        self.manager.career_xp = 0  # Level 1 — too low for Lv.2→3 upgrade (requires Lv.4)
+
         async def exec_side_effect(stmt):
             stmt_str = str(stmt).lower()
             mock_res = MagicMock()
@@ -564,13 +565,13 @@ class TestClubEconomy(unittest.IsolatedAsyncioTestCase):
                 else:
                     mock_res.scalars.return_value.first.return_value = None
             return mock_res
-            
+
         session_mock.execute.side_effect = exec_side_effect
-        
+
         with self.assertRaises(ValueError) as context:
             await FacilityService.start_upgrade(session_mock, self.club_id, FacilityType.STADIUM)
-            
-        self.assertIn("requires Manager Level 2", str(context.exception))
+
+        self.assertIn("requires Manager Level 4", str(context.exception))
         self.assertEqual(self.club.budget, 1_500_000)
 
     async def test_facility_upgrade_insufficient_budget_still_blocks_before_ledger(self):

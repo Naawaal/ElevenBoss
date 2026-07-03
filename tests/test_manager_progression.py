@@ -208,11 +208,10 @@ class TestManagerProgression(unittest.IsolatedAsyncioTestCase):
 
     async def test_facility_upgrade_blocked_when_manager_level_too_low(self):
         session_mock = AsyncMock()
-        fac = Facility(club_id=self.club_id, facility_type=FacilityType.STADIUM, level=1, status=FacilityStatus.IDLE)
-        
-        # Manager is Level 1 (0 XP). Stadium upgrade level 2 requires Manager Level 2.
-        # Gating check should fail.
-        
+        # Facility is already Lv.2 — upgrading to Lv.3 requires Manager Level 4.
+        # Manager has 0 XP (Level 1), so this should be blocked.
+        fac = Facility(club_id=self.club_id, facility_type=FacilityType.STADIUM, level=2, status=FacilityStatus.IDLE)
+
         async def exec_side_effect(stmt):
             stmt_str = str(stmt).lower()
             mock_res = MagicMock()
@@ -226,14 +225,14 @@ class TestManagerProgression(unittest.IsolatedAsyncioTestCase):
                 else:
                     mock_res.scalars.return_value.first.return_value = None
             return mock_res
-            
+
         session_mock.execute.side_effect = exec_side_effect
-        
+
         with self.assertRaises(ValueError) as context:
             await FacilityService.start_upgrade(session_mock, self.club_id, FacilityType.STADIUM)
-            
-        self.assertIn("requires Manager Level 2", str(context.exception))
-        
+
+        self.assertIn("requires Manager Level 4", str(context.exception))
+
         # Verify budget was NOT deducted (original is 1,000,000)
         self.assertEqual(self.club.budget, 1000000)
         self.assertEqual(fac.status, FacilityStatus.IDLE)
@@ -242,9 +241,8 @@ class TestManagerProgression(unittest.IsolatedAsyncioTestCase):
         session_mock = AsyncMock()
         fac = Facility(club_id=self.club_id, facility_type=FacilityType.STADIUM, level=1, status=FacilityStatus.IDLE)
         
-        # Manager is Level 2 (100 XP). Stadium level 2 requires Manager Level 2.
-        # This should pass.
-        self.manager.career_xp = 100
+        # Manager is Level 1 (0 XP). Facility Lv.2 now requires Manager Level 1 (Option A).
+        # So the upgrade should be ALLOWED immediately for new managers.
         
         async def exec_side_effect(stmt):
             stmt_str = str(stmt).lower()
@@ -293,12 +291,12 @@ class TestManagerProgression(unittest.IsolatedAsyncioTestCase):
 
     async def test_facility_upgrade_checks_level_before_budget(self):
         session_mock = AsyncMock()
-        fac = Facility(club_id=self.club_id, facility_type=FacilityType.STADIUM, level=1, status=FacilityStatus.IDLE)
-        
-        # Set budget to very low, so both budget check and level check would fail.
-        # But since level check runs FIRST, it should raise level error, not budget error.
-        self.club.budget = 500  # Less than 250,000 cost — both checks would fail, level runs first
-        
+        # Facility is Lv.2 — upgrading to Lv.3 requires Manager Level 4.
+        # Budget is also too low. Level check must fire FIRST (not budget error).
+        fac = Facility(club_id=self.club_id, facility_type=FacilityType.STADIUM, level=2, status=FacilityStatus.IDLE)
+
+        self.club.budget = 500  # Less than 750,000 Lv.2→3 cost AND level is too low
+
         async def exec_side_effect(stmt):
             stmt_str = str(stmt).lower()
             mock_res = MagicMock()
@@ -312,13 +310,13 @@ class TestManagerProgression(unittest.IsolatedAsyncioTestCase):
                 else:
                     mock_res.scalars.return_value.first.return_value = None
             return mock_res
-            
+
         session_mock.execute.side_effect = exec_side_effect
-        
+
         with self.assertRaises(ValueError) as context:
             await FacilityService.start_upgrade(session_mock, self.club_id, FacilityType.STADIUM)
-            
-        self.assertIn("requires Manager Level 2", str(context.exception))
+
+        self.assertIn("requires Manager Level 4", str(context.exception))
 
     @patch("app.services.manager_progress_service.ManagerProgressService.award_xp")
     async def test_consequence_already_applied_still_allows_missing_xp_award(self, mock_award_xp):
@@ -374,3 +372,110 @@ class TestManagerProgression(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_insert.call_count, 2)
         # Verify add_career_xp was only called ONCE (for the win XP event)
         mock_add_xp.assert_called_once_with(session_mock, self.manager_id, config.MANAGER_XP_LEAGUE_WIN)
+
+    # --- Manager XP Balance Guardrails (V1.1) ---
+    # These tests lock in the V1.1 XP ratios and level-gate policy.
+    # If XP is re-inflated, level thresholds are changed, or gate policy shifts,
+    # these will fail first — before it causes balance regressions in production.
+
+    def test_loss_manager_xp_is_not_zero(self):
+        """
+        A loss should still award some XP (played + loss bonus).
+        Managers must always feel progress, even in a bad run.
+        """
+        loss_xp = config.MANAGER_XP_LEAGUE_PLAYED + config.MANAGER_XP_LEAGUE_LOSS
+        self.assertGreater(loss_xp, 0,
+            msg="A league loss must still award positive Manager XP.")
+
+    def test_big_win_manager_xp_is_below_100(self):
+        """
+        The best possible single match (win + clean sheet + 3 goals) must stay below 100 XP.
+        Keeping the max low prevents level-jumping in short bursts.
+        """
+        max_xp = (
+            config.MANAGER_XP_LEAGUE_PLAYED
+            + config.MANAGER_XP_LEAGUE_WIN
+            + config.MANAGER_XP_CLEAN_SHEET
+            + config.MANAGER_XP_SCORED_3_PLUS
+        )
+        self.assertLess(max_xp, 100,
+            msg=f"Best-case match XP is {max_xp}. Should be < 100 to prevent rapid level-jumping.")
+
+    def test_manager_level_4_requires_multiple_matches(self):
+        """
+        Manager Level 4 should require at least 5 matches of average play.
+        Average XP per match ≈ 45–55 XP (draw result).
+        """
+        level_4_threshold = config.MANAGER_LEVEL_XP_THRESHOLDS[4]
+        avg_xp_per_match = config.MANAGER_XP_LEAGUE_PLAYED + config.MANAGER_XP_LEAGUE_DRAW
+        matches_needed = level_4_threshold / avg_xp_per_match
+        self.assertGreaterEqual(matches_needed, 5,
+            msg=(
+                f"Manager Level 4 at {level_4_threshold} XP only takes {matches_needed:.1f} "
+                f"average matches. Should require >= 5."
+            ))
+
+    def test_manager_level_7_requires_long_term_play(self):
+        """
+        Manager Level 7 must require at least 15 average matches.
+        This is the Lv.3→4 facility gate tier.
+        """
+        level_7_threshold = config.MANAGER_LEVEL_XP_THRESHOLDS[7]
+        avg_xp_per_match = config.MANAGER_XP_LEAGUE_PLAYED + config.MANAGER_XP_LEAGUE_WIN
+        matches_needed = level_7_threshold / avg_xp_per_match
+        self.assertGreaterEqual(matches_needed, 15,
+            msg=(
+                f"Manager Level 7 at {level_7_threshold} XP only takes {matches_needed:.1f} "
+                f"win matches. Should require >= 15."
+            ))
+
+    def test_manager_level_10_aligns_with_late_facility_upgrade(self):
+        """
+        Manager Level 10 must require at least 35 average matches.
+        This gates the Lv.4→5 facility tier (54 matches budget target).
+        """
+        level_10_threshold = config.MANAGER_LEVEL_XP_THRESHOLDS[10]
+        avg_xp_per_match = config.MANAGER_XP_LEAGUE_PLAYED + config.MANAGER_XP_LEAGUE_WIN
+        matches_needed = level_10_threshold / avg_xp_per_match
+        self.assertGreaterEqual(matches_needed, 35,
+            msg=(
+                f"Manager Level 10 at {level_10_threshold} XP only takes {matches_needed:.1f} "
+                f"win matches. Should require >= 35."
+            ))
+
+    def test_facility_level_2_requires_manager_level_1(self):
+        """
+        Option A: Facility Lv.2 upgrade must be immediately available to Level 1 managers.
+        New users should be able to make one immediate strategic facility choice.
+        """
+        lv2_gate = config.FACILITY_MANAGER_LEVEL_REQUIREMENTS.get(2)
+        self.assertEqual(lv2_gate, 1,
+            msg=(
+                f"Facility Lv.2 gate is Manager Level {lv2_gate}. "
+                f"Option A requires it to be Level 1 for onboarding."
+            ))
+
+    def test_facility_level_3_requires_manager_level_4(self):
+        """
+        Facility Lv.3 upgrade must require Manager Level 4.
+        This is the first real gate — ensures managers play ~8 matches before second tier.
+        """
+        lv3_gate = config.FACILITY_MANAGER_LEVEL_REQUIREMENTS.get(3)
+        self.assertEqual(lv3_gate, 4,
+            msg=f"Facility Lv.3 gate is Manager Level {lv3_gate}. Expected Level 4.")
+
+    def test_xp_win_greater_than_draw_greater_than_loss(self):
+        """
+        XP rewards must reflect result quality: win > draw > loss.
+        Flattening these removes the incentive to play for results.
+        """
+        self.assertGreater(
+            config.MANAGER_XP_LEAGUE_WIN,
+            config.MANAGER_XP_LEAGUE_DRAW,
+            msg="Win XP must be greater than draw XP."
+        )
+        self.assertGreater(
+            config.MANAGER_XP_LEAGUE_DRAW,
+            config.MANAGER_XP_LEAGUE_LOSS,
+            msg="Draw XP must be greater than loss XP."
+        )

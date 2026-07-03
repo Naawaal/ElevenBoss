@@ -131,10 +131,10 @@ class Config:
     })
 
     FACILITY_MANAGER_LEVEL_REQUIREMENTS: dict[int, int] = field(default_factory=lambda: {
-        2: 2,
-        3: 4,
-        4: 7,
-        5: 10,
+        2: 1,   # First upgrade: available immediately to new managers
+        3: 4,   # Second tier: ~8 matches in
+        4: 7,   # Third tier: ~23 matches in
+        5: 10,  # Fourth tier: ~46 matches in
         6: 14,
         7: 18,
         8: 23,
@@ -142,12 +142,12 @@ class Config:
         10: 36,
     })
 
-    MANAGER_XP_LEAGUE_PLAYED: int = 40
-    MANAGER_XP_LEAGUE_WIN: int = 30
-    MANAGER_XP_LEAGUE_DRAW: int = 15
-    MANAGER_XP_LEAGUE_LOSS: int = 10
-    MANAGER_XP_CLEAN_SHEET: int = 10
-    MANAGER_XP_SCORED_3_PLUS: int = 10
+    MANAGER_XP_LEAGUE_PLAYED: int = 35
+    MANAGER_XP_LEAGUE_WIN:    int = 20
+    MANAGER_XP_LEAGUE_DRAW:   int = 10
+    MANAGER_XP_LEAGUE_LOSS:   int =  5
+    MANAGER_XP_CLEAN_SHEET:   int =  5
+    MANAGER_XP_SCORED_3_PLUS: int =  5
 
     CLUB_REVENUE_LEAGUE_PLAYED: int = 35_000
     CLUB_REVENUE_LEAGUE_WIN:    int = 25_000
