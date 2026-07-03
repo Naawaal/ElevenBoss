@@ -12,6 +12,7 @@ from app.models.player import Player
 from app.repositories import get_players_by_club_id, get_active_lineup
 from app.engine.lineup_builder import build_auto_lineup
 from app.engine.lineup_validator import validate_lineup
+from app.services.lineup_service import LineupService
 from app.engine.match_engine import (
     simulate_match,
     MatchPlayerInput,
@@ -73,66 +74,6 @@ class FriendlyService:
         from app.repositories.friendly_repository import set_friendly_cooldown
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=duration_minutes)
         await set_friendly_cooldown(session, guild_id, challenger_id, opponent_id, expires_at)
-
-    @staticmethod
-    async def resolve_team_lineup(session: AsyncSession, guild_id: int | str, club: Club) -> tuple[str, list[MatchPlayerInput]]:
-        """
-        Resolves starting XI for a club in-memory.
-        Uses active lineup if valid; otherwise, auto-picks the best XI in-memory.
-        Does NOT persist fallback lineups.
-        """
-        lineup = await get_active_lineup(session, club.id)
-        club_players = await get_players_by_club_id(session, club.id)
-        
-        # Guard: must have at least 11 players to play a friendly
-        if len(club_players) < 11:
-            raise ValueError(f"Club '{club.name}' does not have enough players (has {len(club_players)}, requires 11).")
-
-        is_valid = False
-        if lineup:
-            starters = {lp.slot: lp.player_id for lp in lineup.lineup_players if lp.is_starter}
-            bench = [lp.player_id for lp in lineup.lineup_players if not lp.is_starter]
-            is_valid, _ = validate_lineup(lineup.formation, starters, bench, club_players)
-
-        if is_valid and lineup:
-            formation = lineup.formation
-            starters_players = []
-            for lp in lineup.lineup_players:
-                if lp.is_starter:
-                    p = lp.player
-                    starters_players.append(MatchPlayerInput(
-                        player_id=str(p.id),
-                        name=p.display_name,
-                        position=p.position,
-                        slot=lp.slot,
-                        overall=p.overall,
-                        potential=p.potential,
-                        fitness=p.fitness,
-                        morale=getattr(p, "morale", 80),
-                        consistency=getattr(p, "consistency", 70),
-                        is_goalkeeper=(p.position == "GK")
-                    ))
-            return formation, starters_players
-        else:
-            # Fallback auto-lineup (in-memory only)
-            logger.info(f"friendly_lineup_fallback: auto-picking best XI in-memory for '{club.name}'")
-            starters_objs, _, _ = build_auto_lineup(club_players, "4-4-2")
-            
-            starters_players = []
-            for slot, p in starters_objs.items():
-                starters_players.append(MatchPlayerInput(
-                    player_id=str(p.id),
-                    name=p.display_name,
-                    position=p.position,
-                    slot=slot,
-                    overall=p.overall,
-                    potential=p.potential,
-                    fitness=p.fitness,
-                    morale=getattr(p, "morale", 80),
-                    consistency=getattr(p, "consistency", 70),
-                    is_goalkeeper=(p.position == "GK")
-                ))
-            return "4-4-2", starters_players
 
     @staticmethod
     def generate_transient_bot_team(difficulty_level: str, club_name: str, seed: int) -> MatchTeamInput:

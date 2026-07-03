@@ -19,7 +19,7 @@ Always follow the clean folder structure. Do not mix business logic, database qu
 ## 2. Discord Bot Guidelines
 - **Slash Commands Only**: The bot is configured for slash commands. Do not register message-based prefix commands.
 - **Least-Privilege Intents**: Only use `discord.Intents.default()`. Do not enable privileged intents (like Message Content or Server Members) unless explicitly requested.
-- **Development Auto-Sync**: The bot automatically copy-syncs slash commands to the guild specified by `GUILD_ID` in `.env` when `ENVIRONMENT` is `development` on startup.
+- **Development Auto-Sync & Command Visibility**: The bot automatically syncs slash commands when `ENVIRONMENT` is `development` on startup. To prevent duplicate command listings in the guild server, copy global commands to the guild tree and then remove global commands except DM-only ones (`admin` and `settings`). DM-only commands must be explicitly removed from the guild command tree before syncing the guild tree, keeping them strictly registered in the global tree.
 
 ---
 
@@ -62,6 +62,7 @@ Always follow the clean folder structure. Do not mix business logic, database qu
 ## 6. Match Simulation, Gameplay Engine, and Standings Guidelines
 - **Deterministic Simulation**: All gameplay simulation calculations (under `app/engine/`) must be entirely deterministic and reproducible via a provided seed. Never use `random.randint()`, global `random.seed()`, or system time in simulation logic. Always instantiate and pass a local `random.Random(seed)` instance.
 - **Idempotency & Scheduler Locks**: Matchday simulation must check and create a running lock record in the `scheduler_runs` table using a unique lock key (format: `matchday:{guild_id}:{season_id}:{week}`) within a single transaction to prevent parallel executions.
+- **Matchday Lock Staleness Recovery**: Stuck locks in a `RUNNING` state due to hard crashes are resolved using a shared threshold constant `STALE_MATCHDAY_LOCK_HOURS`. Recovery is handled via a startup sweep task (for bot restarts) and an inline conditional update when a new simulation starts. Both paths must execute an atomic SQL `UPDATE` statement and check its `rowcount` to prevent race conditions or duplicate recovery operations.
 - **Lineup Resiliency**: If a club has no active or valid lineup prior to simulation, the service layer must automatically construct a fallback starting XI using squad players (e.g. via `build_auto_lineup`) and save it to the database before running the match simulation.
 - **Atomic Standings Consistency**: Updates to match results, standings, fixtures status, and scheduler run states must all occur atomically within a single database transaction context to prevent desynchronized statistics.
 
@@ -94,6 +95,7 @@ When modifying or extending the league lifecycle, season transitions, and bot ma
 - **Unconditional Lock Finalization (R3)**: When a season completes under `/league advance` or automated progression, transition the current season/league to `COMPLETED` and update the completion lock (`season_advance`) to `SUCCESS` unconditionally. This prevents dangling `RUNNING` locks when automation is disabled.
 - **Eager Shielding Check Order (R3)**: Validation shielding checks (e.g., rejecting manual `/league advance` commands if `auto_start_league` is enabled) must always execute **before** attempting to acquire any database locks or starting transactions. This protects the database from unnecessary locks and prevents deadlocks.
 - **Automated Bot Lineup Refreshes (R4)**: Before executing weekly matchday simulations in `run_current_matchday()`, always rebuild and save starting XI lineups for all bot filler clubs (`is_bot_controlled=True`) using squad players (e.g. via `build_auto_lineup`). This guarantees that bot clubs dynamically adjust their lineups to account for player fatigue, transfers, or retirement.
+- **Bot Club Season Resets (Option A)**: In `_bootstrap_season_internal()`, all bot clubs must be reset to maintain static difficulty. Soft-retire the outgoing squad using `PlayerService.retire_squad()`, which marks players as retired (`is_retired=True`) and detaches them from the club (`club_id=None`) to preserve foreign key constraints on historical match events. The idempotency guard `squad_generation_run` must also be deleted for the club to allow `create_squad()` to generate a fresh 25-man squad.
 
 ---
 

@@ -10,6 +10,7 @@ from app.ui.handlers.session import ui_session_manager, UiSession
 from app.models.club import Club
 from app.repositories.club_repository import get_user_club
 from app.services.friendly_service import FriendlyService, FriendlyMatchReport
+from app.services.lineup_service import LineupService
 from app.services.friendly_live_playback_service import friendly_playback_service
 from app.ui.layouts.friendly_live import (
     build_friendly_invite_layout,
@@ -172,23 +173,25 @@ async def handle_friendly_accept(
                 raise ValueError("One of the clubs in this challenge was deleted.")
 
             # Resolve lineups in-memory (with fallbacks if needed)
-            home_formation, home_starters = await FriendlyService.resolve_team_lineup(session, guild_id, challenger_club)
-            away_formation, away_starters = await FriendlyService.resolve_team_lineup(session, guild_id, opponent_club)
+            home_res = await LineupService.resolve_team_lineup(session, guild_id, challenger_club.id, challenger_club.name, persist_fallback=False)
+            away_res = await LineupService.resolve_team_lineup(session, guild_id, opponent_club.id, opponent_club.name, persist_fallback=False)
 
         # Assemble engine inputs
         from app.engine.match_engine import MatchTeamInput
         home_input = MatchTeamInput(
             club_id=str(challenger_club.id),
             club_name=challenger_club.name,
-            formation=home_formation,
-            players=home_starters,
+            formation=home_res.formation,
+            players=home_res.starters,
+            bench=home_res.bench,
             is_home=True
         )
         away_input = MatchTeamInput(
             club_id=str(opponent_club.id),
             club_name=opponent_club.name,
-            formation=away_formation,
-            players=away_starters,
+            formation=away_res.formation,
+            players=away_res.starters,
+            bench=away_res.bench,
             is_home=False
         )
 
@@ -391,7 +394,7 @@ async def handle_friendly_practice_select(
                 raise ValueError("Your club was not found.")
 
             # Resolve lineup
-            home_formation, home_starters = await FriendlyService.resolve_team_lineup(session, guild_id, club)
+            home_res = await LineupService.resolve_team_lineup(session, guild_id, club.id, club.name, persist_fallback=False)
 
         # Retrieve seed from session or generate fallback
         seed = session_obj.metadata.get("session_seed")
@@ -407,8 +410,9 @@ async def handle_friendly_practice_select(
         home_input = MatchTeamInput(
             club_id=str(club.id),
             club_name=club.name,
-            formation=home_formation,
-            players=home_starters,
+            formation=home_res.formation,
+            players=home_res.starters,
+            bench=home_res.bench,
             is_home=True
         )
 

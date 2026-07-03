@@ -452,6 +452,7 @@ def _finalize_result(
         goals_list,
         cards_list,
         config,
+        substitutions=subs_list,
     )
 
     # MOTM selection

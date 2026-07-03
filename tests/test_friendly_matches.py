@@ -18,6 +18,7 @@ from app.models.lineup import Lineup
 from app.models.guild_config import GuildConfig
 from app.ui.handlers.session import ui_session_manager, UiSession
 from app.services.friendly_service import FriendlyService, FriendlyMatchReport
+from app.services.lineup_service import LineupService, LineupResolutionResult
 from app.services.friendly_live_playback_service import friendly_playback_service
 from app.ui.handlers.friendly_handler import (
     handle_friendly_challenge,
@@ -149,7 +150,7 @@ async def test_challenge_cooldown_and_anti_spam(mock_set_cooldown, mock_get_cool
 @pytest.mark.asyncio
 @patch("app.ui.handlers.friendly_handler.get_session")
 @patch("app.ui.handlers.friendly_handler.get_user_club")
-@patch("app.ui.handlers.friendly_handler.FriendlyService.resolve_team_lineup")
+@patch("app.ui.handlers.friendly_handler.LineupService.resolve_team_lineup")
 @patch("app.services.friendly_service.FriendlyService.simulate_friendly")
 @patch("app.services.friendly_live_playback_service.get_session")
 @patch("app.services.friendly_live_playback_service.get_or_create_guild_config")
@@ -208,8 +209,8 @@ async def test_challenge_accept_workflow(
         for i in range(11)
     ]
     mock_resolve_lineup.side_effect = [
-        ("4-4-2", dummy_starters),  # Challenger XI
-        ("4-4-2", dummy_starters)   # Opponent XI
+        LineupResolutionResult(formation="4-4-2", starters=dummy_starters, bench=[]),  # Challenger XI
+        LineupResolutionResult(formation="4-4-2", starters=dummy_starters, bench=[])   # Opponent XI
     ]
     
     # Mock simulate result DTO
@@ -389,7 +390,7 @@ async def test_practice_mode_hub_opening(mock_get_club, mock_get_session):
 
 @pytest.mark.asyncio
 @patch("app.ui.handlers.friendly_handler.get_session")
-@patch("app.ui.handlers.friendly_handler.FriendlyService.resolve_team_lineup")
+@patch("app.ui.handlers.friendly_handler.LineupService.resolve_team_lineup")
 @patch("app.services.friendly_live_playback_service.get_session")
 @patch("app.services.friendly_live_playback_service.get_or_create_guild_config")
 async def test_practice_mode_simulation_select(
@@ -435,7 +436,7 @@ async def test_practice_mode_simulation_select(
         )
         for i in range(11)
     ]
-    mock_resolve_lineup.return_value = ("4-3-3", dummy_starters)
+    mock_resolve_lineup.return_value = LineupResolutionResult(formation="4-3-3", starters=dummy_starters, bench=[])
     
     # Mock database executes for club load
     club = Club(id=club_id, name="Practice FC", guild_id="12345")
@@ -479,8 +480,8 @@ async def test_practice_mode_simulation_select(
 
 
 @pytest.mark.asyncio
-@patch("app.services.friendly_service.get_active_lineup")
-@patch("app.services.friendly_service.get_players_by_club_id")
+@patch("app.services.lineup_service.get_active_lineup")
+@patch("app.services.lineup_service.get_players_by_club_id")
 async def test_friendly_invalid_lineup_fallback_auto_best_xi(mock_get_players, mock_get_active_lineup):
     # Setup mocks
     session_mock = AsyncMock()
@@ -507,7 +508,9 @@ async def test_friendly_invalid_lineup_fallback_auto_best_xi(mock_get_players, m
     club = Club(id=uuid.uuid4(), name="Practice FC", guild_id="12345")
     
     # Should resolve successfully using fallback auto lineup
-    formation, starters = await FriendlyService.resolve_team_lineup(session_mock, "12345", club)
+    res = await LineupService.resolve_team_lineup(session_mock, "12345", club.id, club.name, persist_fallback=False)
+    formation = res.formation
+    starters = res.starters
     assert formation == "4-4-2"
     assert len(starters) == 11
     

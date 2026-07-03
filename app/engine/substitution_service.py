@@ -52,11 +52,11 @@ def _pick_replacement(
     # Prefer same slot group (GK/DEF/MID/ATT)
     def slot_group(slot: str) -> str:
         s = slot.upper()
-        if s == "GK":
+        if "GK" in s:
             return "GK"
-        if s in ("LB", "CB1", "CB2", "CB3", "RB", "LWB", "RWB"):
+        if any(x in s for x in ("LB", "CB", "RB", "LWB", "RWB", "DEF")):
             return "DEF"
-        if s in ("LM", "CM1", "CM2", "CM3", "RM", "LDM", "RDM", "CAM", "CDM"):
+        if any(x in s for x in ("LM", "CM", "RM", "LDM", "RDM", "CAM", "CDM", "MID")):
             return "MID"
         return "ATT"
 
@@ -87,11 +87,15 @@ def _apply_sub(
     - Initialises player_in's fitness to 1.0 (fresh from bench).
     - Increments the appropriate subs_used counter.
     """
+    import dataclasses
     active_xi: list[MatchPlayerInput] = (
         state.home_active_xi if team_side == "home" else state.away_active_xi
     )
     idx = next(i for i, p in enumerate(active_xi) if p.player_id == player_out.player_id)
-    active_xi[idx] = player_in
+    
+    # Inherit the subbed-out player's slot to prevent active XI collisions
+    mutated_player_in = dataclasses.replace(player_in, slot=player_out.slot)
+    active_xi[idx] = mutated_player_in
     state.fitness[player_in.player_id] = 1.0
 
     if team_side == "home":

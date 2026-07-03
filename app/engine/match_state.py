@@ -67,7 +67,10 @@ class MatchState:
         to a 0.0–1.0 float. Active XIs are shallow copies so the originals are
         not mutated when players are removed mid-match.
         """
-        all_players = list(sim_input.home_team.players) + list(sim_input.away_team.players)
+        all_players = (
+            list(sim_input.home_team.players) + list(sim_input.home_team.bench) +
+            list(sim_input.away_team.players) + list(sim_input.away_team.bench)
+        )
         fitness = {p.player_id: max(0.0, min(1.0, p.fitness / 100.0)) for p in all_players}
         return cls(
             home_active_xi=list(sim_input.home_team.players),

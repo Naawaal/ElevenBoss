@@ -6,6 +6,7 @@ from app.engine.match_engine import (
     MatchTeamInput,
     MatchGoalEvent,
     MatchCardEvent,
+    MatchSubstitutionEvent,
 )
 
 def calculate_player_ratings(
@@ -17,12 +18,19 @@ def calculate_player_ratings(
     goals: list[MatchGoalEvent],
     cards: list[MatchCardEvent],
     config: MatchEngineConfig,
+    substitutions: list[MatchSubstitutionEvent] | None = None,
 ) -> dict[str, float]:
     """
     Computes player ratings based on match results, goals, assists, cards, and team clean sheets.
     """
     player_ratings = {}
     
+    played_ids = set()
+    played_ids.update(p.player_id for p in home_team.players)
+    played_ids.update(p.player_id for p in away_team.players)
+    if substitutions:
+        played_ids.update(s.player_in_id for s in substitutions)
+
     def calculate_team_ratings(
         team: MatchTeamInput,
         goals_scored: int,
@@ -30,7 +38,10 @@ def calculate_player_ratings(
         won: bool,
         drew: bool
     ):
-        for p in team.players:
+        for p in team.players + team.bench:
+            if p.player_id not in played_ids:
+                continue
+
             # Base rating dynamically scaled by player consistency (Milestone F)
             consistency = getattr(p, "consistency", 70)
             if consistency is None:

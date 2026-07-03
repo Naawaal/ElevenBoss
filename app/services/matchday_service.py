@@ -30,6 +30,7 @@ from app.repositories import (
 )
 from app.engine.lineup_builder import build_auto_lineup
 from app.engine.lineup_validator import validate_lineup
+from app.services.lineup_service import LineupService
 from app.engine.match_engine import (
     simulate_match,
     MatchPlayerInput,
@@ -328,93 +329,14 @@ class MatchdayService:
                 await session.flush()
                 logger.info(f"bot_lineups_refreshed: guild_id={guild_id}, count={len(bot_clubs)}")
                     
-                results_list = []
-                
                 # Simulate each fixture
                 for fixture in fixtures:
                     home_club = fixture.home_club
                     away_club = fixture.away_club
-                    
-                    # Lineup resolving
-                    async def resolve_team_lineup(club_id: uuid.UUID, club_name: str) -> tuple[str, list[MatchPlayerInput]]:
-                        # 1. Load active lineup
-                        lineup = await get_active_lineup(session, club_id)
-                        club_players = await get_players_by_club_id(session, club_id)
-                        
-                        # Verify we have at least 11 active players
-                        from app.services.player_service import PlayerService
-                        active_players = await PlayerService.get_available_players(club_id, session)
-                        if len(active_players) < 11:
-                            raise ValueError(f"Club '{club_name}' does not have enough active players (has {len(active_players)}, requires 11).")
-                            
-                        # 2. Check if lineup is valid
-                        is_valid = False
-                        if lineup:
-                            starters = {lp.slot: lp.player_id for lp in lineup.lineup_players if lp.is_starter}
-                            bench = [lp.player_id for lp in lineup.lineup_players if not lp.is_starter]
-                            is_valid, _ = validate_lineup(lineup.formation, starters, bench, club_players)
-                            
-                        if not is_valid:
-                            # Fallback: Auto-pick best XI
-                            logger.info(f"lineup_fallback: auto-picking best XI for club_id={club_id} ({club_name})")
-                            starters_objs, bench_objs, _ = build_auto_lineup(club_players, "4-4-2")
-                            
-                            # Convert starting objects to dict of IDs
-                            starters_ids = {slot: p.id for slot, p in starters_objs.items()}
-                            bench_ids = [p.id for p in bench_objs]
-                            
-                            # Save fallback lineup in the DB
-                            await save_lineup_with_players(
-                                session,
-                                guild_id,
-                                club_id,
-                                "4-4-2",
-                                starters_ids,
-                                bench_ids
-                            )
-                            await session.flush()
-                            
-                            # Build starters_players directly from starters_objs in memory
-                            # to avoid database lazy loading issues
-                            starters_players = []
-                            for slot, p in starters_objs.items():
-                                starters_players.append(MatchPlayerInput(
-                                    player_id=str(p.id),
-                                    name=p.display_name,
-                                    position=p.position,
-                                    slot=slot,
-                                    overall=p.overall,
-                                    potential=p.potential,
-                                    fitness=p.fitness,
-                                    morale=getattr(p, "morale", 80),
-                                    consistency=getattr(p, "consistency", 70),
-                                    is_goalkeeper=(p.position == "GK")
-                                ))
-                            return "4-4-2", starters_players
-                            
-                        # Hydrate starting players
-                        starters_players = []
-                        for lp in lineup.lineup_players:
-                            if lp.is_starter:
-                                p = lp.player
-                                starters_players.append(MatchPlayerInput(
-                                    player_id=str(p.id),
-                                    name=p.display_name,
-                                    position=p.position,
-                                    slot=lp.slot,
-                                    overall=p.overall,
-                                    potential=p.potential,
-                                    fitness=p.fitness,
-                                    morale=getattr(p, "morale", 80),
-                                    consistency=getattr(p, "consistency", 70),
-                                    is_goalkeeper=(p.position == "GK")
-                                ))
-                        return lineup.formation, starters_players
 
-                        
                     try:
-                        home_formation, home_starters = await resolve_team_lineup(home_club.id, home_club.name)
-                        away_formation, away_starters = await resolve_team_lineup(away_club.id, away_club.name)
+                        home_res = await LineupService.resolve_team_lineup(session, guild_id, home_club.id, home_club.name, persist_fallback=True)
+                        away_res = await LineupService.resolve_team_lineup(session, guild_id, away_club.id, away_club.name, persist_fallback=True)
                     except ValueError as ve:
                         await mark_job_failed(session, job_key, str(ve))
                         logger.warning(f"matchday_run_rejected: reason=lineup_resolution_failed: {ve}")
@@ -431,15 +353,17 @@ class MatchdayService:
                     home_team_input = MatchTeamInput(
                         club_id=str(home_club.id),
                         club_name=home_club.name,
-                        formation=home_formation,
-                        players=home_starters,
+                        formation=home_res.formation,
+                        players=home_res.starters,
+                        bench=home_res.bench,
                         is_home=True
                     )
                     away_team_input = MatchTeamInput(
                         club_id=str(away_club.id),
                         club_name=away_club.name,
-                        formation=away_formation,
-                        players=away_starters,
+                        formation=away_res.formation,
+                        players=away_res.starters,
+                        bench=away_res.bench,
                         is_home=False
                     )
                     sim_input = MatchSimulationInput(
@@ -524,6 +448,29 @@ class MatchdayService:
                             club_id=uuid.UUID(c.club_id),
                             player_id=uuid.UUID(c.player_id),
                             description=c.description
+                        ))
+                    # Substitutions
+                    for s in sim_result.substitutions:
+                        events_list.append(MatchEvent(
+                            guild_id=str(guild_id),
+                            fixture_id=fixture.id,
+                            minute=s.minute,
+                            event_type=MatchEventType.SUBSTITUTION,
+                            club_id=uuid.UUID(s.club_id),
+                            player_id=uuid.UUID(s.player_in_id),
+                            secondary_player_id=uuid.UUID(s.player_out_id),
+                            description=s.description
+                        ))
+                    # Injuries
+                    for inj in sim_result.injuries:
+                        events_list.append(MatchEvent(
+                            guild_id=str(guild_id),
+                            fixture_id=fixture.id,
+                            minute=inj.minute,
+                            event_type=MatchEventType.INJURY,
+                            club_id=uuid.UUID(inj.club_id),
+                            player_id=uuid.UUID(inj.player_id),
+                            description=inj.description
                         ))
                     await bulk_create_match_events(session, events_list)
                     logger.info(f"match_events_saved: fixture_id={fixture.id}, count={len(events_list)}")

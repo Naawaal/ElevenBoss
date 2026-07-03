@@ -9,6 +9,7 @@ from app.repositories.lineup_repository import get_active_lineup, save_lineup_wi
 from app.engine.lineup_builder import build_auto_lineup
 from app.engine.lineup_validator import validate_lineup
 from app.error_reporting import capture_exception
+from app.engine.match_engine import MatchPlayerInput
 
 logger = logging.getLogger("app.services.lineup_service")
 
@@ -22,6 +23,14 @@ class LineupResult:
     starters: dict | None = None          # slot -> Player
     bench: list | None = None             # list of Players
     warnings: list[str] | None = None
+
+
+@dataclass(frozen=True)
+class LineupResolutionResult:
+    formation: str
+    starters: list[MatchPlayerInput]
+    bench: list[MatchPlayerInput]
+
 
 class LineupService:
     @staticmethod
@@ -298,4 +307,176 @@ class LineupService:
         except Exception as e:
             logger.error("lineup_board_render_failed: Failed to render visual lineup: %s", e, exc_info=e)
             return None
+
+    @staticmethod
+    async def resolve_team_lineup(
+        session,
+        guild_id: int | str,
+        club_id: uuid.UUID,
+        club_name: str,
+        persist_fallback: bool = True
+    ) -> LineupResolutionResult:
+        """
+        Resolves the starting XI and bench for a club.
+        Uses the active lineup if valid; otherwise, auto-picks the best XI and bench.
+        Persists the fallback lineup to the database only if persist_fallback is True.
+        """
+        # 1. Load active lineup
+        lineup = await get_active_lineup(session, club_id)
+        club_players = await get_players_by_club_id(session, club_id)
+
+        # Verify we have at least 11 active players
+        if len(club_players) < 11:
+            raise ValueError(f"Club '{club_name}' does not have enough active players (has {len(club_players)}, requires 11).")
+
+        # 2. Check if lineup is valid
+        is_valid = False
+        if lineup:
+            starters = {lp.slot: lp.player_id for lp in lineup.lineup_players if lp.is_starter}
+            bench = [lp.player_id for lp in lineup.lineup_players if not lp.is_starter]
+            is_valid, _ = validate_lineup(lineup.formation, starters, bench, club_players)
+
+        if not is_valid:
+            # Fallback: Auto-pick best XI
+            logger.info(f"lineup_fallback: auto-picking best XI for club_id={club_id} ({club_name})")
+            starters_objs, bench_objs, _ = build_auto_lineup(club_players, "4-4-2")
+
+            if persist_fallback:
+                # Convert starting objects to dict of IDs
+                starters_ids = {slot: p.id for slot, p in starters_objs.items()}
+                bench_ids = [p.id for p in bench_objs]
+
+                # Save fallback lineup in the DB
+                await save_lineup_with_players(
+                    session,
+                    guild_id,
+                    club_id,
+                    "4-4-2",
+                    starters_ids,
+                    bench_ids
+                )
+                await session.flush()
+
+            # Map starters
+            starters_players = []
+            for slot, p in starters_objs.items():
+                starters_players.append(MatchPlayerInput(
+                    player_id=str(p.id),
+                    name=p.display_name,
+                    position=p.position,
+                    slot=slot,
+                    overall=p.overall,
+                    potential=p.potential,
+                    fitness=p.fitness,
+                    morale=getattr(p, "morale", 80),
+                    consistency=getattr(p, "consistency", 70),
+                    is_goalkeeper=(p.position == "GK")
+                ))
+
+            # Map bench with unique SUB slot group formatting
+            bench_players = []
+            gk_idx = 1
+            def_idx = 1
+            mid_idx = 1
+            att_idx = 1
+            for p in bench_objs:
+                pos = p.position.upper()
+                if pos == "GK":
+                    slot = f"SUB_GK_{gk_idx}"
+                    gk_idx += 1
+                elif pos in ("LB", "CB", "RB", "LWB", "RWB"):
+                    slot = f"SUB_DEF_{def_idx}"
+                    def_idx += 1
+                elif pos in ("LM", "CM", "RM", "CDM", "CAM", "LDM", "RDM"):
+                    slot = f"SUB_MID_{mid_idx}"
+                    mid_idx += 1
+                else:
+                    slot = f"SUB_ATT_{att_idx}"
+                    att_idx += 1
+
+                bench_players.append(MatchPlayerInput(
+                    player_id=str(p.id),
+                    name=p.display_name,
+                    position=p.position,
+                    slot=slot,
+                    overall=p.overall,
+                    potential=p.potential,
+                    fitness=p.fitness,
+                    morale=getattr(p, "morale", 80),
+                    consistency=getattr(p, "consistency", 70),
+                    is_goalkeeper=(p.position == "GK")
+                ))
+
+            return LineupResolutionResult(
+                formation="4-4-2",
+                starters=starters_players,
+                bench=bench_players
+            )
+
+        # Hydrate starting and bench players
+        starters_players = []
+        db_bench_players = []
+        for lp in lineup.lineup_players:
+            if lp.is_starter:
+                p = lp.player
+                starters_players.append(MatchPlayerInput(
+                    player_id=str(p.id),
+                    name=p.display_name,
+                    position=p.position,
+                    slot=lp.slot,
+                    overall=p.overall,
+                    potential=p.potential,
+                    fitness=p.fitness,
+                    morale=getattr(p, "morale", 80),
+                    consistency=getattr(p, "consistency", 70),
+                    is_goalkeeper=(p.position == "GK")
+                ))
+            else:
+                db_bench_players.append(lp.player)
+
+        # Sort bench by overall descending
+        db_bench_players.sort(key=lambda p: p.overall, reverse=True)
+
+        bench_players = []
+        gk_idx = 1
+        def_idx = 1
+        mid_idx = 1
+        att_idx = 1
+        for p in db_bench_players:
+            pos = p.position.upper()
+            if pos == "GK":
+                slot = f"SUB_GK_{gk_idx}"
+                gk_idx += 1
+            elif pos in ("LB", "CB", "RB", "LWB", "RWB"):
+                slot = f"SUB_DEF_{def_idx}"
+                def_idx += 1
+            elif pos in ("LM", "CM", "RM", "CDM", "CAM", "LDM", "RDM"):
+                slot = f"SUB_MID_{mid_idx}"
+                mid_idx += 1
+            else:
+                slot = f"SUB_ATT_{att_idx}"
+                att_idx += 1
+
+            bench_players.append(MatchPlayerInput(
+                player_id=str(p.id),
+                name=p.display_name,
+                position=p.position,
+                slot=slot,
+                overall=p.overall,
+                potential=p.potential,
+                fitness=p.fitness,
+                morale=getattr(p, "morale", 80),
+                consistency=getattr(p, "consistency", 70),
+                is_goalkeeper=(p.position == "GK")
+            ))
+
+        return LineupResolutionResult(
+            formation=lineup.formation,
+            starters=starters_players,
+            bench=bench_players
+        )
+
+
+
+
 

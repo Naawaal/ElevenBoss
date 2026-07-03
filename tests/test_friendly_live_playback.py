@@ -18,6 +18,7 @@ from app.models.guild_config import GuildConfig
 from app.ui.handlers.session import ui_session_manager, UiSession
 from app.services.friendly_service import FriendlyService, FriendlyMatchReport
 from app.services.friendly_live_playback_service import friendly_playback_service
+from app.services.lineup_service import LineupResolutionResult
 from app.ui.renderers.friendly_live_renderer import FriendlyLiveRenderer
 from app.ui.handlers.friendly_handler import (
     handle_friendly_challenge,
@@ -63,7 +64,7 @@ async def cleanup_singleton_states():
 @pytest.mark.asyncio
 @patch("app.ui.handlers.friendly_handler.get_session")
 @patch("app.ui.handlers.friendly_handler.get_user_club")
-@patch("app.ui.handlers.friendly_handler.FriendlyService.resolve_team_lineup")
+@patch("app.ui.handlers.friendly_handler.LineupService.resolve_team_lineup")
 @patch("app.services.friendly_service.FriendlyService.simulate_friendly")
 @patch("app.services.friendly_live_playback_service.get_session")
 @patch("app.services.friendly_live_playback_service.get_or_create_guild_config")
@@ -104,7 +105,10 @@ async def test_accept_starts_playback_task(
     )
     nonce = ui_session.session_id
     
-    mock_resolve_lineup.side_effect = [("4-4-2", []), ("4-4-2", [])]
+    mock_resolve_lineup.side_effect = [
+        LineupResolutionResult(formation="4-4-2", starters=[], bench=[]),
+        LineupResolutionResult(formation="4-4-2", starters=[], bench=[])
+    ]
     
     report = FriendlyMatchReport(
         home_club_id=str(challenger_club_id),

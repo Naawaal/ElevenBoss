@@ -54,6 +54,10 @@ def build_match_detail_layout(data, nonce: str) -> V2View:
                 prefix = "🟨"
             elif etype == "red_card":
                 prefix = "🟥"
+            elif etype == "substitution":
+                prefix = "🔄"
+            elif etype == "injury":
+                prefix = "🚑"
                 
             timeline += f"• **{minute}'** {prefix} {desc}\n"
             
