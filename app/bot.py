@@ -52,24 +52,18 @@ class ElevenBossBot(commands.Bot):
         if failed_cogs:
             logger.error(f"Failed loading cogs summary: {len(failed_cogs)} cog(s) failed loading.")
 
-        # Development Auto-Sync to Guild: clear guild-level commands to prevent duplicates with global commands
+        # Development Auto-Sync to Guild (using copy-sync to update commands instantly in development)
         if config.ENVIRONMENT == "development" and config.GUILD_ID:
             try:
                 guild = discord.Object(id=int(config.GUILD_ID))
-                self.tree.clear_commands(guild=guild)
-                await self.tree.sync(guild=guild)
-                logger.info(f"Development Auto-Sync: Cleared guild-level duplicate commands for guild: {config.GUILD_ID}")
+                self.tree.copy_global_to(guild=guild)
+                synced = await self.tree.sync(guild=guild)
+                logger.info(f"Development Auto-Sync: Successfully synced {len(synced)} slash commands to guild: {config.GUILD_ID}")
             except Exception as e:
-                logger.error(f"Development Auto-Sync: Failed to clear guild-level commands for guild {config.GUILD_ID}: {e}", exc_info=e)
+                logger.error(f"Development Auto-Sync: Failed to sync commands to guild {config.GUILD_ID}: {e}", exc_info=e)
                 capture_exception(e)
-
-        # Global Sync (registers all commands globally, making them available in servers and DMs)
-        try:
-            synced_global = await self.tree.sync()
-            logger.info(f"Global Sync: Successfully synced {len(synced_global)} slash commands globally (active in DMs).")
-        except Exception as e:
-            logger.error(f"Global Sync: Failed to sync commands globally: {e}", exc_info=e)
-            capture_exception(e)
+        else:
+            logger.info("Normal startup: Skipping automatic global command sync to prevent latency. Use CLI --sync global to sync commands.")
 
         # Run database migrations asynchronously in the background so it doesn't block bot startup/connection
         import asyncio
