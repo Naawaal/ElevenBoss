@@ -1,1 +1,0 @@
-# Keep logs folder tracked in git, but logs/bot.log is ignored by .gitignore
