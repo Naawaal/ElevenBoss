@@ -1,7 +1,0 @@
-from app.ui.renderers.club_renderer import render_locker_room, render_club_dashboard, render_help
-from app.ui.renderers.squad_renderer import render_squad
-from app.ui.renderers.player_renderer import render_player_detail, render_player_search, render_player_matches
-from app.ui.renderers.lineup_renderer import render_lineup_screen
-from app.ui.renderers.league_renderer import render_league_dashboard
-from app.ui.renderers.table_renderer import render_table
-

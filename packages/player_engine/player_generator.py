@@ -1,7 +1,7 @@
 import random
 import uuid
-from app.models.player import Player
-from app.engine.ratings import calculate_player_value, calculate_player_wage
+from packages.models.player import Player
+from .ratings import calculate_player_value, calculate_player_wage
 
 REGIONAL_NAME_POOLS = {
     "British": {

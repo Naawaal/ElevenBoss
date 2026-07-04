@@ -3,8 +3,8 @@
 import math
 import random
 from dataclasses import dataclass, field
-from app.engine.match_config import MatchEngineConfig
-from app.engine.team_strength import calculate_team_strength, TeamStrength
+from .match_config import MatchEngineConfig
+from .team_strength import calculate_team_strength, TeamStrength
 
 
 @dataclass(frozen=True)
@@ -294,7 +294,7 @@ def _apply_yellow_card(
                         "second_yellow_red" MatchCardEvent with correct commentary.
       - Already sent off → returns None (caller must NOT append to state.events).
     """
-    from app.engine.match_state import MatchPlayerDiscipline
+    from .match_state import MatchPlayerDiscipline
 
     discipline = state.discipline.setdefault(player_id, MatchPlayerDiscipline())
 
@@ -351,7 +351,7 @@ def _apply_straight_red_card(
     Returns None if the player was already sent off (guard against impossible
     match logs). Returns a "red" MatchCardEvent otherwise.
     """
-    from app.engine.match_state import MatchPlayerDiscipline
+    from .match_state import MatchPlayerDiscipline
 
     discipline = state.discipline.setdefault(player_id, MatchPlayerDiscipline())
 
@@ -401,7 +401,7 @@ def _roll_and_apply_cards(
     home_foul_mult / away_foul_mult: tactic foul_prob_mult values (Milestone D).
     Passed through to roll_cards_for_interval() to scale per-interval yellow rates.
     """
-    from app.engine.match_event_generator import roll_cards_for_interval
+    from .match_event_generator import roll_cards_for_interval
 
     for team, active_xi_attr, foul_mult in (
         (home_team, "home_active_xi", home_foul_mult),
@@ -466,8 +466,8 @@ def _roll_and_apply_injuries_and_subs(
     Design: injuries are always processed before fatigue subs so that a team that
     exhausts its sub allowance on an injury cannot also make a fatigue sub that interval.
     """
-    from app.engine.injury_service import roll_injuries_for_interval
-    from app.engine.substitution_service import try_fatigue_sub, force_injury_sub
+    from .injury_service import roll_injuries_for_interval
+    from .substitution_service import try_fatigue_sub, force_injury_sub
 
     injury_tuples = roll_injuries_for_interval(
         rng,
@@ -550,8 +550,8 @@ def _finalize_result(
     A per-interval weighted average would be more accurate but adds complexity
     without changing the external interface.
     """
-    from app.engine.match_event_generator import generate_goal_events, generate_card_events, build_timeline
-    from app.engine.match_rating import calculate_player_ratings, select_motm
+    from .match_event_generator import generate_goal_events, generate_card_events, build_timeline
+    from .match_rating import calculate_player_ratings, select_motm
 
     home_goals = state.home_score
     away_goals = state.away_score
@@ -717,10 +717,10 @@ def simulate_match(
     if config is None:
         config = MatchEngineConfig()
 
-    from app.engine.match_state import MatchState
-    from app.engine.match_event_generator import attribute_goal
-    from app.engine.tactics import TacticType, get_tactic_profile
-    from app.engine.momentum import compute_momentum
+    from .match_state import MatchState
+    from .match_event_generator import attribute_goal
+    from .tactics import TacticType, get_tactic_profile
+    from .momentum import compute_momentum
 
     # Compute pre-match strengths and xGs to determine Dixon-Coles parameters (mu_h and mu_a)
     initial_home_str = calculate_team_strength(

@@ -1,8 +1,8 @@
 # app/engine/match_rating.py
 
 import random
-from app.engine.match_config import MatchEngineConfig
-from app.engine.match_engine import (
+from .match_config import MatchEngineConfig
+from .match_engine import (
     MatchTeamInput,
     MatchGoalEvent,
     MatchCardEvent,

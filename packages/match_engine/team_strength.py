@@ -1,8 +1,8 @@
 # app/engine/team_strength.py
 
 from dataclasses import dataclass
-from app.engine.formation_rules import get_slot_rules
-from app.engine.match_config import MatchEngineConfig
+from .formation_rules import get_slot_rules
+from .match_config import MatchEngineConfig
 
 @dataclass
 class TeamStrength:

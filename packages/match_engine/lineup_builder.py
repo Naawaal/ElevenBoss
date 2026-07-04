@@ -1,6 +1,6 @@
 # app/engine/lineup_builder.py
 
-from app.engine.formation_rules import get_slots_for_formation, get_slot_rules
+from .formation_rules import get_slots_for_formation, get_slot_rules
 
 def getattr_or_getitem(obj, attr, default=None):
     """

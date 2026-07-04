@@ -3,7 +3,7 @@
 Momentum / game-state feedback system for the interval-based simulation loop (Milestone E).
 
 Design rules (engine purity):
-  - No imports from app.models, app.db, app.services, or Discord.
+  - No imports from packages.models, packages.db, app.services, or Discord.
   - compute_momentum() is a pure function — reads state, returns a modifier, mutates nothing.
   - Momentum represents which team has the psychological/tactical edge at a given moment.
     It is driven by the score differential and recent goal scoring, NOT cumulative match stats.
@@ -17,9 +17,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.engine.match_config import MatchEngineConfig
-    from app.engine.match_state import MatchState
-    from app.engine.match_engine import MatchGoalEvent
+    from .match_config import MatchEngineConfig
+    from .match_state import MatchState
+    from .match_engine import MatchGoalEvent
 
 
 @dataclass(frozen=True)

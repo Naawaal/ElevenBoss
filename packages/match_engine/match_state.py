@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.engine.match_engine import (
+    from .match_engine import (
         MatchPlayerInput,
         MatchSimulationInput,
         MatchGoalEvent,

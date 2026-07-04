@@ -3,7 +3,7 @@
 Pure function for rolling in-match injuries during the interval loop.
 
 Design rules (engine purity):
-  - No imports from app.models, app.db, app.services, or Discord.
+  - No imports from packages.models, packages.db, app.services, or Discord.
   - Does NOT mutate state — returns events only. Mutation (fitness reduction,
     triggering subs) is handled by the loop in match_engine.py.
 """
@@ -12,10 +12,10 @@ from __future__ import annotations
 import random
 from typing import TYPE_CHECKING
 
-from app.engine.match_config import MatchEngineConfig
+from .match_config import MatchEngineConfig
 
 if TYPE_CHECKING:
-    from app.engine.match_engine import MatchPlayerInput
+    from .match_engine import MatchPlayerInput
 
 
 def roll_injuries_for_interval(

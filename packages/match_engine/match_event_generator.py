@@ -1,8 +1,8 @@
 # app/engine/match_event_generator.py
 
 import random
-from app.engine.match_config import MatchEngineConfig
-from app.engine.match_engine import (
+from .match_config import MatchEngineConfig
+from .match_engine import (
     MatchTeamInput,
     MatchGoalEvent,
     MatchCardEvent,
@@ -148,8 +148,8 @@ def attribute_goal(
     Selects a scorer, assist provider, and goal source for a team's goal using config weights,
     supporting Milestone F goal sources (open_play, set_piece, penalty, own_goal).
     """
-    from app.engine.team_strength import calculate_team_strength
-    from app.engine.match_engine import MatchPlayerInput
+    from .team_strength import calculate_team_strength
+    from .match_engine import MatchPlayerInput
 
     # Recompute strengths to evaluate defensive pressure deficit
     team_str = calculate_team_strength(team.formation, team.players, is_home=team.is_home, config=config)

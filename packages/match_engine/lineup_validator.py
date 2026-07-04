@@ -1,7 +1,7 @@
 # app/engine/lineup_validator.py
 
 import uuid
-from app.engine.formation_rules import SUPPORTED_FORMATIONS, get_slots_for_formation
+from .formation_rules import SUPPORTED_FORMATIONS, get_slots_for_formation
 
 def getattr_or_getitem(obj, attr, default=None):
     """

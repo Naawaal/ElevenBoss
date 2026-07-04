@@ -3,7 +3,7 @@
 Substitution logic for the interval-based simulation loop.
 
 Design rules (engine purity):
-  - No imports from app.models, app.db, app.services, or Discord.
+  - No imports from packages.models, packages.db, app.services, or Discord.
   - These functions DO mutate state (active XI replacement, subs counter, fitness).
     This is intentional: substitution_service.py is the designated mutation owner
     for substitution state, analogous to how _roll_and_apply_cards() owns card mutations.
@@ -18,10 +18,10 @@ from __future__ import annotations
 import random
 from typing import TYPE_CHECKING
 
-from app.engine.match_config import MatchEngineConfig
+from .match_config import MatchEngineConfig
 
 if TYPE_CHECKING:
-    from app.engine.match_engine import MatchPlayerInput, MatchTeamInput
+    from .match_engine import MatchPlayerInput, MatchTeamInput
 
 
 def _pick_replacement(
@@ -122,7 +122,7 @@ def try_fatigue_sub(
 
     Mutates: state.home_active_xi / away_active_xi, state.fitness, state.home/away_subs_used.
     """
-    from app.engine.match_engine import MatchSubstitutionEvent
+    from .match_engine import MatchSubstitutionEvent
 
     subs_used = state.home_subs_used if team_side == "home" else state.away_subs_used
     if subs_used >= config.max_substitutions:
@@ -183,7 +183,7 @@ def force_injury_sub(
 
     Mutates: state.home_active_xi / away_active_xi, state.fitness, state.home/away_subs_used.
     """
-    from app.engine.match_engine import MatchSubstitutionEvent
+    from .match_engine import MatchSubstitutionEvent
 
     subs_used = state.home_subs_used if team_side == "home" else state.away_subs_used
     if subs_used >= config.max_substitutions:

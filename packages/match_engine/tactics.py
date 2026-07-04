@@ -3,7 +3,7 @@
 Tactics system for the interval-based simulation loop (Milestone D).
 
 Design rules (engine purity):
-  - No imports from app.models, app.db, app.services, or Discord.
+  - No imports from packages.models, packages.db, app.services, or Discord.
   - All multiplier values are sourced from MatchEngineConfig, never hardcoded here.
   - TacticProfile is frozen and stateless — same tactic always yields the same modifiers.
 
@@ -17,7 +17,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.engine.match_config import MatchEngineConfig
+    from .match_config import MatchEngineConfig
 
 
 class TacticType(str, Enum):
