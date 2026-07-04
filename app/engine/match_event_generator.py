@@ -20,12 +20,14 @@ def roll_cards_for_interval(
     foul_mult: float = 1.0,
 ) -> list[MatchCardEvent]:
     """
-    Pure function: rolls for card events within a single match interval.
+    Pure function: rolls for card *intent* events within a single match interval.
 
-    Uses per-interval card rates from config (pre-scaled via
-    ``1 - (1 - p_match)^(1/interval_count)`` to preserve expected full-match totals).
-    Does NOT mutate any state — the caller is responsible for applying red card removals
-    to the active XI.
+    Returns raw intents only — card_type is either "yellow" or "direct_red".
+    The two-yellow-equals-red enforcement happens in _roll_and_apply_cards() in
+    match_engine.py, which consults state.discipline across all intervals.
+
+    This function does NOT mutate any state and does NOT perform double-yellow
+    detection internally. Keeping it pure makes it trivially testable.
 
     Args:
         rng: Local Random instance (deterministic).
@@ -38,10 +40,9 @@ def roll_cards_for_interval(
             per-interval yellow card rate. Defaults to 1.0 (neutral/BALANCED).
 
     Returns:
-        List of MatchCardEvent instances generated in this interval.
+        List of MatchCardEvent instances representing card *intents* for this interval.
     """
     cards: list[MatchCardEvent] = []
-    yellow_counts: dict[str, int] = {}
 
     for p in active_xi:
         slot = p.slot.upper()
@@ -55,10 +56,10 @@ def roll_cards_for_interval(
             card_prob = config.other_yellow_prob_interval
         card_prob = card_prob * foul_mult  # tactic foul multiplier (BALANCED=1.0, HIGH_PRESS=1.30, …)
 
-        # Roll for yellow card
+        # Roll for yellow card intent
         if rng.random() < card_prob:
             minute = rng.randint(interval_start, interval_end)
-            desc = f"Yellow card shown to {p.name} ({team.club_name}) for a tactical foul."
+            desc = f"{minute}' 🟨 Yellow card shown to {p.name} ({team.club_name}) for a tactical foul."
             cards.append(MatchCardEvent(
                 minute=minute,
                 club_id=team.club_id,
@@ -66,29 +67,16 @@ def roll_cards_for_interval(
                 card_type="yellow",
                 description=desc,
             ))
-            yellow_counts[p.player_id] = yellow_counts.get(p.player_id, 0) + 1
 
-            # Double yellow -> red (second yellow within this same interval)
-            if yellow_counts[p.player_id] == 2:
-                red_min = min(interval_end, minute + rng.randint(config.double_yellow_min_gap, config.double_yellow_max_gap))
-                desc_red = f"Red card! {p.name} ({team.club_name}) is sent off after a second yellow card."
-                cards.append(MatchCardEvent(
-                    minute=red_min,
-                    club_id=team.club_id,
-                    player_id=p.player_id,
-                    card_type="red",
-                    description=desc_red,
-                ))
-
-        # Direct red card roll (per-interval rate)
+        # Direct red card roll (per-interval rate) — independent of yellow check
         elif rng.random() < config.direct_red_prob_interval:
             minute = rng.randint(interval_start, interval_end)
-            desc = f"Red card! {p.name} ({team.club_name}) is sent off for a dangerous tackle."
+            desc = f"{minute}' 🟥 Red card! {p.name} ({team.club_name}) is sent off for a dangerous tackle."
             cards.append(MatchCardEvent(
                 minute=minute,
                 club_id=team.club_id,
                 player_id=p.player_id,
-                card_type="red",
+                card_type="direct_red",
                 description=desc,
             ))
 
@@ -257,11 +245,14 @@ def generate_card_events(
     config: MatchEngineConfig,
 ) -> list[MatchCardEvent]:
     """
-    Generates card events for a team using configured rates and probabilities.
+    Generates card events for a team using configured per-match rates and probabilities.
+
+    Legacy helper used by non-interval simulation paths (e.g. tests and friendly
+    match single-pass modes). Returns simple "yellow" or "red" events without
+    cross-interval discipline tracking.
     """
     cards_list = []
-    yellow_counts = {}
-    
+
     for p in team.players:
         slot = p.slot.upper()
         if slot == "GK":
@@ -270,11 +261,11 @@ def generate_card_events(
             card_prob = config.def_dm_yellow_prob
         else:
             card_prob = config.other_yellow_prob
-            
+
         # Roll for yellow card
         if rng.random() < card_prob:
             minute = rng.randint(1, 90)
-            desc = f"Yellow card shown to {p.name} ({team.club_name}) for a tactical foul."
+            desc = f"{minute}' 🟨 Yellow card shown to {p.name} ({team.club_name}) for a tactical foul."
             cards_list.append(MatchCardEvent(
                 minute=minute,
                 club_id=team.club_id,
@@ -282,24 +273,11 @@ def generate_card_events(
                 card_type="yellow",
                 description=desc
             ))
-            yellow_counts[p.player_id] = yellow_counts.get(p.player_id, 0) + 1
-            
-            # Double yellow -> red card
-            if yellow_counts[p.player_id] == 2:
-                red_min = min(90, minute + rng.randint(config.double_yellow_min_gap, config.double_yellow_max_gap))
-                desc_red = f"Red card! {p.name} ({team.club_name}) is sent off after receiving a second yellow card."
-                cards_list.append(MatchCardEvent(
-                    minute=red_min,
-                    club_id=team.club_id,
-                    player_id=p.player_id,
-                    card_type="red",
-                    description=desc_red
-                ))
-                
+
         # Direct red card roll
         elif rng.random() < config.direct_red_prob:
             minute = rng.randint(1, 90)
-            desc = f"Red card! {p.name} ({team.club_name}) is sent off for a dangerous tackle."
+            desc = f"{minute}' 🟥 Red card! {p.name} ({team.club_name}) is sent off for a dangerous tackle."
             cards_list.append(MatchCardEvent(
                 minute=minute,
                 club_id=team.club_id,
@@ -307,7 +285,7 @@ def generate_card_events(
                 card_type="red",
                 description=desc
             ))
-            
+
     return cards_list
 
 def build_timeline(
@@ -358,6 +336,7 @@ def build_timeline(
             "yellow_card": 20,
             "red": 21,
             "red_card": 21,
+            "second_yellow_red": 21,
             "injury": 30,
             "substitution": 31,
         }
@@ -394,10 +373,17 @@ def build_timeline(
                 "player_id": getattr(obj, "scorer_id", None),
                 "secondary_player_id": getattr(obj, "assist_id", None),
             }
-        elif etype in ("yellow", "red"):
+        elif etype in ("yellow", "red", "second_yellow_red"):
+            # Map internal card_type to timeline event type
+            if etype == "yellow":
+                tl_type = "yellow_card"
+            elif etype == "second_yellow_red":
+                tl_type = "second_yellow_red"
+            else:
+                tl_type = "red_card"
             entry = {
                 "minute": minute,
-                "type": "yellow_card" if etype == "yellow" else "red_card",
+                "type": tl_type,
                 "description": obj.description,
                 "club_id": obj.club_id,
                 "player_id": obj.player_id,

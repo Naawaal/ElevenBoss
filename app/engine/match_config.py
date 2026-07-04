@@ -34,7 +34,11 @@ class MatchEngineConfig:
     def_dm_yellow_prob: float = 0.15
     other_yellow_prob: float = 0.08
     double_yellow_min_gap: int = 1
+    """DEPRECATED — no longer used. Previously the minimum minute gap between
+    the two events emitted for a within-interval double yellow. The double-yellow
+    rule is now enforced via state.discipline across all intervals in match_engine.py."""
     double_yellow_max_gap: int = 10
+    """DEPRECATED — no longer used. See double_yellow_min_gap."""
 
     # Per-interval card rates (rescaled from per-match via: p_i = 1 - (1-p)^(1/interval_count))
     # Pre-computed at interval_count=9. Must be kept in sync when interval_count changes.

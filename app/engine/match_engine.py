@@ -62,8 +62,21 @@ class MatchCardEvent:
     minute: int
     club_id: str
     player_id: str
-    card_type: str  # "yellow" or "red"
+    card_type: str
+    """
+    Card type values:
+        "yellow"           — first booking; player stays on.
+        "second_yellow_red" — accumulated two yellows; player sent off.
+        "red"              — straight red card; player sent off.
+        "ignored_card"     — card attempt on an already-sent-off player; not appended to events.
+    """
     description: str
+    red_card_type: str | None = None
+    """Populated for dismissals: "second_yellow" or "straight_red". None for yellows."""
+    metadata: dict = None  # type: ignore[assignment]
+    """Optional consequence payload, e.g. {"red_card_type": "second_yellow", "suspension_matches": 1}.
+    Stored as None default (not a mutable dict default) to keep frozen=True happy.
+    Callers should pass an explicit dict; consumers must handle None."""
 
 
 @dataclass(frozen=True)
@@ -241,6 +254,128 @@ def _compute_interval_xg(
     return max(config.min_xg_interval, min(config.max_xg_interval, xg_interval))
 
 
+def _send_off_player(
+    state,
+    player_id: str,
+    team_id: str,
+    home_club_id: str,
+) -> None:
+    """
+    Remove a sent-off player from the active XI and increment the red card counter.
+
+    This is the ONLY place that mutates state.home_active_xi / state.away_active_xi
+    for red card dismissals. Pure event generators (match_event_generator.py) must
+    never mutate state directly — mutation is owned by match_engine.py.
+    """
+    if team_id == home_club_id:
+        state.home_active_xi = [p for p in state.home_active_xi if p.player_id != player_id]
+        state.home_red_cards += 1
+    else:
+        state.away_active_xi = [p for p in state.away_active_xi if p.player_id != player_id]
+        state.away_red_cards += 1
+
+
+def _apply_yellow_card(
+    state,
+    player_id: str,
+    player_name: str,
+    club_id: str,
+    club_name: str,
+    home_club_id: str,
+    minute: int,
+    description_first: str,
+) -> MatchCardEvent | None:
+    """
+    Apply a yellow-card offence, enforcing the two-yellow-equals-red rule.
+
+    Consults state.discipline[player_id] (persisted across all intervals):
+      - First yellow  → returns a "yellow" MatchCardEvent.
+      - Second yellow → converts to red, calls _send_off_player, returns a
+                        "second_yellow_red" MatchCardEvent with correct commentary.
+      - Already sent off → returns None (caller must NOT append to state.events).
+    """
+    from app.engine.match_state import MatchPlayerDiscipline
+
+    discipline = state.discipline.setdefault(player_id, MatchPlayerDiscipline())
+
+    # Guard: a sent-off player cannot receive another card.
+    if discipline.red_card:
+        return None
+
+    # First yellow — player stays on.
+    if discipline.yellow_cards == 0:
+        discipline.yellow_cards = 1
+        return MatchCardEvent(
+            minute=minute,
+            club_id=club_id,
+            player_id=player_id,
+            card_type="yellow",
+            description=description_first,
+        )
+
+    # Second yellow — becomes a red card.
+    discipline.yellow_cards = 2
+    discipline.red_card = True
+    discipline.red_card_type = "second_yellow"
+    discipline.sent_off_minute = minute
+
+    _send_off_player(state, player_id, club_id, home_club_id)
+
+    description_second = (
+        f"{minute}' 🟨🟥 Second yellow! {player_name} ({club_name}) "
+        f"is sent off after another bookable offence."
+    )
+
+    return MatchCardEvent(
+        minute=minute,
+        club_id=club_id,
+        player_id=player_id,
+        card_type="second_yellow_red",
+        description=description_second,
+        red_card_type="second_yellow",
+        metadata={"red_card_type": "second_yellow", "yellow_count": 2, "suspension_matches": 1},
+    )
+
+
+def _apply_straight_red_card(
+    state,
+    player_id: str,
+    club_id: str,
+    home_club_id: str,
+    minute: int,
+    description: str,
+) -> MatchCardEvent | None:
+    """
+    Apply a straight red card.
+
+    Returns None if the player was already sent off (guard against impossible
+    match logs). Returns a "red" MatchCardEvent otherwise.
+    """
+    from app.engine.match_state import MatchPlayerDiscipline
+
+    discipline = state.discipline.setdefault(player_id, MatchPlayerDiscipline())
+
+    # Guard: a sent-off player cannot receive another card.
+    if discipline.red_card:
+        return None
+
+    discipline.red_card = True
+    discipline.red_card_type = "straight_red"
+    discipline.sent_off_minute = minute
+
+    _send_off_player(state, player_id, club_id, home_club_id)
+
+    return MatchCardEvent(
+        minute=minute,
+        club_id=club_id,
+        player_id=player_id,
+        card_type="red",
+        description=description,
+        red_card_type="straight_red",
+        metadata={"red_card_type": "straight_red", "suspension_matches": 2},
+    )
+
+
 def _roll_and_apply_cards(
     rng: random.Random,
     state,
@@ -253,30 +388,62 @@ def _roll_and_apply_cards(
     away_foul_mult: float = 1.0,
 ) -> None:
     """
-    Thin wrapper: calls the pure roll_cards_for_interval() for both teams, appends
-    events to state.events, and removes red-carded players from state.home_active_xi /
-    state.away_active_xi. All mutation is centralised here so the loop stays clean.
+    Roll card attempts for both teams and apply the results to match state.
+
+    Calls the pure roll_cards_for_interval() which returns raw card *intents*
+    ("yellow" or "direct_red"). Each intent is then routed through
+    _apply_yellow_card() or _apply_straight_red_card() so that:
+      - state.discipline is consulted and updated (persists across intervals).
+      - The correct final event type is emitted (yellow / second_yellow_red / red).
+      - Player removal from the active XI is performed exactly once, here.
+      - Sent-off players cannot receive further cards (guarded by the helpers).
 
     home_foul_mult / away_foul_mult: tactic foul_prob_mult values (Milestone D).
     Passed through to roll_cards_for_interval() to scale per-interval yellow rates.
     """
     from app.engine.match_event_generator import roll_cards_for_interval
 
-    for team, active_xi_attr, red_attr, foul_mult in (
-        (home_team, "home_active_xi", "home_red_cards", home_foul_mult),
-        (away_team, "away_active_xi", "away_red_cards", away_foul_mult),
+    for team, active_xi_attr, foul_mult in (
+        (home_team, "home_active_xi", home_foul_mult),
+        (away_team, "away_active_xi", away_foul_mult),
     ):
         active_xi = getattr(state, active_xi_attr)
-        new_cards = roll_cards_for_interval(
+        # roll_cards_for_interval returns raw intents: card_type is "yellow" or "direct_red".
+        # It no longer emits double-yellow reds itself — that logic lives here.
+        card_intents = roll_cards_for_interval(
             rng, team, active_xi, interval_start, interval_end, config, foul_mult=foul_mult
         )
-        state.events.extend(new_cards)
 
-        # Apply red card removals: remove player from active XI for subsequent intervals
-        red_ids = {c.player_id for c in new_cards if c.card_type == "red"}
-        if red_ids:
-            setattr(state, active_xi_attr, [p for p in active_xi if p.player_id not in red_ids])
-            setattr(state, red_attr, getattr(state, red_attr) + len(red_ids))
+        for intent in card_intents:
+            if intent.card_type == "yellow":
+                # Resolve player name + club name from the active XI for description generation
+                player_obj = next(
+                    (p for p in active_xi if p.player_id == intent.player_id), None
+                )
+                p_name = player_obj.name if player_obj else intent.player_id
+                event = _apply_yellow_card(
+                    state=state,
+                    player_id=intent.player_id,
+                    player_name=p_name,
+                    club_id=intent.club_id,
+                    club_name=team.club_name,
+                    home_club_id=home_team.club_id,
+                    minute=intent.minute,
+                    description_first=intent.description,
+                )
+            else:  # "direct_red"
+                event = _apply_straight_red_card(
+                    state=state,
+                    player_id=intent.player_id,
+                    club_id=intent.club_id,
+                    home_club_id=home_team.club_id,
+                    minute=intent.minute,
+                    description=intent.description,
+                )
+
+            # None means the player was already sent off — do not append the event.
+            if event is not None:
+                state.events.append(event)
 
 
 def _roll_and_apply_injuries_and_subs(
@@ -484,7 +651,11 @@ def _finalize_result(
     ):
         entry_minute = {p.player_id: 0 for p in active_starters}
         team_subs = [s for s in subs_list if s.club_id == team.club_id]
-        team_reds = [c for c in cards_list if c.club_id == team.club_id and c.card_type == "red"]
+        # second_yellow_red also ends a player's participation — treat identically to straight red
+        team_reds = [
+            c for c in cards_list
+            if c.club_id == team.club_id and c.card_type in ("red", "second_yellow_red")
+        ]
         
         events = []
         for s in team_subs:

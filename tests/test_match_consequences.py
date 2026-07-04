@@ -262,5 +262,77 @@ class TestMatchConsequences(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.formation, "4-4-2")
         self.assertEqual(res.starters[0].player_id, str(p1.id))
 
+    async def test_second_yellow_red_triggers_suspension(self):
+        """A second_yellow_red card event must also trigger a 1-game suspension."""
+        session_mock = AsyncMock()
+        fixture_id = uuid.uuid4()
+        home_club_id = uuid.uuid4()
+        away_club_id = uuid.uuid4()
+
+        mock_fixture = MagicMock(spec=Fixture)
+        mock_fixture.id = fixture_id
+        mock_fixture.consequences_applied_at = None
+
+        player_double_yellow = Player(
+            id=uuid.uuid4(),
+            display_name="Double Yellow Player",
+            club_id=home_club_id,
+            fitness=90,
+            is_retired=False,
+        )
+
+        players = [player_double_yellow]
+
+        async def session_execute_side_effect(stmt):
+            mock_res = MagicMock()
+            stmt_str = str(stmt).lower()
+            if "fixtures" in stmt_str and "players" not in stmt_str:
+                mock_res.scalar_one_or_none.return_value = mock_fixture
+            else:
+                mock_res.scalars.return_value.all.return_value = players
+            return mock_res
+
+        session_mock.execute.side_effect = session_execute_side_effect
+
+        from app.engine.match_engine import MatchSimulationResult, MatchCardEvent
+
+        second_yellow_card = MatchCardEvent(
+            minute=67,
+            club_id=str(home_club_id),
+            player_id=str(player_double_yellow.id),
+            card_type="second_yellow_red",
+            description="67' 🟨🟥 Second yellow! Double Yellow Player (Home FC) is sent off.",
+            red_card_type="second_yellow",
+            metadata={"red_card_type": "second_yellow", "yellow_count": 2, "suspension_matches": 1},
+        )
+
+        sim_result = MatchSimulationResult(
+            home_goals=1,
+            away_goals=0,
+            home_possession=55,
+            away_possession=45,
+            home_shots=8,
+            away_shots=5,
+            home_shots_on_target=4,
+            away_shots_on_target=2,
+            cards=[second_yellow_card],
+            final_fitness={str(player_double_yellow.id): 0.80},
+            played_minutes={str(player_double_yellow.id): 67},
+            player_ratings={str(player_double_yellow.id): 5.5},
+        )
+
+        await MatchConsequenceService.apply_league_match_consequences(
+            session=session_mock,
+            fixture_id=fixture_id,
+            sim_result=sim_result,
+            home_club_id=home_club_id,
+            away_club_id=away_club_id,
+        )
+
+        # Suspension must have been applied for the second-yellow red
+        self.assertEqual(player_double_yellow.suspension_games_remaining, 1)
+        self.assertEqual(player_double_yellow.suspension_created_fixture_id, fixture_id)
+
+
 if __name__ == "__main__":
     unittest.main()

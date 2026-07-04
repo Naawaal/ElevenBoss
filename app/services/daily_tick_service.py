@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
+from sqlalchemy.orm import selectinload
 
 from app.models.club import Club
 from app.models.player import Player
@@ -105,12 +106,20 @@ class DailyTickService:
 
         try:
             # 1. Process completed facility upgrades for clubs in this guild
-            upgrade_stmt = select(Facility).join(Club).where(
-                and_(
-                    Club.guild_id == str(guild_id),
-                    Facility.status == FacilityStatus.UPGRADING,
-                    Facility.upgrade_completes_at <= now_utc
+            # selectinload(Facility.club) is required to eagerly load the club relationship
+            # in a single async round-trip. Accessing fac.club lazily in an async session
+            # triggers MissingGreenlet because asyncpg cannot perform synchronous IO.
+            upgrade_stmt = (
+                select(Facility)
+                .join(Club)
+                .where(
+                    and_(
+                        Club.guild_id == str(guild_id),
+                        Facility.status == FacilityStatus.UPGRADING,
+                        Facility.upgrade_completes_at <= now_utc
+                    )
                 )
+                .options(selectinload(Facility.club))
             )
             upgrades_res = await session.execute(upgrade_stmt)
             completed_upgrades = upgrades_res.scalars().all()

@@ -72,7 +72,10 @@ def calculate_player_ratings(
                     
             # Card penalties
             has_yellow = any(c.player_id == p.player_id and c.card_type == "yellow" for c in cards)
-            has_red = any(c.player_id == p.player_id and c.card_type == "red" for c in cards)
+            has_red = any(
+                c.player_id == p.player_id and c.card_type in ("red", "second_yellow_red")
+                for c in cards
+            )
             
             if has_yellow:
                 base -= config.rating_yellow_card_penalty

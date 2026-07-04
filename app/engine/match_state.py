@@ -5,6 +5,10 @@ Mutable match state threaded through the interval simulation loop.
 Field ordering: non-default fields first (Python dataclass requirement).
 Fitness is stored as a separate dict keyed by player_id because MatchPlayerInput
 is frozen=True and cannot be mutated mid-match.
+
+Discipline is stored as a separate dict keyed by player_id so that card state
+(yellow count, red card, sent-off minute) persists across all intervals. This is
+the authoritative source for enforcing the two-yellow-equals-red rule.
 """
 
 from __future__ import annotations
@@ -19,6 +23,25 @@ if TYPE_CHECKING:
         MatchGoalEvent,
         MatchCardEvent,
     )
+
+
+@dataclass
+class MatchPlayerDiscipline:
+    """
+    Per-player discipline record for a single match.
+
+    Tracks yellow card accumulation and red card state so the engine can
+    correctly apply the two-yellow → red rule across interval boundaries.
+
+    red_card_type values:
+        "second_yellow" — player accumulated two yellows in this match.
+        "straight_red"  — player received a direct red card.
+        None            — player has not been sent off.
+    """
+    yellow_cards: int = 0
+    red_card: bool = False
+    red_card_type: str | None = None
+    sent_off_minute: int | None = None
 
 
 @dataclass
@@ -56,6 +79,12 @@ class MatchState:
     """(home_attack - away_defense) sampled at the start of each interval."""
     away_attack_deltas: list = field(default_factory=list)
     """(away_attack - home_defense) sampled at the start of each interval."""
+
+    discipline: dict = field(default_factory=dict)
+    """player_id -> MatchPlayerDiscipline. Persists across all intervals.
+    This is the single authoritative source of truth for enforcing the
+    two-yellow-equals-red rule across interval boundaries."""
+
 
 
     @classmethod

@@ -371,3 +371,196 @@ class TestMatchEngine(unittest.TestCase):
         self.assertEqual(len(m14_events), 2)
         self.assertEqual(m14_events[0]["type"], "injury")
         self.assertEqual(m14_events[1]["type"], "substitution")
+
+
+class TestMatchDiscipline(unittest.TestCase):
+    """
+    Unit tests for the in-match discipline system:
+      - _apply_yellow_card
+      - _apply_straight_red_card
+      - Cross-interval double-yellow enforcement via state.discipline
+
+    These tests exercise the mutation helpers in isolation without running a
+    full simulate_match(), keeping them fast and deterministic.
+    """
+
+    def _make_state(self):
+        """Create a minimal MatchState with a single home player for testing."""
+        from app.engine.match_state import MatchState
+
+        player = create_player("p10", "CM1", "CM", 75)
+        state = MatchState(
+            home_active_xi=[player],
+            away_active_xi=[],
+            fitness={"p10": 1.0},
+        )
+        return state, player
+
+    def test_first_yellow_remains_yellow(self):
+        """First booking must be recorded as yellow; player must stay on the pitch."""
+        from app.engine.match_engine import _apply_yellow_card
+
+        state, player = self._make_state()
+        event = _apply_yellow_card(
+            state=state,
+            player_id="p10",
+            player_name=player.name,
+            club_id="club_home",
+            club_name="Home FC",
+            home_club_id="club_home",
+            minute=20,
+            description_first="20' 🟨 Yellow card shown to Player p10 (Home FC) for a tactical foul.",
+        )
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event.card_type, "yellow")
+        self.assertEqual(state.discipline["p10"].yellow_cards, 1)
+        self.assertFalse(state.discipline["p10"].red_card)
+        # Player still in active XI
+        self.assertTrue(any(p.player_id == "p10" for p in state.home_active_xi))
+
+    def test_second_yellow_converts_to_red(self):
+        """Second booking on an already-yellow player must emit second_yellow_red and send them off."""
+        from app.engine.match_engine import _apply_yellow_card
+
+        state, player = self._make_state()
+
+        # First yellow
+        _apply_yellow_card(
+            state=state,
+            player_id="p10",
+            player_name=player.name,
+            club_id="club_home",
+            club_name="Home FC",
+            home_club_id="club_home",
+            minute=20,
+            description_first="First yellow",
+        )
+
+        # Second yellow — must become red
+        event = _apply_yellow_card(
+            state=state,
+            player_id="p10",
+            player_name=player.name,
+            club_id="club_home",
+            club_name="Home FC",
+            home_club_id="club_home",
+            minute=67,
+            description_first="Second yellow attempt",
+        )
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event.card_type, "second_yellow_red")
+        self.assertEqual(state.discipline["p10"].yellow_cards, 2)
+        self.assertTrue(state.discipline["p10"].red_card)
+        self.assertEqual(state.discipline["p10"].sent_off_minute, 67)
+        # Player removed from active XI
+        self.assertFalse(any(p.player_id == "p10" for p in state.home_active_xi))
+
+    def test_second_yellow_red_has_correct_red_card_type(self):
+        """Second yellow event must carry red_card_type='second_yellow' for the consequence pipeline."""
+        from app.engine.match_engine import _apply_yellow_card
+
+        state, player = self._make_state()
+
+        _apply_yellow_card(
+            state=state,
+            player_id="p10",
+            player_name=player.name,
+            club_id="club_home",
+            club_name="Home FC",
+            home_club_id="club_home",
+            minute=12,
+            description_first="First yellow",
+        )
+        event = _apply_yellow_card(
+            state=state,
+            player_id="p10",
+            player_name=player.name,
+            club_id="club_home",
+            club_name="Home FC",
+            home_club_id="club_home",
+            minute=75,
+            description_first="Second yellow attempt",
+        )
+
+        self.assertEqual(event.red_card_type, "second_yellow")
+        self.assertIsNotNone(event.metadata)
+        self.assertEqual(event.metadata["red_card_type"], "second_yellow")
+        self.assertEqual(event.metadata["suspension_matches"], 1)
+
+    def test_straight_red_removes_player(self):
+        """Straight red card must send the player off and record red_card_type='straight_red'."""
+        from app.engine.match_engine import _apply_straight_red_card
+
+        state, player = self._make_state()
+        event = _apply_straight_red_card(
+            state=state,
+            player_id="p10",
+            club_id="club_home",
+            home_club_id="club_home",
+            minute=30,
+            description="30' 🟥 Red card!",
+        )
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event.card_type, "red")
+        self.assertEqual(event.red_card_type, "straight_red")
+        self.assertTrue(state.discipline["p10"].red_card)
+        self.assertEqual(state.discipline["p10"].red_card_type, "straight_red")
+        # Player removed from active XI
+        self.assertFalse(any(p.player_id == "p10" for p in state.home_active_xi))
+
+    def test_sent_off_player_cannot_receive_more_cards(self):
+        """A player already sent off must not receive additional card events (guard returns None)."""
+        from app.engine.match_engine import _apply_straight_red_card, _apply_yellow_card
+
+        state, player = self._make_state()
+
+        # Straight red
+        _apply_straight_red_card(
+            state=state,
+            player_id="p10",
+            club_id="club_home",
+            home_club_id="club_home",
+            minute=30,
+            description="Red card",
+        )
+
+        # Attempt to book the same player again — must be ignored
+        event = _apply_yellow_card(
+            state=state,
+            player_id="p10",
+            player_name=player.name,
+            club_id="club_home",
+            club_name="Home FC",
+            home_club_id="club_home",
+            minute=80,
+            description_first="Late foul",
+        )
+
+        self.assertIsNone(event, "Helper must return None for an already-sent-off player")
+        # Discipline state must remain unchanged (still straight_red)
+        self.assertEqual(state.discipline["p10"].red_card_type, "straight_red")
+
+    def test_second_yellow_red_home_red_card_counter_incremented(self):
+        """State's home_red_cards counter must increment when a player is sent off via double yellow."""
+        from app.engine.match_engine import _apply_yellow_card
+
+        state, player = self._make_state()
+        self.assertEqual(state.home_red_cards, 0)
+
+        _apply_yellow_card(
+            state=state, player_id="p10", player_name=player.name,
+            club_id="club_home", club_name="Home FC", home_club_id="club_home",
+            minute=20, description_first="First yellow",
+        )
+        _apply_yellow_card(
+            state=state, player_id="p10", player_name=player.name,
+            club_id="club_home", club_name="Home FC", home_club_id="club_home",
+            minute=55, description_first="Second yellow",
+        )
+
+        self.assertEqual(state.home_red_cards, 1)
+        self.assertEqual(len(state.home_active_xi), 0)
+

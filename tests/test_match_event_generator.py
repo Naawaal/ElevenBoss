@@ -78,3 +78,10 @@ class TestMatchEventGenerator(unittest.TestCase):
         # Check chronological order
         for i in range(len(timeline) - 1):
             self.assertTrue(timeline[i]["minute"] <= timeline[i+1]["minute"])
+
+        # Verify card types in timeline are valid values
+        valid_card_types = {"yellow_card", "red_card", "second_yellow_red"}
+        for e in timeline:
+            if "card" in e["type"] or e["type"] == "second_yellow_red":
+                self.assertIn(e["type"], valid_card_types)
+

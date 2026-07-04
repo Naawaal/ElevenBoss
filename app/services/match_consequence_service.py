@@ -111,17 +111,25 @@ class MatchConsequenceService:
                 p.last_match_rating = None
 
         # Step 4: Apply new suspensions for red cards
+        # Both straight reds ("red") and second-yellow reds ("second_yellow_red") trigger a ban.
+        # LEAGUE_RED_CARD_SUSPENSION_GAMES applies to both; differentiate when rules diverge.
         for card in sim_result.cards:
-            if card.card_type == "red":
-                try:
-                    pid = uuid.UUID(card.player_id)
-                except ValueError:
-                    continue
-                p = players_by_id.get(pid)
-                if p:
-                    p.suspension_games_remaining = LEAGUE_RED_CARD_SUSPENSION_GAMES
-                    p.suspension_created_fixture_id = fixture_id
-                    logger.info(f"Suspension applied to {p.display_name} for red card in fixture {fixture_id}")
+            if card.card_type not in ("red", "second_yellow_red"):
+                continue
+            try:
+                pid = uuid.UUID(card.player_id)
+            except ValueError:
+                continue
+            p = players_by_id.get(pid)
+            if p:
+                red_card_type = (card.metadata or {}).get("red_card_type", card.card_type)
+                p.suspension_games_remaining = LEAGUE_RED_CARD_SUSPENSION_GAMES
+                p.suspension_created_fixture_id = fixture_id
+                logger.info(
+                    f"Suspension applied to {p.display_name} for {red_card_type} "
+                    f"in fixture {fixture_id}"
+                )
+
 
         # Step 5: Apply new injuries
         for inj in sim_result.injuries:
