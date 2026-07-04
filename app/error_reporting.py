@@ -34,11 +34,13 @@ def init_error_reporting() -> None:
             if "exc_info" in hint:
                 exc_type, exc_value, tb = hint["exc_info"]
                 exc_name = exc_type.__name__
-                if exc_name in ("NotFound", "HTTPException"):
+                if exc_name in ("NotFound", "HTTPException", "InteractionResponded"):
                     code = getattr(exc_value, "code", None)
                     if exc_name == "NotFound" and code == 10062:
                         return None
                     if exc_name == "HTTPException" and code in (40060, 50027):
+                        return None
+                    if exc_name == "InteractionResponded":
                         return None
             return event
 

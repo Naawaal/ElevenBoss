@@ -38,7 +38,8 @@ async def generate_bot_clubs_for_league(
         await session.flush()
         
         # Generate and save a balanced squad of 25 players
-        players = await PlayerService.create_squad(club.id, session)
+        squad_result = await PlayerService.create_squad(club.id, session)
+        players = squad_result.players
         
         # Calculate overall rating
         avg_ovr = sum(p.overall for p in players) / len(players)

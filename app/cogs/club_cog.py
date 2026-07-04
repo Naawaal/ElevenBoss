@@ -303,10 +303,12 @@ class ClubCog(commands.Cog):
                 return
             # Fetch guild_id from session state for DM console
             session = ui_session_manager.get_session(nonce)
-            if session:
-                guild_id = session.guild_id
-            else:
-                guild_id = 0
+            if not session:
+                logger.warning(f"ui_interaction_rejected: reason=session_expired_or_not_found, user_id={user_id}, nonce={nonce}")
+                await self.send_error_response(interaction, "❌ This interactive menu has expired or the bot was restarted. Please run the command again to open a new console.")
+                return
+            guild_id = session.guild_id
+
 
         try:
             # Handle close button immediately
@@ -336,10 +338,18 @@ class ClubCog(commands.Cog):
             # Defer response immediately to prevent 3-second Discord timeouts unless opening a modal
             is_opening_modal = (custom_id.scope == "dm_admin" and custom_id.action in ("extend_deadline", "open_modal")) or (custom_id.scope == "schedule" and custom_id.action == "open_modal")
             if not is_opening_modal:
-                if is_ephemeral_request:
-                    await interaction.response.defer(ephemeral=True)
-                else:
-                    await interaction.response.defer()
+                is_done = False
+                try:
+                    if interaction.response.is_done() is True:
+                        is_done = True
+                except Exception:
+                    pass
+
+                if not is_done:
+                    if is_ephemeral_request:
+                        await interaction.response.defer(ephemeral=True)
+                    else:
+                        await interaction.response.defer()
 
             # For public views, if session doesn't exist, is expired, or belongs to another user, create a temporary session
             if is_public_view:

@@ -13,17 +13,21 @@ class DMAdminCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # Create the top-level 'admin' group — DM-only, never shown in guild command picker
+    # Create the top-level 'admin' group — DM-only, never shown in guild command picker.
+    # allowed_installs must include guild=True so users who access the bot via a guild
+    # installation can invoke /admin in their DMs. Without guild=True, Discord sees a
+    # guild-install context and rejects the command with "Unknown Integration".
+    # allowed_contexts restricts execution to DM / private channels only.
     admin = app_commands.Group(
         name="admin",
         description="ElevenBoss Admin Overrides Console",
-        allowed_installs=app_commands.AppInstallationType(guild=False, user=True),
+        allowed_installs=app_commands.AppInstallationType(guild=True, user=True),
         allowed_contexts=app_commands.AppCommandContext(guild=False, dm_channel=True, private_channel=True)
     )
 
     # Subcommand to open the interactive admin console dashboard
     @admin.command(name="console", description="Open the private ElevenBoss Admin Override Dashboard.")
-    @app_commands.allowed_installs(guilds=False, users=True)
+    @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=False, dms=True, private_channels=True)
     async def console(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)

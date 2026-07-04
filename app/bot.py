@@ -18,9 +18,12 @@ class ElevenBossBot(commands.Bot):
         )
 
     async def setup_hook(self):
-        # Bind bot reference to permission service
+        # Bind bot reference to services
         from app.services import permission_service
         permission_service.bot = self
+        from app.services.announcement_service import AnnouncementService
+        AnnouncementService.bot = self
+
 
         # Register tree error handler for slash commands
         self.tree.on_error = self.on_app_command_error

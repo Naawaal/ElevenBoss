@@ -109,7 +109,8 @@ async def register_club(
 
             # Procedural Squad Generation
             logger.info(f"squad_generation_started: guild_id={guild_id}, club_id={club.id}")
-            players = await PlayerService.create_squad(club.id, session)
+            squad_result = await PlayerService.create_squad(club.id, session)
+            players = squad_result.players
             logger.info(f"squad_generation_success: guild_id={guild_id}, club_id={club.id}, size={len(players)}")
 
             avg_ovr = sum(p.overall for p in players) / len(players)
