@@ -45,7 +45,7 @@ async def _get_context(session: AsyncSession, guild_id: int, discord_user_id: in
     if not league:
         raise ValueError("No active league found for this guild.")
 
-    active_season = await get_active_season_for_league(session, league.id)
+    active_season = await get_active_season_for_league(session, guild_id, league.id)
     if not active_season:
         raise ValueError("No active season found for this league.")
 

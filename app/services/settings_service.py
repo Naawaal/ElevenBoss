@@ -81,6 +81,29 @@ class SettingsService:
             return False, "Failed to update admin role in database."
 
     @staticmethod
+    async def update_mention_role(
+        guild_id: int,
+        role_id: str | None
+    ) -> tuple[bool, str]:
+        """
+        Sets or clears the announcement mention role.
+        """
+        try:
+            async with get_session() as session:
+                from app.repositories.guild_config_repository import update_mention_role as db_update_mention_role
+                await db_update_mention_role(session, guild_id, role_id)
+                await session.commit()
+            if role_id:
+                logger.info(f"settings_mention_role_updated: guild_id={guild_id}, role_id={role_id}")
+                return True, "Announcement mention role updated successfully."
+            else:
+                logger.info(f"settings_mention_role_cleared: guild_id={guild_id}")
+                return True, "Announcement mention role cleared successfully."
+        except Exception as e:
+            logger.error(f"settings_error: failed to update announcement mention role: {e}", exc_info=e)
+            return False, "Failed to update announcement mention role in database."
+
+    @staticmethod
     async def update_automation_settings(
         guild_id: int,
         auto_join: bool | None = None,

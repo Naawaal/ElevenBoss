@@ -41,6 +41,8 @@ def test_settings_overview_layout_renders():
         league_status="DRAFT",
         season_week="Not Started",
         next_run_str="Disabled",
+        admin_role_name="None",
+        mention_role_name="None",
         is_admin=True,
         nonce="test_nonce"
     )

@@ -183,6 +183,17 @@ async def create_league(
                     code="league_exists",
                     message="An active or draft league already exists in this server."
                 )
+
+            # Check if a league with the same name already exists in this guild
+            from app.repositories.league_repository import get_league_by_name_and_guild
+            duplicate_name_league = await get_league_by_name_and_guild(session, validated_name, guild_id)
+            if duplicate_name_league:
+                logger.info(f"league_create_failed: duplicate league name '{validated_name}' for guild_id={guild_id}")
+                return LeagueResult(
+                    success=False,
+                    code="duplicate_league_name",
+                    message=f"A league named '{validated_name}' already exists in this server. Please choose a different name."
+                )
                 
             league = await db_create_league(
                 session=session,
@@ -208,6 +219,14 @@ async def create_league(
             )
             
     except Exception as e:
+        from sqlalchemy.exc import IntegrityError
+        if isinstance(e, IntegrityError) and "uq_league_guild_name" in str(e):
+            logger.info(f"league_create_failed: duplicate league name '{validated_name}' (IntegrityError) for guild_id={guild_id}")
+            return LeagueResult(
+                success=False,
+                code="duplicate_league_name",
+                message=f"A league named '{validated_name}' already exists in this server. Please choose a different name."
+            )
         logger.error(f"league_create_failed: unexpected database error: {e}", exc_info=e)
         from app.error_reporting import capture_exception
         capture_exception(e)

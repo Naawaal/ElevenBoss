@@ -98,3 +98,16 @@ async def test_update_schedule_settings_validation(mock_get_session):
     )
     assert not success
     assert "Invalid timezone string" in msg
+@pytest.mark.asyncio
+@patch("app.services.settings_service.get_session")
+async def test_update_mention_role_success(mock_get_session):
+    mock_session = AsyncMock()
+    mock_get_session.return_value.__aenter__.return_value = mock_session
+    
+    with patch("app.repositories.guild_config_repository.update_mention_role") as mock_repo_update:
+        success, msg = await SettingsService.update_mention_role(
+            guild_id=123456,
+            role_id="111222"
+        )
+        assert success
+        mock_repo_update.assert_called_once_with(mock_session, 123456, "111222")

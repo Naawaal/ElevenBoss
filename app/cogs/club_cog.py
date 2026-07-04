@@ -66,7 +66,10 @@ class ExtendDeadlineModal(discord.ui.Modal, title="Extend Registration Deadline"
         if res.success:
             new_view = await handle_open_admin_dashboard(self.guild_id, interaction.user, self.nonce)
             await interaction.followup.send(content=f"✅ {res.message}", ephemeral=True)
-            await interaction.message.edit(view=new_view)
+            try:
+                await interaction.message.edit(view=new_view)
+            except Exception as e:
+                logger.warning(f"Failed to edit original message in ExtendDeadlineModal: {e}")
         else:
             await interaction.followup.send(content=f"❌ {res.message}", ephemeral=True)
 
@@ -124,7 +127,10 @@ class ScheduleSetupModal(discord.ui.Modal, title="Configure Matchday Schedule"):
         if success:
             new_view = await handle_open_settings_schedule(self.guild_id, interaction.user, self.nonce)
             await interaction.followup.send(content=f"✅ {message}", ephemeral=True)
-            await interaction.message.edit(view=new_view)
+            try:
+                await interaction.message.edit(view=new_view)
+            except Exception as e:
+                logger.warning(f"Failed to edit original message in ScheduleSetupModal: {e}")
         else:
             await interaction.followup.send(content=f"❌ {message}", ephemeral=True)
 
@@ -182,7 +188,10 @@ class CreateLeagueModal(discord.ui.Modal, title="Create Draft League"):
         if res.success:
             new_view = await handle_open_admin_dashboard(self.guild_id, interaction.user, self.nonce)
             await interaction.followup.send(content=f"✅ {res.message}", ephemeral=True)
-            await interaction.message.edit(view=new_view)
+            try:
+                await interaction.message.edit(view=new_view)
+            except Exception as e:
+                logger.warning(f"Failed to edit original message in CreateLeagueModal: {e}")
         else:
             await interaction.followup.send(content=f"❌ {res.message}", ephemeral=True)
 
@@ -610,6 +619,14 @@ class ClubCog(commands.Cog):
                     # Check clear option
                     val = None if role_id == "clear" else role_id
                     await SettingsService.update_admin_role(guild_id, val)
+                    new_view = await handle_open_settings_admin_role(guild_id, interaction.user, nonce)
+                elif custom_id.action == "role_mention" and custom_id.target == "select":
+                    if not interaction.data.get("values"):
+                        raise ValueError("No role selected.")
+                    role_id = interaction.data["values"][0]
+                    # Check clear option
+                    val = None if role_id == "clear" else role_id
+                    await SettingsService.update_mention_role(guild_id, val)
                     new_view = await handle_open_settings_admin_role(guild_id, interaction.user, nonce)
 
             elif custom_id.scope == "schedule":

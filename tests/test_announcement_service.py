@@ -67,3 +67,38 @@ async def test_announcement_channel_failure(mock_get_session):
         res = await AnnouncementService.announce_league_start("123456", "Test League")
         # Senders must handle failures safely and return False, not raise exception
         assert not res
+
+
+@pytest.mark.asyncio
+@patch("app.services.announcement_service.get_session")
+async def test_announcement_with_role_mention(mock_get_session):
+    mock_session = AsyncMock()
+    mock_get_session.return_value.__aenter__.return_value = mock_session
+    
+    config = GuildConfig(
+        guild_id="123456",
+        game_channel_id="9999",
+        mention_role_id="55555"
+    )
+    
+    with patch("app.services.announcement_service.get_or_create_guild_config", return_value=config):
+        mock_bot = MagicMock()
+        mock_guild = MagicMock()
+        mock_channel = AsyncMock()
+        
+        mock_guild.get_channel.return_value = mock_channel
+        mock_bot.get_guild.return_value = mock_guild
+        AnnouncementService.bot = mock_bot
+        
+        # Test plain announcement mention
+        res = await AnnouncementService.announce_league_start("123456", "Test League")
+        assert res
+        mock_channel.send.assert_called_with("<@&55555>\n\n🏆 **LEAGUE STARTED!**\n\nThe draft league **Test League** has officially started! Season 1 is now active. Matches have been scheduled. Use `/fixtures` to view the schedule!")
+        
+        # Test V2 announcement mention
+        mock_channel.send.reset_mock()
+        mock_view = MagicMock()
+        res_v2 = await AnnouncementService.send_announcement_v2("123456", mock_view)
+        assert res_v2
+        mock_channel.send.assert_called_once_with(content="<@&55555>", view=mock_view)
+

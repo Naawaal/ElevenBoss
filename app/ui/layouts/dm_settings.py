@@ -50,13 +50,14 @@ def build_settings_overview_layout(
     league_status: str,
     season_week: str,
     next_run_str: str,
+    admin_role_name: str,
+    mention_role_name: str,
     is_admin: bool,
     nonce: str
 ) -> V2View:
     """
     Renders the settings overview for the selected guild.
     """
-    admin_role_mention = f"<@&{config.admin_role_id}>" if config.admin_role_id else "`None`"
     deadline_str = config.registration_deadline.strftime("%Y-%m-%d %H:%M UTC") if config.registration_deadline else "None"
     
     text = (
@@ -64,7 +65,8 @@ def build_settings_overview_layout(
         f"🌐 **Current League Status:** `{league_status}` | `{season_week}`\n\n"
         f"🎮 **Game Channel:** <#{config.game_channel_id or 'None'}>\n"
         f"📢 **Announcement Channel:** <#{config.matchday_announcement_channel_id or 'None'}>\n"
-        f"🛡️ **Admin Role:** {admin_role_mention}\n\n"
+        f"🛡️ **Admin Role:** `{admin_role_name}`\n"
+        f"🔔 **Announcement Mention:** `{mention_role_name}`\n\n"
         f"🤖 **Auto Join Draft:** `{'ENABLED' if config.auto_join_draft_league else 'DISABLED'}`\n"
         f"🚀 **Auto Start League:** `{'ENABLED' if config.auto_start_league else 'DISABLED'}` (Min Humans: `{config.minimum_human_clubs}`)\n"
         f"⏳ **Registration Deadline:** `{deadline_str}`\n\n"
@@ -161,34 +163,51 @@ def build_settings_admin_role_layout(
     nonce: str
 ) -> V2View:
     """
-    Renders ElevenBoss admin role settings with select dropdown.
+    Renders ElevenBoss roles and mention settings with select dropdowns.
     """
-    role_mention = f"<@&{config.admin_role_id}>" if config.admin_role_id else "`None`"
+    admin_role_name = f"ID: {config.admin_role_id}" if config.admin_role_id else "None"
+    mention_role_name = f"ID: {config.mention_role_id}" if getattr(config, "mention_role_id", None) else "None"
+    for r in guild_roles:
+        if str(r.id) == str(config.admin_role_id):
+            admin_role_name = f"@{r.name}"
+        if str(r.id) == str(getattr(config, "mention_role_id", None)):
+            mention_role_name = f"@{r.name}"
+
     text = (
-        f"### 🛡️ ELEVENBOSS ADMIN ROLE — {guild_name.upper()}\n\n"
-        f"👥 **Current ElevenBoss Admin Role:** {role_mention}\n\n"
+        f"### 🛡️ ROLE SETTINGS — {guild_name.upper()}\n\n"
+        f"👥 **Admin Role:** `{admin_role_name}`\n"
+        f"🔔 **Announcement Mention Role:** `{mention_role_name}`\n\n"
         f"🔒 **Permissions Model:**\n"
-        f"• *Discord Administrators* can configure or clear this role.\n"
-        f"• Members with this role can configure ElevenBoss and run `/admin` commands in DMs.\n"
+        f"• *Discord Administrators* can configure or clear these roles.\n"
+        f"• Members with the Admin role can manage settings and run `/admin` commands in DMs.\n"
+        f"• The Announcement Mention Role will be mentioned whenever a league announcement is sent.\n"
     )
 
     back_id = encode_custom_id("dm_settings", "view", "overview", nonce)
     refresh_id = encode_custom_id("dm_settings", "view", "admin_role", nonce)
 
     role_select_id = encode_custom_id("dm_settings", "role_admin", "select", nonce)
+    mention_select_id = encode_custom_id("dm_settings", "role_mention", "select", nonce)
 
-    options = [
+    role_options = [
         {"label": f"@{r.name}", "value": str(r.id)}
         for r in guild_roles[:24]
     ]
-    # Add clear option
-    options.append({"label": "❌ Clear Admin Role", "value": "clear", "description": "Removes the admin role requirement."})
+    role_options.append({"label": "❌ Clear Admin Role", "value": "clear", "description": "Removes the admin role requirement."})
+
+    mention_options = [
+        {"label": f"@{r.name}", "value": str(r.id)}
+        for r in guild_roles[:24]
+    ]
+    mention_options.append({"label": "❌ Clear Mention Role", "value": "clear", "description": "Removes the announcement mention."})
 
     rows = []
-    # Setting the admin role requires full Discord Administrator permissions
     if is_admin:
         rows.append(action_row([
-            select_menu(role_select_id, options, placeholder="Select Admin Role...")
+            select_menu(role_select_id, role_options, placeholder="Select Admin Role...")
+        ]))
+        rows.append(action_row([
+            select_menu(mention_select_id, mention_options, placeholder="Select Announcement Mention Role...")
         ]))
 
     rows.append(action_row([

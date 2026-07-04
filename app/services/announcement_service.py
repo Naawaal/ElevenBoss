@@ -33,6 +33,7 @@ class AnnouncementService:
             async with get_session() as session:
                 config = await get_or_create_guild_config(session, guild_id)
                 channel_id = config.matchday_announcement_channel_id or config.game_channel_id
+                mention_role_id = getattr(config, "mention_role_id", None)
 
             if not channel_id:
                 logger.warning(f"announcement_skipped: no channel configured for guild_id={guild_id}")
@@ -45,6 +46,10 @@ class AnnouncementService:
             if not channel:
                 logger.error(f"announcement_failed: channel not found, channel_id={channel_id}, guild_id={guild_id}")
                 return False
+
+            # Prepend mention role if configured
+            if mention_role_id:
+                message = f"<@&{mention_role_id}>\n\n{message}"
 
             # Send message
             await channel.send(message)
@@ -76,6 +81,7 @@ class AnnouncementService:
             async with get_session() as session:
                 config = await get_or_create_guild_config(session, guild_id)
                 channel_id = config.matchday_announcement_channel_id or config.game_channel_id
+                mention_role_id = getattr(config, "mention_role_id", None)
 
             if not channel_id:
                 logger.warning(f"announcement_skipped: no channel configured for guild_id={guild_id}")
@@ -90,7 +96,11 @@ class AnnouncementService:
                 return False
 
             # Send V2View message
-            await channel.send(view=view)
+            content = f"<@&{mention_role_id}>" if mention_role_id else None
+            if content:
+                await channel.send(content=content, view=view)
+            else:
+                await channel.send(view=view)
             logger.info(f"announcement_v2_sent: guild_id={guild_id}, channel_id={channel_id}")
             return True
         except Exception as e:

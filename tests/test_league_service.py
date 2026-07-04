@@ -48,10 +48,12 @@ class TestLeagueService(unittest.IsolatedAsyncioTestCase):
     @patch("app.services.league_service.get_session")
     @patch("app.services.league_service.get_non_terminal_league_by_guild")
     @patch("app.services.league_service.db_create_league")
-    async def test_create_league_success(self, mock_db_create, mock_get_non_terminal, mock_get_session):
+    @patch("app.repositories.league_repository.get_league_by_name_and_guild")
+    async def test_create_league_success(self, mock_get_by_name, mock_db_create, mock_get_non_terminal, mock_get_session):
         session_mock = AsyncMock()
         mock_get_session.return_value.__aenter__.return_value = session_mock
         mock_get_non_terminal.return_value = None
+        mock_get_by_name.return_value = None
         
         mock_league = MagicMock()
         mock_league.id = uuid.uuid4()
@@ -74,6 +76,20 @@ class TestLeagueService(unittest.IsolatedAsyncioTestCase):
         res = await create_league("123", "Golden League", 8)
         self.assertFalse(res.success)
         self.assertEqual(res.code, "league_exists")
+
+    @patch("app.services.league_service.get_session")
+    @patch("app.services.league_service.get_non_terminal_league_by_guild")
+    @patch("app.repositories.league_repository.get_league_by_name_and_guild")
+    async def test_create_league_duplicate_name_rejected(self, mock_get_by_name, mock_get_non_terminal, mock_get_session):
+        session_mock = AsyncMock()
+        mock_get_session.return_value.__aenter__.return_value = session_mock
+        mock_get_non_terminal.return_value = None
+        mock_get_by_name.return_value = MagicMock() # Mock league with same name exists
+        
+        res = await create_league("123", "Golden League", 8)
+        self.assertFalse(res.success)
+        self.assertEqual(res.code, "duplicate_league_name")
+        self.assertIn("already exists", res.message)
 
     async def test_create_league_invalid_size_rejected(self):
         res = await create_league("123", "Golden League", 5) # 5 is invalid size

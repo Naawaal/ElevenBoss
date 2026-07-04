@@ -103,5 +103,13 @@ async def set_matchday_enabled(
     config = await get_or_create_guild_config(session, guild_id)
     config.matchday_enabled = enabled
 
+async def update_mention_role(
+    session: AsyncSession,
+    guild_id: int | str,
+    role_id: str | None
+) -> None:
+    config = await get_or_create_guild_config(session, guild_id)
+    config.mention_role_id = role_id
+
 async def get_settings_overview(session: AsyncSession, guild_id: int | str) -> GuildConfig:
     return await get_or_create_guild_config(session, guild_id)

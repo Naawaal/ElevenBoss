@@ -99,6 +99,7 @@ async def handle_open_settings_overview(guild_id: int, user: discord.User | disc
 
     bot_obj = permission_service.bot
     guild_name = "ElevenBoss Server"
+    guild = None
     if bot_obj:
         guild = bot_obj.get_guild(guild_id)
         if guild:
@@ -109,8 +110,19 @@ async def handle_open_settings_overview(guild_id: int, user: discord.User | disc
     async with get_session() as db_session:
         config = await get_or_create_guild_config(db_session, guild_id)
         next_run_str = await get_next_run_string(config)
+        
+        admin_role_name = "None"
+        mention_role_name = "None"
+        if guild:
+            if config.admin_role_id:
+                r = guild.get_role(int(config.admin_role_id))
+                admin_role_name = f"@{r.name}" if r else f"ID: {config.admin_role_id}"
+            if config.mention_role_id:
+                r = guild.get_role(int(config.mention_role_id))
+                mention_role_name = f"@{r.name}" if r else f"ID: {config.mention_role_id}"
+
         logger.info(f"dm_settings_panel_rendered: guild_id={guild_id}, user_id={user.id}")
-        return render_settings_overview(config, guild_name, league_status, season_week, next_run_str, nonce, is_admin)
+        return render_settings_overview(config, guild_name, league_status, season_week, next_run_str, admin_role_name, mention_role_name, nonce, is_admin)
 
 async def handle_open_settings_channels(guild_id: int, user: discord.User | discord.Member, nonce: str):
     valid, err_msg = ui_session_manager.validate_session(nonce, user.id)

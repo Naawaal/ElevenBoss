@@ -14,6 +14,7 @@ class GuildConfig(Base):
     guild_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     game_channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     admin_role_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    mention_role_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     default_league_size: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
     
     # Automation Configurations

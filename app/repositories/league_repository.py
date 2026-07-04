@@ -143,3 +143,15 @@ async def get_joined_player_user_ids(session: AsyncSession, league_id: uuid.UUID
     )
     res = await session.execute(stmt)
     return list(res.scalars().all())
+
+async def get_league_by_name_and_guild(session: AsyncSession, name: str, guild_id: int | str) -> League | None:
+    """
+    Fetch any league in a specific guild by its name.
+    """
+    stmt = select(League).where(
+        League.guild_id == str(guild_id),
+        League.name == name
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+

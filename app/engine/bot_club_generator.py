@@ -49,23 +49,49 @@ def generate_bot_clubs_data(
     # Shuffle to ensure variety
     random.shuffle(available_templates)
     
+    # Track names generated in this call
+    generated_names = set()
+    
     for i in range(count):
         if i < len(available_templates):
             name, short_name = available_templates[i]
+            generated.append(
+                GeneratedBotClub(
+                    name=name,
+                    short_name=short_name,
+                    budget=10000000,
+                    reputation=500,
+                    stadium_capacity=10000
+                )
+            )
+            generated_names.add(name.lower())
         else:
             # Fallback if we run out of unique names
-            suffix = i - len(available_templates) + 1
-            name = f"Bot Club {chr(64 + suffix)}"
-            short_name = f"BC{chr(64 + suffix)}"
+            # Find a suffix A, B, C, ... AA, AB, ... such that the name is unique
+            suffix_num = i - len(available_templates) + 1
+            while True:
+                # convert suffix_num to letter representation (1=A, 2=B, ..., 27=AA, etc.)
+                letter_representation = ""
+                temp_num = suffix_num
+                while temp_num > 0:
+                    temp_num, remainder = divmod(temp_num - 1, 26)
+                    letter_representation = chr(65 + remainder) + letter_representation
+                
+                name = f"Bot Club {letter_representation}"
+                short_name = f"BC{letter_representation}"
+                if name.lower() not in existing_normalized and name.lower() not in generated_names:
+                    break
+                suffix_num += 1
             
-        generated.append(
-            GeneratedBotClub(
-                name=name,
-                short_name=short_name,
-                budget=10000000,
-                reputation=500,
-                stadium_capacity=10000
+            generated.append(
+                GeneratedBotClub(
+                    name=name,
+                    short_name=short_name,
+                    budget=10000000,
+                    reputation=500,
+                    stadium_capacity=10000
+                )
             )
-        )
+            generated_names.add(name.lower())
         
     return generated

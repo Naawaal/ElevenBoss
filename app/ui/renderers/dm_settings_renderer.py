@@ -14,8 +14,8 @@ from app.ui.components import V2View
 def render_dm_server_picker(guild_views, nonce: str) -> V2View:
     return build_dm_server_picker(guild_views, nonce)
 
-def render_settings_overview(config, guild_name: str, league_status: str, season_week: str, next_run_str: str, nonce: str, is_admin: bool) -> V2View:
-    return build_settings_overview_layout(config, guild_name, league_status, season_week, next_run_str, is_admin, nonce)
+def render_settings_overview(config, guild_name: str, league_status: str, season_week: str, next_run_str: str, admin_role_name: str, mention_role_name: str, nonce: str, is_admin: bool) -> V2View:
+    return build_settings_overview_layout(config, guild_name, league_status, season_week, next_run_str, admin_role_name, mention_role_name, is_admin, nonce)
 
 def render_settings_channels(config, guild_name: str, guild_channels, nonce: str, is_admin: bool) -> V2View:
     return build_settings_channels_layout(config, guild_name, guild_channels, is_admin, nonce)
