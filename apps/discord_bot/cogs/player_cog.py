@@ -182,7 +182,22 @@ class PlayerProfileView(discord.ui.View):
             card = card_res.data if card_res else None
 
             new_stat_val = card[track["reward_stat"]] + track["reward_val"]
-            new_overall = card["overall"] + 1
+            
+            stats = {
+                "pac": card.get("pac", 50),
+                "sho": card.get("sho", 50),
+                "pas": card.get("pas", 50),
+                "dri": card.get("dri", 50),
+                "def": card.get("def", 50),
+                "phy": card.get("phy", 50)
+            }
+            stats[track["reward_stat"]] = new_stat_val
+            
+            ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", self.card_id).execute()
+            playstyles = [p["playstyle_key"] for p in ps_res.data] if ps_res.data else []
+            
+            from player_engine import calculate_true_ovr
+            new_overall = calculate_true_ovr(card["position"], stats, playstyles, card.get("potential", 85))
 
             # Update DB
             await db.table("player_cards").update({

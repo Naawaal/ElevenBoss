@@ -214,7 +214,15 @@ async def _run_recruitment_animation(
                 "position":    p.position,
                 "rarity":      p.rarity,
                 "base_rating": p.base_rating,
-                "overall":     p.base_rating,   # level 1
+                "overall":     p.overall,
+                "pac":         p.pac,
+                "sho":         p.sho,
+                "pas":         p.pas,
+                "dri":         p.dri,
+                "def":         p.def_stat,
+                "phy":         p.phy,
+                "potential":   p.potential,
+                "age":         p.age,
             }
             for p in all_players
         ]

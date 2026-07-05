@@ -576,7 +576,22 @@ class EvolutionsSubView(discord.ui.View):
                 stat_col = "def" # database column name is def
             
             new_stat_val = self.card[stat_col] + track["reward_val"]
-            new_overall = self.card["overall"] + 1
+            
+            stats = {
+                "pac": self.card.get("pac", 50),
+                "sho": self.card.get("sho", 50),
+                "pas": self.card.get("pas", 50),
+                "dri": self.card.get("dri", 50),
+                "def": self.card.get("def", 50),
+                "phy": self.card.get("phy", 50)
+            }
+            stats[stat_col] = new_stat_val
+            
+            ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", self.card["id"]).execute()
+            playstyles = [p["playstyle_key"] for p in ps_res.data] if ps_res.data else []
+            
+            from player_engine import calculate_true_ovr
+            new_overall = calculate_true_ovr(self.card["position"], stats, playstyles, self.card.get("potential", 85))
 
             # Update DB
             await db.table("player_cards").update({
@@ -709,10 +724,28 @@ class SkillPointButton(discord.ui.Button):
             if new_val > 99:
                 return
 
+            # Recalculate true OVR based on updated stats
+            stats = {
+                "pac": card.get("pac", 50),
+                "sho": card.get("sho", 50),
+                "pas": card.get("pas", 50),
+                "dri": card.get("dri", 50),
+                "def": card.get("def", 50),
+                "phy": card.get("phy", 50)
+            }
+            stats[self.col] = new_val
+            
+            ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", self.card_id).execute()
+            playstyles = [p["playstyle_key"] for p in ps_res.data] if ps_res.data else []
+            
+            from player_engine import calculate_true_ovr
+            new_ovr = calculate_true_ovr(card["position"], stats, playstyles, card.get("potential", 85))
+
             # Update DB
             await db.table("player_cards").update({
                 self.col: new_val,
-                "skill_points": card["skill_points"] - 1
+                "skill_points": card["skill_points"] - 1,
+                "overall": new_ovr
             }).eq("id", self.card_id).execute()
 
             # Refresh view in-place

@@ -6,6 +6,8 @@ from .engine import (
     calculate_level,
     roll_dynamic_potential,
     calculate_contract_renewal_cost,
+    calculate_true_ovr,
+    apply_match_form,
 )
 
 __all__ = [
@@ -13,4 +15,6 @@ __all__ = [
     "calculate_level",
     "roll_dynamic_potential",
     "calculate_contract_renewal_cost",
+    "calculate_true_ovr",
+    "apply_match_form",
 ]

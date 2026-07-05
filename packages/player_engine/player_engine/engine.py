@@ -1,7 +1,58 @@
 # packages/player_engine/player_engine/engine.py
 from __future__ import annotations
 import random
+import math
 from .config import GameConfig
+
+POSITION_WEIGHTS = {
+    "FWD": {"pac": 0.20, "sho": 0.35, "pas": 0.10, "dri": 0.20, "def": 0.05, "phy": 0.10},
+    "MID": {"pac": 0.10, "sho": 0.15, "pas": 0.25, "dri": 0.20, "def": 0.15, "phy": 0.15},
+    "DEF": {"pac": 0.15, "sho": 0.05, "pas": 0.10, "dri": 0.05, "def": 0.40, "phy": 0.25},
+    "GK": {"pac": 0.15, "sho": 0.00, "pas": 0.15, "dri": 0.00, "def": 0.50, "phy": 0.20}
+}
+
+PLAYSTYLE_SYNERGY = {
+    "Power Header": ["FWD", "DEF"],
+    "Playmaker": ["MID"],
+    "Speedster": ["FWD", "MID", "DEF"]
+}
+
+def calculate_true_ovr(position: str, stats: dict[str, int], playstyles: list[str], potential: int) -> int:
+    """Calculates the dynamic position-weighted OVR for a player card."""
+    weights = POSITION_WEIGHTS.get(position, POSITION_WEIGHTS["MID"])
+    
+    # 1. Base Weighted Average
+    base_ovr = (
+        (stats.get("pac", 50) * weights["pac"]) +
+        (stats.get("sho", 50) * weights["sho"]) +
+        (stats.get("pas", 50) * weights["pas"]) +
+        (stats.get("dri", 50) * weights["dri"]) +
+        (stats.get("def", 50) * weights["def"]) +
+        (stats.get("phy", 50) * weights["phy"])
+    )
+    
+    # 2. PlayStyle Synergy Bonus (+1 OVR per matching playstyle, capped at +2)
+    bonus = 0
+    for ps in playstyles:
+        if position in PLAYSTYLE_SYNERGY.get(ps, []):
+            bonus += 1
+    bonus = min(bonus, 2)
+    
+    # 3. Apply potential ceiling and round down
+    calculated_ovr = math.floor(base_ovr + bonus)
+    return min(calculated_ovr, potential)
+
+def apply_match_form(base_ovr: int, morale: int) -> int:
+    """Calculates temporary Match OVR based on morale (0-100)."""
+    if morale >= 90:
+        return base_ovr + 2
+    if morale >= 75:
+        return base_ovr + 1
+    if morale <= 25:
+        return base_ovr - 2
+    if morale <= 40:
+        return base_ovr - 1
+    return base_ovr
 
 def calculate_level(xp: int) -> int:
     """Calculates player card level from cumulative XP.

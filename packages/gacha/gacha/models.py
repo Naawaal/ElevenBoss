@@ -15,6 +15,18 @@ class GachaPlayer(BaseModel):
     rarity: str = Field(..., pattern="^(Common|Rare|Epic|Legendary)$")
     base_rating: int = Field(..., ge=50, le=99)
     overall: int = Field(..., ge=50, le=99)
+    pac: int = Field(50, ge=0, le=99)
+    sho: int = Field(50, ge=0, le=99)
+    pas: int = Field(50, ge=0, le=99)
+    dri: int = Field(50, ge=0, le=99)
+    def_stat: int = Field(50, alias="def", ge=0, le=99)
+    phy: int = Field(50, ge=0, le=99)
+    potential: int = Field(85, ge=1, le=99)
+    age: int = Field(25, ge=15, le=45)
+
+    class Config:
+        populate_by_name = True
+        arbitrary_types_allowed = True
 
 class GachaPack(BaseModel):
     players: list[GachaPlayer]

@@ -49,3 +49,36 @@ def test_calculate_contract_renewal_cost() -> None:
 
     # 80 OVR: (80 - 40)^2 * 0.4 + 50 = 1600 * 0.4 + 50 = 640 + 50 = 690 coins
     assert calculate_contract_renewal_cost(80, config) == 690
+
+def test_calculate_true_ovr() -> None:
+    from player_engine import calculate_true_ovr
+    # Base check for MID (weights: pac 0.10, sho 0.15, pas 0.25, dri 0.20, def 0.15, phy 0.15)
+    stats = {"pac": 80, "sho": 70, "pas": 85, "dri": 80, "def": 60, "phy": 65}
+    # base_ovr = 80*0.10 + 70*0.15 + 85*0.25 + 80*0.20 + 60*0.15 + 65*0.15
+    # = 8.0 + 10.5 + 21.25 + 16.0 + 9.0 + 9.75 = 74.5
+    assert calculate_true_ovr("MID", stats, [], 90) == 74 # floor(74.5) = 74
+    
+    # Check playstyle synergy bonus (MID has Playmaker, Speedster)
+    # 1 synergy: +1
+    assert calculate_true_ovr("MID", stats, ["Playmaker"], 90) == 75
+    # 2 synergies: +2
+    assert calculate_true_ovr("MID", stats, ["Playmaker", "Speedster"], 90) == 76
+    # 3 synergies: capped at +2
+    assert calculate_true_ovr("MID", stats, ["Playmaker", "Speedster", "Power Header"], 90) == 76
+
+    # Check potential ceiling clamp
+    assert calculate_true_ovr("MID", stats, ["Playmaker", "Speedster"], 75) == 75
+
+def test_apply_match_form() -> None:
+    from player_engine import apply_match_form
+    # morale >= 90: +2
+    assert apply_match_form(75, 95) == 77
+    # morale >= 75: +1
+    assert apply_match_form(75, 80) == 76
+    # morale <= 25: -2
+    assert apply_match_form(75, 20) == 73
+    # morale <= 40: -1
+    assert apply_match_form(75, 35) == 74
+    # normal range (41-74): no change
+    assert apply_match_form(75, 50) == 75
+

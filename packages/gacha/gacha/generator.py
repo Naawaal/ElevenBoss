@@ -18,17 +18,85 @@ def _load_names() -> dict[str, list[str]]:
     with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
+from player_engine import calculate_true_ovr
+
+# Weights matching POSITION_WEIGHTS in player_engine
+_WEIGHTS = {
+    "FWD": {"pac": 0.20, "sho": 0.35, "pas": 0.10, "dri": 0.20, "def": 0.05, "phy": 0.10},
+    "MID": {"pac": 0.10, "sho": 0.15, "pas": 0.25, "dri": 0.20, "def": 0.15, "phy": 0.15},
+    "DEF": {"pac": 0.15, "sho": 0.05, "pas": 0.10, "dri": 0.05, "def": 0.40, "phy": 0.25},
+    "GK": {"pac": 0.15, "sho": 0.00, "pas": 0.15, "dri": 0.00, "def": 0.50, "phy": 0.20}
+}
+
 def _make_player(position: str, rarity: str, names: dict[str, list[str]]) -> GachaPlayer:
     lo, hi = RARITY_RATING_RANGES[rarity]
-    rating = random.randint(lo, hi)
+    target = random.randint(lo, hi)
+    
     first_name = random.choice(names["first"])
     last_name = random.choice(names["last"])
+    
+    # Generate age
+    age_roll = random.random()
+    if age_roll < 0.40:
+        age = random.randint(18, 21)
+        potential_gap = random.randint(8, 20)
+    elif age_roll < 0.80:
+        age = random.randint(22, 27)
+        potential_gap = random.randint(3, 12)
+    elif age_roll < 0.95:
+        age = random.randint(28, 32)
+        potential_gap = random.randint(1, 5)
+    else:
+        age = random.randint(33, 36)
+        potential_gap = random.randint(0, 2)
+        
+    potential = min(99, target + potential_gap)
+    
+    # Roll 6 stats using position weights to create realistic distributions
+    weights = _WEIGHTS.get(position, _WEIGHTS["MID"])
+    stats = {}
+    for attr, weight in weights.items():
+        if weight >= 0.25:
+            # Primary attributes get a boost
+            stats[attr] = target + random.randint(2, 12)
+        elif weight >= 0.15:
+            # Secondary attributes are close to the target
+            stats[attr] = target + random.randint(-5, 5)
+        else:
+            # Dump attributes are lower than the target
+            stats[attr] = target + random.randint(-20, -5)
+        # Clamp to reasonable limits (10 to 99)
+        stats[attr] = max(10, min(99, stats[attr]))
+        
+    # Recalculate true OVR based on generated stats
+    overall = calculate_true_ovr(position, stats, [], potential)
+    
+    # If the calculated overall falls outside of the range of the rarity, adjust stats slightly to match target
+    diff = target - overall
+    attempts = 0
+    while diff != 0 and attempts < 10:
+        shift = 1 if diff > 0 else -1
+        for attr in stats:
+            if weights[attr] > 0:
+                stats[attr] = max(10, min(99, stats[attr] + shift))
+        overall = calculate_true_ovr(position, stats, [], potential)
+        diff = target - overall
+        attempts += 1
+
     return GachaPlayer(
         name=f"{first_name} {last_name}",
         position=position,
         rarity=rarity,
-        base_rating=rating,
-        overall=rating,
+        base_rating=overall,
+        overall=overall,
+        pac=stats["pac"],
+        sho=stats["sho"],
+        pas=stats["pas"],
+        dri=stats["dri"],
+        def_stat=stats["def"],
+        phy=stats["phy"],
+        potential=potential,
+        age=age
     )
 
 def generate_pack(n: int = 5) -> GachaPack:
