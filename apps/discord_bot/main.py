@@ -52,6 +52,15 @@ class ElevenBossBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Failed to load extension {cog}: {e}", exc_info=True)
 
+        # Clear any stale match locks on startup
+        try:
+            from apps.discord_bot.db.client import get_client
+            db = await get_client()
+            await db.table("match_locks").delete().neq("discord_id", 0).execute()
+            logger.info("Cleared stale match locks from database on startup.")
+        except Exception as e:
+            logger.error(f"Failed to clear stale match locks on startup: {e}", exc_info=True)
+
         # Register and start scheduler jobs
         # 1. Passive energy regen (every 5 minutes)
         self.scheduler.add_job(energy_regen_job, "interval", minutes=5)
