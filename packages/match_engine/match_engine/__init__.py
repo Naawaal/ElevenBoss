@@ -6,6 +6,7 @@ from .simulator import simulate_match
 from .commentary import generate_match_script
 from .commentary_engine import CommentaryEngine
 from .v2_simulator import MatchState, stream_match
+from .fixture_generator import generate_round_robin_fixtures, expected_fixture_counts
 
 __all__ = [
     "MatchPlayerCard",
@@ -18,4 +19,6 @@ __all__ = [
     "CommentaryEngine",
     "MatchState",
     "stream_match",
+    "generate_round_robin_fixtures",
+    "expected_fixture_counts",
 ]

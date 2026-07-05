@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from apps.discord_bot.core.thread_manager import ThreadManager
-from apps.discord_bot.core.scheduler_jobs import energy_regen_job, weekly_league_reset_job
+from apps.discord_bot.core.scheduler_jobs import energy_regen_job, weekly_league_reset_job, auto_sim_expired_fixtures_job
 
 # Configure logging
 logging.basicConfig(
@@ -39,7 +39,8 @@ class ElevenBossBot(commands.Bot):
             "apps.discord_bot.cogs.development_cog",
             "apps.discord_bot.cogs.marketplace_cog",
             "apps.discord_bot.cogs.battle_cog",
-            "apps.discord_bot.cogs.admin_cog"
+            "apps.discord_bot.cogs.admin_cog",
+            "apps.discord_bot.cogs.league_cog"
         ]
 
     async def setup_hook(self) -> None:
@@ -56,6 +57,8 @@ class ElevenBossBot(commands.Bot):
         self.scheduler.add_job(energy_regen_job, "interval", minutes=5)
         # 2. Weekly league reset (Monday 00:00 UTC)
         self.scheduler.add_job(weekly_league_reset_job, "cron", day_of_week="mon", hour=0, minute=0, args=[self])
+        # 3. Auto simulation of expired fixtures (every 10 minutes)
+        self.scheduler.add_job(auto_sim_expired_fixtures_job, "interval", minutes=10)
         self.scheduler.start()
         logger.info("APScheduler initialized and jobs started.")
 

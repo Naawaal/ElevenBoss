@@ -1,12 +1,16 @@
 # apps/discord_bot/cogs/admin_cog.py
 from __future__ import annotations
 import logging
+import random
+from datetime import datetime, timedelta, timezone
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
+from apps.discord_bot.cogs.league_cog import fetch_standings, auto_sim_expired_fixtures, BOT_NAMES
+from match_engine import generate_round_robin_fixtures
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +123,45 @@ async def show_announcements_menu(interaction: discord.Interaction, guild_id: in
     view.message = msg
 
 
+async def show_league_management(interaction: discord.Interaction, guild_id: int, owner_id: int):
+    """Shows the admin League Management sub-menu."""
+    guild = interaction.client.get_guild(guild_id)
+    if not guild:
+        return
+
+    db = await get_client()
+    league_res = await db.table("leagues").select("*").eq("guild_id", guild_id).maybe_single().execute()
+    league = league_res.data if league_res else None
+
+    season = None
+    if league:
+        season_res = await db.table("league_seasons").select("*").eq("league_id", league["id"]).eq("status", "active").maybe_single().execute()
+        season = season_res.data if season_res else None
+
+    # Fetch registered league members count
+    regs_res = await db.table("league_members").select("player_id", count="exact").eq("guild_id", guild_id).execute()
+    reg_count = regs_res.count if regs_res else 0
+
+    embed = discord.Embed(
+        title=f"🏆 League Management — {guild.name}",
+        description="Manage server-specific seasonal league operations below:",
+        color=0x00FF87
+    )
+    embed.add_field(name="Registered Managers", value=f"**{reg_count}**", inline=True)
+    embed.add_field(name="Active Season", value=f"Yes (Season #{season['season_number']})" if season else "No", inline=True)
+    if season:
+        embed.add_field(name="Matchday", value=f"{season['current_matchday']} / {season['total_matchdays']}", inline=True)
+        embed.add_field(name="Duration Set", value=f"{season['duration_days']} days", inline=True)
+
+    view = LeagueManagementView(owner_id, guild_id, season is not None)
+    if interaction.response.is_done():
+        msg = await interaction.edit_original_response(embed=embed, view=view)
+    else:
+        await interaction.response.edit_message(embed=embed, view=view)
+        msg = await interaction.original_response()
+    view.message = msg
+
+
 # --- VIEWS ---
 
 class BaseAdminView(discord.ui.View):
@@ -172,16 +215,17 @@ class AdminHubView(BaseAdminView):
         super().__init__(owner_id)
         self.guild_id = guild_id
 
-    @discord.ui.button(style=discord.ButtonStyle.primary, label="📢 Announcements", custom_id="admin_hub_announce")
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="📢 Announcements", custom_id="admin_hub_announce", row=0)
     async def announce_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         await show_announcements_menu(interaction, self.guild_id, self.owner_id)
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="🏆 League Management (Soon)", custom_id="admin_hub_league", disabled=True)
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="🏆 League Management", custom_id="admin_hub_league", row=0)
     async def league_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        pass
+        await interaction.response.defer()
+        await show_league_management(interaction, self.guild_id, self.owner_id)
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="🔄 Switch Server", custom_id="admin_hub_switch")
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="🔄 Switch Server", custom_id="admin_hub_switch", row=1)
     async def switch_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         await show_guild_select(interaction, self.owner_id)
@@ -221,7 +265,6 @@ class ChannelSelectView(BaseAdminView):
 
         options = []
         if guild:
-            # Filter first 25 text channels where the bot has permission
             for channel in guild.text_channels:
                 permissions = channel.permissions_for(guild.me)
                 if permissions.view_channel and permissions.send_messages:
@@ -274,7 +317,6 @@ class ChannelSelectView(BaseAdminView):
             await interaction.followup.send(embed=error_embed("Selected channel is not in the active server."), ephemeral=True)
             return
 
-        # Update Supabase
         db = await get_client()
         await db.table("guild_config").update({"league_channel_id": channel_id}).eq("guild_id", self.guild_id).execute()
 
@@ -288,7 +330,6 @@ class RoleSelectView(BaseAdminView):
 
         options = []
         if guild:
-            # Filter first 25 non-default roles
             roles = [r for r in guild.roles if not r.is_default()]
             for role in roles[:25]:
                 options.append(
@@ -338,12 +379,483 @@ class RoleSelectView(BaseAdminView):
             await interaction.followup.send(embed=error_embed("Selected role is not in the active server."), ephemeral=True)
             return
 
-        # Update Supabase
         db = await get_client()
         await db.table("guild_config").update({"announcement_role_id": role_id}).eq("guild_id", self.guild_id).execute()
 
         await interaction.followup.send(f"✅ Announcement role updated to **{role.name}**.", ephemeral=True)
         await show_announcements_menu(interaction, self.guild_id, self.owner_id)
+
+
+class LeagueManagementView(BaseAdminView):
+    def __init__(self, owner_id: int, guild_id: int, has_active_season: bool) -> None:
+        super().__init__(owner_id)
+        self.guild_id = guild_id
+        
+        if has_active_season:
+            self.remove_item(self.start_btn)
+        else:
+            self.remove_item(self.end_btn)
+            self.remove_item(self.kick_btn)
+            self.remove_item(self.force_sim_btn)
+            self.remove_item(self.duration_btn)
+
+    @discord.ui.button(style=discord.ButtonStyle.success, label="🚀 Start Season", custom_id="league_admin_start", row=0)
+    async def start_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        await admin_start_season(interaction, self.guild_id, self.owner_id, self)
+
+    @discord.ui.button(style=discord.ButtonStyle.danger, label="⏹️ End Season", custom_id="league_admin_end", row=0)
+    async def end_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        await admin_end_season(interaction, self.guild_id, self.owner_id, self)
+
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="🥾 Kick Manager", custom_id="league_admin_kick", row=1)
+    async def kick_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await admin_kick_menu(interaction, self.guild_id, self.owner_id, self)
+
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="🎲 Force-Sim Matchday", custom_id="league_admin_sim", row=1)
+    async def force_sim_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        await admin_force_sim(interaction, self.guild_id, self.owner_id, self)
+
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="⏱️ Set Duration", custom_id="league_admin_duration", row=1)
+    async def duration_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await admin_duration_modal(interaction, self)
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="⬅️ Back to Admin Hub", custom_id="league_admin_back", row=2)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await show_admin_hub(interaction, self.guild_id, self.owner_id)
+
+
+class KickManagerSelectView(BaseAdminView):
+    def __init__(self, owner_id: int, parent_view: LeagueManagementView, standings: list[dict]) -> None:
+        super().__init__(owner_id)
+        self.parent_view = parent_view
+
+        options = []
+        for row in standings:
+            if not row.get("is_ai") and row.get("is_active"):
+                options.append(
+                    discord.SelectOption(
+                        label=f"{row['club_name']} ({row['username']})",
+                        value=str(row["discord_id"]),
+                        description=f"GD: {row['goal_difference']}, PTS: {row['points']}"
+                    )
+                )
+
+        if not options:
+            options.append(
+                discord.SelectOption(
+                    label="No active human managers",
+                    value="none",
+                    description="No human manager can be kicked right now."
+                )
+            )
+
+        select = discord.ui.Select(placeholder="Select manager to kick...", options=options)
+        select.callback = self.kick_select_callback
+        self.add_item(select)
+
+        cancel_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Cancel")
+        cancel_btn.callback = self.cancel_callback
+        self.add_item(cancel_btn)
+
+    async def cancel_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        await show_league_management(interaction, self.parent_view.guild_id, self.owner_id)
+
+    async def kick_select_callback(self, interaction: discord.Interaction):
+        val = interaction.data["values"][0]
+        if val == "none":
+            await interaction.response.send_message("No manager selected.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        kicked_id = int(val)
+        await admin_execute_kick(interaction, kicked_id, self.parent_view.guild_id, self.owner_id, self.parent_view)
+
+
+class DurationModal(discord.ui.Modal, title="Set Season Duration"):
+    days = discord.ui.TextInput(
+        label="Duration (in days)",
+        placeholder="e.g. 7",
+        default="7",
+        min_length=1,
+        max_length=3
+    )
+
+    def __init__(self, view: LeagueManagementView) -> None:
+        super().__init__()
+        self.view = view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            val = int(self.days.value)
+            if val <= 0:
+                raise ValueError()
+        except ValueError:
+            await interaction.followup.send(embed=error_embed("Duration must be a positive integer."), ephemeral=True)
+            return
+
+        await admin_execute_set_duration(interaction, val, self.view.guild_id, self.view.owner_id, self.view)
+
+
+# --- LEAGUE ADMIN HELPER FUNCTIONS ---
+
+async def admin_start_season(interaction: discord.Interaction, guild_id: int, owner_id: int, view: LeagueManagementView):
+    db = await get_client()
+    guild = interaction.client.get_guild(guild_id)
+    if not guild:
+        return
+
+    # 1. Fetch registered players in this server's league roster
+    regs_res = await db.table("league_members").select("player_id, players(*)").eq("guild_id", guild_id).execute()
+    regs = regs_res.data or []
+    guild_members = [r["players"] for r in regs if r.get("players")]
+
+    # Must have at least 2 human players to start
+    if len(guild_members) < 2:
+        await interaction.followup.send(
+            embed=error_embed(
+                f"Cannot start season. At least **2 registered managers** must be on the server league roster.\n"
+                f"Current registered members: **{len(guild_members)}**.\n"
+                "Ask players to click `[ 📝 Register ]` in the `/league hub` first!"
+            ),
+            ephemeral=True
+        )
+        return
+
+    # Determine target league size (8, 10, 12, 16)
+    h_count = len(guild_members)
+    if h_count <= 8:
+        target_size = 8
+    elif h_count <= 10:
+        target_size = 10
+    elif h_count <= 12:
+        target_size = 12
+    else:
+        target_size = 16
+
+    # Warning if we exceed 16
+    warning_str = ""
+    if h_count > 16:
+        guild_members = guild_members[:16]
+        h_count = 16
+        warning_str = "⚠️ **Note**: Guild has more than 16 registered managers. Limiting to the first 16.\n\n"
+
+    ai_needed = target_size - h_count
+
+    # Create league row if not exists
+    await db.table("leagues").upsert({
+        "guild_id": guild_id,
+        "name": guild.name
+    }, on_conflict="guild_id").execute()
+
+    league_res = await db.table("leagues").select("id").eq("guild_id", guild_id).maybe_single().execute()
+    if not league_res or not league_res.data:
+        await interaction.followup.send(embed=error_embed("Failed to retrieve league record."), ephemeral=True)
+        return
+    league_id = league_res.data["id"]
+
+    # Determine season number
+    seasons_res = await db.table("league_seasons").select("season_number").eq("league_id", league_id).order("season_number", descending=True).limit(1).execute()
+    next_season_num = 1
+    if seasons_res.data:
+        next_season_num = seasons_res.data[0]["season_number"] + 1
+
+    # Insert season record
+    total_weeks = (target_size - 1) * 2
+    duration_days = 7  # default 7 days
+
+    season_insert = await db.table("league_seasons").insert({
+        "league_id": league_id,
+        "season_number": next_season_num,
+        "status": "active",
+        "current_matchday": 1,
+        "total_matchdays": total_weeks,
+        "duration_days": duration_days,
+        "start_time": datetime.now(timezone.utc).isoformat()
+    }).execute()
+
+    season_id = season_insert.data[0]["id"]
+
+    # Create AI participants
+    ai_participants = []
+    min_p_res = await db.table("players").select("discord_id").order("discord_id", descending=False).limit(1).execute()
+    current_min = min_p_res.data[0]["discord_id"] if min_p_res.data else 0
+    if current_min > 0:
+        current_min = 0
+
+    used_bot_names = set()
+    for i in range(ai_needed):
+        bot_name = random.choice([n for n in BOT_NAMES if n not in used_bot_names])
+        used_bot_names.add(bot_name)
+
+        ai_id = current_min - (i + 1)
+        ai_p = {
+            "discord_id": ai_id,
+            "username": bot_name,
+            "club_name": bot_name,
+            "manager_name": "AI Coach",
+            "is_ai": True,
+            "ai_rating": 60.0
+        }
+        await db.table("players").insert(ai_p).execute()
+        ai_participants.append(ai_p)
+
+    # Compile all participant IDs
+    participants_list = guild_members + ai_participants
+    participant_ids = [p["discord_id"] for p in participants_list]
+
+    # Insert into league_participants
+    for pid in participant_ids:
+        await db.table("league_participants").insert({
+            "season_id": season_id,
+            "player_id": pid
+        }).execute()
+
+    # Scale AI OVRs
+    await db.rpc("scale_season_ai_opponents", {"p_season_id": season_id}).execute()
+
+    # Generate fixtures
+    generated = generate_round_robin_fixtures([str(pid) for pid in participant_ids], double_round_robin=True)
+
+    now = datetime.now(timezone.utc)
+    window_duration = timedelta(days=duration_days) / total_weeks
+
+    for gf in generated:
+        w_start = now + (gf.week - 1) * window_duration
+        w_end = now + gf.week * window_duration
+
+        fixture_data = {
+            "season_id": season_id,
+            "matchday": gf.week,
+            "home_team_id": int(gf.home_club_id),
+            "away_team_id": int(gf.away_club_id),
+            "window_start": w_start.isoformat(),
+            "window_end": w_end.isoformat(),
+            "is_played": False
+        }
+        await db.table("league_fixtures").insert(fixture_data).execute()
+
+    # Update config
+    await db.table("guild_config").update({"league_status": "active"}).eq("guild_id", guild_id).execute()
+
+    await interaction.followup.send(
+        embed=success_embed(
+            f"{warning_str}🏆 **Season {next_season_num} Started!**\n"
+            f"Total Teams: **{target_size}** (Humans: {h_count}, AIs: {ai_needed})\n"
+            f"Matchdays: **{total_weeks}** (each lasting {duration_days * 24 / total_weeks:.1f} hours)\n"
+            "Fixtures and standings generated successfully."
+        )
+    )
+
+    # Post Announcement
+    config_res = await db.table("guild_config").select("league_channel_id").eq("guild_id", guild_id).maybe_single().execute()
+    chan_id = config_res.data.get("league_channel_id") if config_res.data else None
+    if chan_id:
+        channel = guild.get_channel(chan_id)
+        if channel:
+            ann_embed = discord.Embed(
+                title=f"🏆 ElevenBoss League: Season {next_season_num} Begins!",
+                description=(
+                    f"The seasonal league has officially started! **{target_size} teams** will battle over "
+                    f"**{total_weeks} matchdays** for glory.\n\n"
+                    f"Check `/league hub` to view standings and play your fixtures!"
+                ),
+                color=0x00FF87
+            )
+            await channel.send(embed=ann_embed)
+
+    await show_league_management(interaction, guild_id, owner_id)
+
+
+async def admin_end_season(interaction: discord.Interaction, guild_id: int, owner_id: int, view: LeagueManagementView):
+    db = await get_client()
+    guild = interaction.client.get_guild(guild_id)
+    if not guild:
+        return
+
+    league_res = await db.table("leagues").select("id").eq("guild_id", guild_id).maybe_single().execute()
+    if not league_res or not league_res.data:
+        await interaction.followup.send(embed=error_embed("No league found for this server."), ephemeral=True)
+        return
+
+    season_res = await db.table("league_seasons").select("*").eq("league_id", league_res.data["id"]).eq("status", "active").maybe_single().execute()
+    season = season_res.data if season_res else None
+    if not season:
+        await interaction.followup.send(embed=error_embed("No active season to end."), ephemeral=True)
+        return
+
+    await db.table("league_seasons").update({
+        "status": "completed",
+        "end_time": datetime.now(timezone.utc).isoformat()
+    }).eq("id", season["id"]).execute()
+
+    await db.table("guild_config").update({"league_status": "inactive"}).eq("guild_id", guild_id).execute()
+
+    standings = await fetch_standings(db, season["id"])
+    winner = standings[0]["club_name"] if standings else "N/A"
+
+    await interaction.followup.send(embed=success_embed(f"⏹️ **Season {season['season_number']} ended.** Standings finalized."))
+
+    config_res = await db.table("guild_config").select("league_channel_id").eq("guild_id", guild_id).maybe_single().execute()
+    chan_id = config_res.data.get("league_channel_id") if config_res.data else None
+    if chan_id:
+        channel = guild.get_channel(chan_id)
+        if channel:
+            ann_embed = discord.Embed(
+                title=f"🏁 ElevenBoss League: Season {season['season_number']} Concluded!",
+                description=f"Congratulations to the champions **{winner}**! 🏆\n\n**Final Top 3:**\n",
+                color=0xFFCC00
+            )
+            for idx, row in enumerate(standings[:3], 1):
+                ann_embed.description += f"**{idx}. {row['club_name']}** — {row['points']} pts (GD: {row['goal_difference']})\n"
+            await channel.send(embed=ann_embed)
+
+    await show_league_management(interaction, guild_id, owner_id)
+
+
+async def admin_kick_menu(interaction: discord.Interaction, guild_id: int, owner_id: int, admin_view: LeagueManagementView):
+    db = await get_client()
+    league_res = await db.table("leagues").select("id").eq("guild_id", guild_id).maybe_single().execute()
+    if not league_res or not league_res.data:
+        await interaction.followup.send(embed=error_embed("No league found for this server."), ephemeral=True)
+        return
+    season_res = await db.table("league_seasons").select("*").eq("league_id", league_res.data["id"]).eq("status", "active").maybe_single().execute()
+    season = season_res.data if season_res else None
+    if not season:
+        await interaction.followup.send(embed=error_embed("No active season found."), ephemeral=True)
+        return
+
+    standings = await fetch_standings(db, season["id"])
+
+    embed = discord.Embed(
+        title="🥾 Kick Inactive Manager",
+        description="Select a human manager to kick. Kicking a manager turns their remaining fixtures into an AI Legacy club match.",
+        color=0xFF3333
+    )
+    view = KickManagerSelectView(owner_id, admin_view, standings)
+    await interaction.edit_original_response(embed=embed, view=view)
+
+
+async def admin_execute_kick(interaction: discord.Interaction, kicked_id: int, guild_id: int, owner_id: int, admin_view: LeagueManagementView):
+    db = await get_client()
+    league_res = await db.table("leagues").select("id").eq("guild_id", guild_id).maybe_single().execute()
+    if not league_res or not league_res.data:
+        await interaction.followup.send(embed=error_embed("No league found for this server."), ephemeral=True)
+        return
+    season_res = await db.table("league_seasons").select("*").eq("league_id", league_res.data["id"]).eq("status", "active").maybe_single().execute()
+    season = season_res.data if season_res else None
+    if not season:
+        await interaction.followup.send(embed=error_embed("No active season found."), ephemeral=True)
+        return
+
+    await db.table("league_participants").update({"is_active": False}).eq("season_id", season["id"]).eq("player_id", kicked_id).execute()
+
+    min_p_res = await db.table("players").select("discord_id").order("discord_id", descending=False).limit(1).execute()
+    current_min = min_p_res.data[0]["discord_id"] if min_p_res.data else 0
+    if current_min > 0:
+        current_min = 0
+    ai_id = current_min - 1
+
+    user_p_res = await db.table("players").select("club_name").eq("discord_id", kicked_id).maybe_single().execute()
+    old_club_name = user_p_res.data["club_name"] if user_p_res.data else "Kicked Club"
+    ai_club_name = f"AI Legacy ({old_club_name})"
+
+    ai_p = {
+        "discord_id": ai_id,
+        "username": ai_club_name,
+        "club_name": ai_club_name,
+        "manager_name": "AI Legacy Coach",
+        "is_ai": True,
+        "ai_rating": 65.0
+    }
+    await db.table("players").insert(ai_p).execute()
+
+    await db.table("league_participants").insert({
+        "season_id": season["id"],
+        "player_id": ai_id
+    }).execute()
+
+    await db.table("league_fixtures").update({"home_team_id": ai_id}).eq("season_id", season["id"]).eq("home_team_id", kicked_id).eq("is_played", False).execute()
+    await db.table("league_fixtures").update({"away_team_id": ai_id}).eq("season_id", season["id"]).eq("away_team_id", kicked_id).eq("is_played", False).execute()
+
+    await db.rpc("scale_season_ai_opponents", {"p_season_id": season["id"]}).execute()
+
+    await interaction.followup.send(embed=success_embed(f"🥾 **Manager kicked successfully.** Remaining unplayed fixtures swapped to **{ai_club_name}**."))
+    await show_league_management(interaction, guild_id, owner_id)
+
+
+async def admin_force_sim(interaction: discord.Interaction, guild_id: int, owner_id: int, admin_view: LeagueManagementView):
+    db = await get_client()
+    league_res = await db.table("leagues").select("id").eq("guild_id", guild_id).maybe_single().execute()
+    if not league_res or not league_res.data:
+        await interaction.followup.send(embed=error_embed("No league found for this server."), ephemeral=True)
+        return
+    season_res = await db.table("league_seasons").select("*").eq("league_id", league_res.data["id"]).eq("status", "active").maybe_single().execute()
+    season = season_res.data if season_res else None
+    if not season:
+        await interaction.followup.send(embed=error_embed("No active season found."), ephemeral=True)
+        return
+
+    curr = season["current_matchday"]
+
+    fixtures_res = await db.table("league_fixtures").select("*").eq("season_id", season["id"]).eq("matchday", curr).eq("is_played", False).execute()
+    fixtures = fixtures_res.data or []
+
+    if not fixtures:
+        await interaction.followup.send(embed=error_embed(f"No pending fixtures on Matchday {curr} to force-sim."), ephemeral=True)
+        return
+
+    for f in fixtures:
+        await db.table("league_fixtures").update({"window_end": datetime.now(timezone.utc).isoformat()}).eq("id", f["id"]).execute()
+
+    simulated = await auto_sim_expired_fixtures(db, season["id"])
+
+    await interaction.followup.send(embed=success_embed(f"🎲 **Force-simulated {simulated} matches** for Matchday {curr}."))
+    await show_league_management(interaction, guild_id, owner_id)
+
+
+async def admin_duration_modal(interaction: discord.Interaction, admin_view: LeagueManagementView):
+    modal = DurationModal(admin_view)
+    await interaction.response.send_modal(modal)
+
+
+async def admin_execute_set_duration(interaction: discord.Interaction, days: int, guild_id: int, owner_id: int, admin_view: LeagueManagementView):
+    db = await get_client()
+    league_res = await db.table("leagues").select("id").eq("guild_id", guild_id).maybe_single().execute()
+    if not league_res or not league_res.data:
+        await interaction.followup.send(embed=error_embed("No league found for this server."), ephemeral=True)
+        return
+    season_res = await db.table("league_seasons").select("*").eq("league_id", league_res.data["id"]).eq("status", "active").maybe_single().execute()
+    season = season_res.data if season_res else None
+    if not season:
+        await interaction.followup.send(embed=error_embed("No active season found."), ephemeral=True)
+        return
+
+    await db.table("league_seasons").update({"duration_days": days}).eq("id", season["id"]).execute()
+
+    start_time = datetime.fromisoformat(season["start_time"].replace("Z", "+00:00"))
+    total_weeks = season["total_matchdays"]
+    window_duration = timedelta(days=days) / total_weeks
+
+    fixtures_res = await db.table("league_fixtures").select("*").eq("season_id", season["id"]).eq("is_played", False).execute()
+    fixtures = fixtures_res.data or []
+
+    for f in fixtures:
+        w_start = start_time + (f["matchday"] - 1) * window_duration
+        w_end = start_time + f["matchday"] * window_duration
+        await db.table("league_fixtures").update({
+            "window_start": w_start.isoformat(),
+            "window_end": w_end.isoformat()
+        }).eq("id", f["id"]).execute()
+
+    await interaction.followup.send(embed=success_embed(f"⏱️ **Season duration updated to {days} days.** Matchday windows recalculated."))
+    await show_league_management(interaction, guild_id, owner_id)
 
 
 # --- COG INTERFACE ---
@@ -356,7 +868,6 @@ class AdminCog(commands.Cog):
     @app_commands.dm_only()
     @app_commands.check(is_owner)
     async def admin(self, interaction: discord.Interaction) -> None:
-        # Check if deferred
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
         try:
