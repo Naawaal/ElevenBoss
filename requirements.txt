@@ -34,6 +34,8 @@ iniconfig==2.3.0
 Mako==1.3.12
 MarkupSafe==3.0.3
 -e packages/match_engine
+-e packages/player_engine
+-e packages/training
 multidict==6.7.1
 packaging==26.2
 pillow==12.2.0
