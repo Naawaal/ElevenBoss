@@ -97,8 +97,10 @@ class ChallengeView(discord.ui.View):
     @discord.ui.button(style=discord.ButtonStyle.success, label="✅ Accept", custom_id="challenge_accept")
     async def accept_callback(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.stop()
-        await interaction.response.defer(ephemeral=False)
-        await interaction.message.edit(content=f"🤝 Challenge accepted by {self.opponent.mention}! Match is preparing...", view=None)
+        await interaction.response.edit_message(
+            content=f"🤝 Challenge accepted by {self.opponent.mention}! Match is preparing...",
+            view=None
+        )
         
         asyncio.create_task(
             self.cog.start_friendly_match(
