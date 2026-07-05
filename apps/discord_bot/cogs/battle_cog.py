@@ -218,8 +218,10 @@ class StandardMatchHandler(IMatchOutputHandler):
             asyncio.create_task(archive_thread_after_delay(self.thread, 180.0))
 
 class LeagueMatchHandler(IMatchOutputHandler):
-    def __init__(self, output_thread: discord.Thread) -> None:
+    def __init__(self, output_thread: discord.Thread, fixture_id: str = None, season_id: str = None) -> None:
         self.output_thread = output_thread
+        self.fixture_id = fixture_id
+        self.season_id = season_id
         self.ticker_msg = None
 
     async def initialize(self, interaction: discord.Interaction | None, home_name: str, away_name: str, matchday: int = None) -> discord.abc.Messageable:
@@ -299,7 +301,7 @@ class LeagueMatchHandler(IMatchOutputHandler):
             home_pts = 3 if home_result_str == "win" else (1 if home_result_str == "draw" else 0)
             rewards_text += f"🏡 **{home_name}**: `🪙 +{home_coins} coins`, `🏆 +{home_pts} pts`\n"
         if away_p and not away_p["is_ai"]:
-            away_result_str = "win" if state.away_score > state.home_score else ("draw" if state.home_score == state.away_score else "loss")
+            away_result_str = "win" if state.away_score > state.home_score else ("draw" if state.away_score == state.home_score else "loss")
             away_coins = 150 if away_result_str == "win" else (50 if away_result_str == "draw" else 0)
             away_pts = 3 if away_result_str == "win" else (1 if away_result_str == "draw" else 0)
             rewards_text += f"✈️ **{away_name}**: `🪙 +{away_coins} coins`, `🏆 +{away_pts} pts`\n"
@@ -325,6 +327,120 @@ class LeagueMatchHandler(IMatchOutputHandler):
                 congrat_ping = f"{ping_str} - A hard-fought draw!"
 
         await self.output_thread.send(content=congrat_ping if congrat_ping else None, embed=press_embed)
+
+        # 1. Write to match_logs
+        if self.fixture_id:
+            try:
+                box_score = {
+                    "home_goals": state.home_score,
+                    "away_goals": state.away_score,
+                    "possession_home": result.possession_home,
+                    "possession_away": result.possession_away,
+                    "shots_home": result.shots_home,
+                    "shots_away": result.shots_away,
+                    "motm": motm
+                }
+                await db.table("match_logs").upsert({
+                    "fixture_id": self.fixture_id,
+                    "box_score": box_score,
+                    "key_events": result.key_events
+                }).execute()
+                logger.info(f"[Trace] [finalize_match] Wrote match log for fixture {self.fixture_id}")
+            except Exception as le:
+                logger.error(f"Failed to write match logs: {le}", exc_info=True)
+
+        # 2. Write to player_season_stats (Human managers only)
+        if self.season_id:
+            try:
+                h_id = int(home_team_id)
+                a_id = int(away_team_id)
+                manager_ids = []
+                if home_p and not home_p["is_ai"]:
+                    manager_ids.append(h_id)
+                if away_p and not away_p["is_ai"]:
+                    manager_ids.append(a_id)
+
+                if manager_ids:
+                    # Resolve MOTM owner
+                    is_home_motm = False
+                    is_away_motm = False
+                    try:
+                        assignments_res = await db.table("squad_assignments").select("discord_id, player_cards(name)").in_("discord_id", manager_ids).execute()
+                        if assignments_res.data:
+                            for assign in assignments_res.data:
+                                card = assign.get("player_cards")
+                                if card and card.get("name") == motm:
+                                    if assign["discord_id"] == h_id:
+                                        is_home_motm = True
+                                    elif assign["discord_id"] == a_id:
+                                        is_away_motm = True
+                                    break
+                    except Exception as s_err:
+                        logger.warning(f"Could not resolve MOTM owner: {s_err}")
+
+                    existing_res = await db.table("player_season_stats").select("*").eq("season_id", self.season_id).in_("player_id", manager_ids).execute()
+                    existing_data = {r["player_id"]: r for r in (existing_res.data or [])}
+
+                    stats_to_upsert = []
+
+                    if home_p and not home_p["is_ai"]:
+                        old = existing_data.get(h_id, {
+                            "goals": 0, "assists": 0, "clean_sheets": 0, "motm_awards": 0, "matches_played": 0, "average_rating": 6.00
+                        })
+                        new_goals = old["goals"] + state.home_score
+                        home_assists = sum(1 for ev in result.key_events if ev.get("type") == "GOAL" and ev.get("team") == home_name and "assister" in ev)
+                        new_assists = old["assists"] + home_assists
+                        is_cs = 1 if state.away_score == 0 else 0
+                        new_cs = old["clean_sheets"] + is_cs
+                        new_motm = old["motm_awards"] + (1 if is_home_motm else 0)
+                        new_matches = old["matches_played"] + 1
+                        
+                        match_rating = max(4.0, min(10.0, 6.0 + (state.home_score * 0.8) + (1.0 if is_cs else 0) - (state.away_score * 0.5)))
+                        new_rating = round(((float(old["average_rating"]) * old["matches_played"]) + match_rating) / new_matches, 2)
+
+                        stats_to_upsert.append({
+                            "player_id": h_id,
+                            "season_id": self.season_id,
+                            "goals": new_goals,
+                            "assists": new_assists,
+                            "clean_sheets": new_cs,
+                            "motm_awards": new_motm,
+                            "matches_played": new_matches,
+                            "average_rating": new_rating
+                        })
+
+                    if away_p and not away_p["is_ai"]:
+                        old = existing_data.get(a_id, {
+                            "goals": 0, "assists": 0, "clean_sheets": 0, "motm_awards": 0, "matches_played": 0, "average_rating": 6.00
+                        })
+                        new_goals = old["goals"] + state.away_score
+                        away_assists = sum(1 for ev in result.key_events if ev.get("type") == "GOAL" and ev.get("team") == away_name and "assister" in ev)
+                        new_assists = old["assists"] + away_assists
+                        is_cs = 1 if state.home_score == 0 else 0
+                        new_cs = old["clean_sheets"] + is_cs
+                        new_motm = old["motm_awards"] + (1 if is_away_motm else 0)
+                        new_matches = old["matches_played"] + 1
+                        
+                        match_rating = max(4.0, min(10.0, 6.0 + (state.away_score * 0.8) + (1.0 if is_cs else 0) - (state.home_score * 0.5)))
+                        new_rating = round(((float(old["average_rating"]) * old["matches_played"]) + match_rating) / new_matches, 2)
+
+                        stats_to_upsert.append({
+                            "player_id": a_id,
+                            "season_id": self.season_id,
+                            "goals": new_goals,
+                            "assists": new_assists,
+                            "clean_sheets": new_cs,
+                            "motm_awards": new_motm,
+                            "matches_played": new_matches,
+                            "average_rating": new_rating
+                        })
+
+                    if stats_to_upsert:
+                        print(f"[Trace] Upserting player stats: {stats_to_upsert}")
+                        await db.table("player_season_stats").upsert(stats_to_upsert).execute()
+                        logger.info(f"[Trace] [finalize_match] Upserted player_season_stats for season {self.season_id}")
+            except Exception as se:
+                logger.error(f"Failed to update player season stats: {se}", exc_info=True)
 
 async def run_league_match_simulation(
     bot: commands.Bot,
@@ -415,6 +531,7 @@ async def run_league_match_simulation(
     await handler.start_match(target, home_name, away_name, touchline_view)
 
     ticker_history: list[str] = []
+    key_events_list: list[dict] = []
     async for ev in stream_match(state, home_squad, away_squad, home_name, away_name):
         variables = {"actor": ev["actor"], "team": ev["team"]}
         comm = commentary_engine.get_commentary(ev["type"], state.context_tags, variables)
@@ -423,13 +540,27 @@ async def run_league_match_simulation(
         
         emoji_map = {
             "KICKOFF": "🟢", "GOAL": "⚽", "MISS": "❌",
-            "CHANCE": "🎯", "FOUL": "🟨", "FULL_TIME": "🏁"
+            "CHANCE": "🎯", "FOUL": "💥", "YELLOW_CARD": "🟨",
+            "INJURY": "🩹", "FULL_TIME": "🏁"
         }
         emo = emoji_map.get(ev["type"], "⏱️")
         
         ticker_history.append(f"{emo} **{ev['minute']}'** - {text}")
         recent_ticker = ticker_history[-5:]
         
+        # Accumulate key events
+        if ev["type"] in ["KICKOFF", "GOAL", "YELLOW_CARD", "INJURY", "FULL_TIME"]:
+            event_entry = {
+                "minute": ev["minute"],
+                "type": ev["type"],
+                "actor": ev["actor"],
+                "team": ev["team"],
+                "text": text
+            }
+            if "assister" in ev:
+                event_entry["assister"] = ev["assister"]
+            key_events_list.append(event_entry)
+            
         await handler.update_ticker(ev, state, recent_ticker, touchline_view)
         
         if ev["type"] == "FULL_TIME":
@@ -514,7 +645,8 @@ async def run_league_match_simulation(
         shots_away=state.away_score + random.randint(3, 8),
         motm=motm,
         coins_earned=home_coins if active_player_id == fixture["home_team_id"] else away_coins,
-        points_earned=home_pts if active_player_id == fixture["home_team_id"] else away_pts
+        points_earned=home_pts if active_player_id == fixture["home_team_id"] else away_pts,
+        key_events=key_events_list
     )
 
     active_earned = home_coins if active_player_id == fixture["home_team_id"] else away_coins
@@ -909,6 +1041,16 @@ class BattleCog(commands.Cog):
                         except Exception as pe:
                             logger.warning(f"Failed to pin introductory message in thread {thread.id}: {pe}")
                         
+                        try:
+                            everyone_role = announcement_channel.guild.default_role
+                            overwrites = announcement_channel.overwrites_for(everyone_role)
+                            if overwrites.add_reactions != True:
+                                overwrites.add_reactions = True
+                                await announcement_channel.set_permissions(everyone_role, overwrite=overwrites)
+                                logger.info(f"Enabled add_reactions permissions for @everyone on parent channel {announcement_channel.id}")
+                        except Exception as pe:
+                            logger.warning(f"Could not adjust parent channel reaction permissions: {pe}")
+                        
                         logger.info(f"[Trace] [execute_league_match] Saving thread ID {thread.id} to guild_config...")
                         await db.table("guild_config").update({"league_updates_thread_id": thread.id}).eq("guild_id", guild_id).execute()
                         logger.info(f"[Trace] [execute_league_match] Thread ID {thread.id} successfully confirmed in DB.")
@@ -922,7 +1064,7 @@ class BattleCog(commands.Cog):
             logger.info(f"[Trace] [execute_league_match] Released lock for guild {guild_id}.")
 
             # Instantiate LeagueMatchHandler
-            handler = LeagueMatchHandler(thread)
+            handler = LeagueMatchHandler(thread, fixture_id=fixture["id"], season_id=fixture["season_id"])
             
             await interaction.followup.send(embed=success_embed(f"⚔️ **Match has kicked off!** Follow commentary in {thread.mention}."), ephemeral=True)
 

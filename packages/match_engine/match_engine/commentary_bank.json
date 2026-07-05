@@ -85,5 +85,29 @@
       "urgency": "routine",
       "text": "Full time! A hard-fought draw between both sides."
     }
+  ],
+  "YELLOW_CARD": [
+    {
+      "tags": ["generic"],
+      "urgency": "routine",
+      "text": "Yellow Card! {actor} goes into the book after a reckless challenge."
+    },
+    {
+      "tags": ["generic"],
+      "urgency": "routine",
+      "text": "Booking! The referee pulls out a yellow card for {actor}."
+    }
+  ],
+  "INJURY": [
+    {
+      "tags": ["generic"],
+      "urgency": "routine",
+      "text": "Injury! {actor} goes down clutching their leg and needs medical attention."
+    },
+    {
+      "tags": ["generic"],
+      "urgency": "routine",
+      "text": "Stoppage in play as {actor} is helped off the pitch with an injury."
+    }
   ]
 }

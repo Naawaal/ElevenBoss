@@ -455,3 +455,39 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AND** post the detailed Season Summary and awards embed to the League Journal thread.
 - **AND** wait exactly 30 seconds before renaming the thread to `🏆-season-{season_number}-concluded`, locking it, and archiving it.
 - **AND** reset `league_updates_thread_id` to NULL in `guild_config` so the next season gets a fresh journal thread.
+
+---
+
+## 17. League System Enhancements (Stats, Logs, & UI)
+
+### US-17: Detailed Player Statistics & Match History logs
+
+> **As a** league participant manager,
+> **I want** to view detailed season stats (goals, assists, clean sheets, MOTM awards) and a historical Match Center box score timeline,
+> **So that** I have full visibility of my team's performance and past matches.
+
+**Acceptance Criteria:**
+
+#### AC-17a: Database Schema Extensions
+- **GIVEN** the migration is run,
+- **THEN** a `match_logs` table must store the raw JSON box score and key events (goals, cards, injuries) for each league fixture.
+- **AND** a `player_season_stats` table must store individual player performance statistics (goals, assists, clean sheets, MOTM awards, average rating) on a per-season basis.
+
+#### AC-17b: Match Engine Stat Aggregation & finalization
+- **GIVEN** a league match is simulated,
+- **THEN** the match engine must track and accumulate a chronological list of `Key Events` (goals, cards, injuries) during the game loop.
+- **AND** when the match concludes, `LeagueMatchHandler.finalize_match()` must write the box score and timeline to `match_logs`.
+- **AND** parse goalscorers and the MOTM to atomic upsert/increment their records in `player_season_stats`.
+
+#### AC-17c: /league hub Redesign & Sub-views
+- **GIVEN** a user runs `/league hub`,
+- **THEN** the main dashboard embed must show a visual indicator of the active matchday (e.g. `🟢 Matchday 4/14 Active`).
+- **AND** add the following interactive sub-views:
+  - **`[ 📊 Standings ]`**: Clean, formatted standings table.
+  - **`[ 👟 Player Stats ]`**: Renders leaderboards for Top Goals (Golden Boot), Top Assists, and Clean Sheets.
+  - **`[ 📺 Match Center ]`**: Displays a select menu listing the server's completed fixtures. Selecting a fixture renders a detailed "Box Score Embed" showing the score, team stats, MOTM, and the chronological events timeline.
+
+#### AC-17d: Announcement Permission Policy
+- **GIVEN** a match result is posted to the centralized `#league-journal` thread,
+- **THEN** the thread permissions must allow all users to add emoji reactions (`Add Reactions`), even if `Send Messages` is disabled for non-admins.
+

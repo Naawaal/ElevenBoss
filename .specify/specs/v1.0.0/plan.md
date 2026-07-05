@@ -651,6 +651,47 @@ CREATE TABLE public.player_xp_log (
 4. Spawns a background task to wait 30 seconds, then rename/lock/archive the thread.
 5. Resets `league_updates_thread_id` in `guild_config` to NULL.
 
+---
+
+## 17. ElevenBoss v2.1 Architecture (League Stats, Logs, & UI)
+
+### A. Database Schema (`009_league_stats.sql` migration)
+* **`match_logs`**:
+  - `fixture_id` (UUID, PRIMARY KEY, references `league_fixtures(id)` on delete cascade)
+  - `box_score` (JSONB) - stores `{possession_home, possession_away, shots_home, shots_away, motm, home_goals, away_goals}`
+  - `key_events` (JSONB) - list of events: `[{"minute": int, "type": str, "actor": str, "team": str}]`
+* **`player_season_stats`**:
+  - `player_id` (BIGINT, references `players(discord_id)` on delete cascade)
+  - `season_id` (UUID, references `league_seasons(id)` on delete cascade)
+  - `goals` (INTEGER, default 0)
+  - `assists` (INTEGER, default 0)
+  - `clean_sheets` (INTEGER, default 0)
+  - `motm_awards` (INTEGER, default 0)
+  - `average_rating` (NUMERIC(4,2), default 6.00)
+  - PRIMARY KEY `(player_id, season_id)`
+  - Indexes on `(season_id, goals)`, `(season_id, assists)`, `(season_id, clean_sheets)` for high-performance leaderboards.
+
+### B. Match Engine Enhancements (`match_engine`)
+* The simulation engine will return a chronological sequence of all key match events (goals, cards, injuries) within `MatchResult`.
+* In `LeagueMatchHandler.finalize_match()`, write the box score and key events to `match_logs`.
+* Increment participant player stats dynamically:
+  - Increment goals for goalscoring players.
+  - Increment assists for assisting players.
+  - Increment clean sheets for players in squads that conceded 0 goals.
+  - Increment MOTM awards for the designated player.
+  - Update `average_rating`.
+
+### C. Redesigned League Hub (`league_cog.py`)
+* The main dashboard displays active season/matchday metadata: `"🟢 Season [N] - Matchday [X]/[Y] Active"`.
+* Sub-Views:
+  - **`[ 📊 Standings ]`**: Displays the current league table.
+  - **`[ 👟 Player Stats ]`**: Renders three distinct leaderboards (Top Scorers, Top Assists, Clean Sheets) for the current active season.
+  - **`[ 📺 Match Center ]`**: Displays a select menu listing the completed fixtures. Selecting a fixture renders a rich "Match Log / Box Score" embed containing the timeline and stats.
+
+### D. Discord Permissions
+* Modify thread creation / setup in `execute_league_match` and `auto_sim_expired_fixtures` to check and adjust permission overwrites if the bot has permission management, setting `add_reactions=True` for `@everyone`.
+
+
 
 
 

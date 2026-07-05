@@ -188,6 +188,16 @@ async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> in
                 except Exception as pe:
                     logger.warning(f"Failed to pin introductory message in thread {thread.id}: {pe}")
                 
+                try:
+                    everyone_role = announcement_channel.guild.default_role
+                    overwrites = announcement_channel.overwrites_for(everyone_role)
+                    if overwrites.add_reactions != True:
+                        overwrites.add_reactions = True
+                        await announcement_channel.set_permissions(everyone_role, overwrite=overwrites)
+                        logger.info(f"Enabled add_reactions permissions for @everyone on parent channel {announcement_channel.id}")
+                except Exception as pe:
+                    logger.warning(f"Could not adjust parent channel reaction permissions: {pe}")
+
                 logger.info(f"[Trace] [auto_sim_expired_fixtures] Saving thread ID {thread.id} to guild_config...")
                 await db.table("guild_config").update({"league_updates_thread_id": thread.id}).eq("guild_id", guild_id).execute()
                 logger.info(f"[Trace] [auto_sim_expired_fixtures] Thread ID {thread.id} successfully confirmed in DB.")
@@ -209,7 +219,7 @@ async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> in
         window_end = datetime.fromisoformat(window_end_val.replace("Z", "+00:00"))
         if now > window_end:
             try:
-                handler = LeagueMatchHandler(thread)
+                handler = LeagueMatchHandler(thread, fixture_id=f["id"], season_id=f["season_id"])
                 await run_league_match_simulation(
                     bot=bot,
                     db=db,
@@ -292,7 +302,7 @@ class LeagueHubView(BaseLeagueView):
         await interaction.response.defer(ephemeral=True)
         await self.cog.player_register_league(interaction)
 
-    @discord.ui.button(style=discord.ButtonStyle.primary, label="📋 View Table", custom_id="hub_view_table_btn", row=0)
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="📊 Standings", custom_id="hub_view_table_btn", row=0)
     async def view_table_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         await self.cog.show_standings(interaction, self)
@@ -302,10 +312,16 @@ class LeagueHubView(BaseLeagueView):
         await interaction.response.defer()
         await self.cog.show_fixtures(interaction, self)
 
-    @discord.ui.button(style=discord.ButtonStyle.primary, label="🏆 Season Stats", custom_id="hub_season_stats_btn", row=0)
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="👟 Player Stats", custom_id="hub_season_stats_btn", row=0)
     async def season_stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         await self.cog.show_stats(interaction, self)
+
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="📺 Match Center", custom_id="hub_match_center_btn", row=1)
+    async def match_center_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await self.cog.show_match_center(interaction, self)
+
 
 
 class StandingsView(BaseLeagueView):
@@ -353,6 +369,39 @@ class StatsView(BaseLeagueView):
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         await self.cog.show_hub(interaction, self.parent_view)
+
+
+class MatchCenterSelect(discord.ui.Select):
+    def __init__(self, options: list[discord.SelectOption]) -> None:
+        super().__init__(
+            placeholder="Select a completed match to view box score...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="match_center_fixture_select"
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        fixture_id = self.values[0]
+        view: MatchCenterView = self.view
+        await view.cog.show_box_score(interaction, fixture_id, view)
+
+
+class MatchCenterView(BaseLeagueView):
+    def __init__(self, cog: LeagueCog, owner_id: int, parent_view: LeagueHubView, select_options: list[discord.SelectOption]) -> None:
+        super().__init__(owner_id)
+        self.cog = cog
+        self.parent_view = parent_view
+        
+        if select_options:
+            self.add_item(MatchCenterSelect(select_options))
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="⬅️ Back to Hub", custom_id="match_center_back", row=1)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await self.cog.show_hub(interaction, self.parent_view)
+
 
 
 # --- COG CLASS ---
@@ -416,6 +465,138 @@ class LeagueCog(commands.Cog):
 
         embed = await self.build_hub_embed(interaction, league, season)
         await interaction.edit_original_response(embed=embed, view=view)
+
+    async def show_match_center(self, interaction: discord.Interaction, hub_view: LeagueHubView):
+        db = await get_client()
+        league_res = await db.table("leagues").select("id").eq("guild_id", hub_view.guild_id).maybe_single().execute()
+        if not league_res or not league_res.data:
+            await interaction.edit_original_response(embed=error_embed("No league configured for this server."), view=hub_view)
+            return
+            
+        season_res = await db.table("league_seasons").select("*").eq("league_id", league_res.data["id"]).eq("status", "active").maybe_single().execute()
+        season = season_res.data if season_res else None
+        if not season:
+            await interaction.edit_original_response(embed=error_embed("No active league season."), view=hub_view)
+            return
+
+        # Fetch completed fixtures for this season
+        fixtures_res = await db.table("league_fixtures").select("*, home:players!league_fixtures_home_team_id_fkey(*), away:players!league_fixtures_away_team_id_fkey(*)").eq("season_id", season["id"]).eq("is_played", True).execute()
+        completed = fixtures_res.data or []
+
+        user_matches = []
+        global_matches = []
+        user_id = interaction.user.id
+        
+        for f in completed:
+            if user_id in [f["home_team_id"], f["away_team_id"]]:
+                user_matches.append(f)
+            else:
+                global_matches.append(f)
+
+        # Sort global matches by played_at descending
+        global_matches.sort(key=lambda x: x.get("played_at") or "", reverse=True)
+        global_subset = global_matches[:10]
+        
+        # Combine and remove duplicates
+        combined = user_matches + [m for m in global_subset if m["id"] not in [u["id"] for u in user_matches]]
+        combined.sort(key=lambda x: (x.get("matchday") or 0, x.get("played_at") or ""), reverse=True)
+        
+        dropdown_list = combined[:25]
+
+        select_options = []
+        for f in dropdown_list:
+            home_name = f["home"]["club_name"] if f.get("home") else "Home Team"
+            away_name = f["away"]["club_name"] if f.get("away") else "Away Team"
+            label = f"Matchday {f['matchday']}: {home_name} vs {away_name}"
+            if len(label) > 100:
+                label = label[:97] + "..."
+            description = f"Score: {f['home_score']} - {f['away_score']}"
+            select_options.append(discord.SelectOption(
+                label=label,
+                value=f["id"],
+                description=description
+            ))
+
+        embed = discord.Embed(
+            title="📺 League Match Center",
+            description=(
+                "Select a completed fixture from the dropdown below to view its statistics, "
+                "box score, and events timeline.\n\n"
+                f"Showing **{len(select_options)}** completed matches."
+            ),
+            color=0x00FF87
+        )
+        if not select_options:
+            embed.description = "No completed matches are available to view yet in this season."
+
+        view = MatchCenterView(self, interaction.user.id, hub_view, select_options)
+        await interaction.edit_original_response(embed=embed, view=view)
+        view.message = hub_view.message
+
+    async def show_box_score(self, interaction: discord.Interaction, fixture_id: str, view: MatchCenterView):
+        db = await get_client()
+        fixture_res = await db.table("league_fixtures").select("*, home:players!league_fixtures_home_team_id_fkey(*), away:players!league_fixtures_away_team_id_fkey(*)").eq("id", fixture_id).maybe_single().execute()
+        f = fixture_res.data if fixture_res else None
+        if not f:
+            await interaction.followup.send(embed=error_embed("Fixture not found."), ephemeral=True)
+            return
+
+        log_res = await db.table("match_logs").select("*").eq("fixture_id", fixture_id).maybe_single().execute()
+        log = log_res.data if log_res else None
+        
+        home_name = f["home"]["club_name"] if f.get("home") else "Home Team"
+        away_name = f["away"]["club_name"] if f.get("away") else "Away Team"
+
+        embed = discord.Embed(
+            title=f"📺 Match Center Box Score",
+            color=0x00FF87
+        )
+        embed.add_field(
+            name="🏟️ Final Score",
+            value=f"### **{home_name}** `{f['home_score']} - {f['away_score']}` **{away_name}**\n*Matchday {f['matchday']}*",
+            inline=False
+        )
+
+        if log:
+            box = log.get("box_score") or {}
+            events = log.get("key_events") or []
+            
+            embed.add_field(
+                name="📊 Match Statistics",
+                value=(
+                    f"**Possession**: {box.get('possession_home', 50)}% - {box.get('possession_away', 50)}%\n"
+                    f"**Shots**: {box.get('shots_home', 0)} - {box.get('shots_away', 0)}\n"
+                    f"**Man of the Match**: ⭐ **{box.get('motm', 'TBD')}**"
+                ),
+                inline=True
+            )
+            
+            timeline_lines = []
+            emoji_map = {
+                "KICKOFF": "🟢", "GOAL": "⚽", "MISS": "❌",
+                "CHANCE": "🎯", "FOUL": "💥", "YELLOW_CARD": "🟨",
+                "INJURY": "🩹", "FULL_TIME": "🏁"
+            }
+            for ev in events:
+                emo = emoji_map.get(ev.get("type"), "⏱️")
+                text = ev.get("text") or "An event occurred."
+                if ev.get("type") == "GOAL" and "assister" in ev:
+                    text += f" (Assist: {ev['assister']})"
+                timeline_lines.append(f"{emo} **{ev.get('minute', 0)}'** - {text}")
+            
+            if timeline_lines:
+                embed.add_field(
+                    name="Timeline",
+                    value="\n".join(timeline_lines),
+                    inline=False
+                )
+            else:
+                embed.add_field(name="Timeline", value="No events recorded.", inline=False)
+        else:
+            embed.description = "Detailed box score statistics are not available for this match."
+
+        await interaction.edit_original_response(embed=embed, view=view)
+
 
     async def show_standings(self, interaction: discord.Interaction, hub_view: LeagueHubView):
         db = await get_client()
@@ -530,18 +711,50 @@ class LeagueCog(commands.Cog):
         total_goals = sum(f["home_score"] + f["away_score"] for f in played)
         avg_goals = round(total_goals / len(played), 2) if played else 0.0
         
-        standings = await fetch_standings(db, season["id"])
-        top_scorer_team = standings[0]["club_name"] if standings else "N/A"
-        
         embed = discord.Embed(
-            title=f"🏅 Season {season['season_number']} Statistics",
+            title=f"🏅 Season {season['season_number']} Statistics Overview",
             color=0x00FF87
         )
-        embed.add_field(name="Total Matches", value=f"{len(played)} / {len(fixtures)} played", inline=True)
-        embed.add_field(name="Total Goals Scored", value=f"{total_goals} goals", inline=True)
-        embed.add_field(name="Average Goals/Match", value=f"{avg_goals}", inline=True)
-        embed.add_field(name="Current Leader", value=f"🏆 **{top_scorer_team}** ({standings[0]['points']} pts)" if standings else "N/A", inline=False)
+        embed.description = (
+            f"📊 **Total Matches**: {len(played)} / {len(fixtures)} played\n"
+            f"⚽ **Total Goals Scored**: {total_goals} goals\n"
+            f"📈 **Average Goals/Match**: {avg_goals}"
+        )
         
+        # Query player season stats
+        stats_res = await db.table("player_season_stats").select("*, players(*)").eq("season_id", season["id"]).execute()
+        stats_rows = stats_res.data or []
+        
+        # Top Goals
+        top_goals = sorted(stats_rows, key=lambda x: x.get("goals", 0), reverse=True)[:5]
+        goals_text = ""
+        for idx, row in enumerate(top_goals, 1):
+            manager = row.get("players", {}).get("manager_name") or f"Player {row['player_id']}"
+            goals_text += f"**{idx}.** {manager} - {row['goals']} Goals\n"
+        if not goals_text:
+            goals_text = "No goals recorded yet."
+        embed.add_field(name="👟 Top Scoring Players (Golden Boot)", value=goals_text, inline=False)
+
+        # Top Assists
+        top_assists = sorted(stats_rows, key=lambda x: x.get("assists", 0), reverse=True)[:5]
+        assists_text = ""
+        for idx, row in enumerate(top_assists, 1):
+            manager = row.get("players", {}).get("manager_name") or f"Player {row['player_id']}"
+            assists_text += f"**{idx}.** {manager} - {row['assists']} Assists\n"
+        if not assists_text:
+            assists_text = "No assists recorded yet."
+        embed.add_field(name="🤝 Top Assisting Players", value=assists_text, inline=False)
+
+        # Clean Sheets
+        top_cs = sorted(stats_rows, key=lambda x: x.get("clean_sheets", 0), reverse=True)[:5]
+        cs_text = ""
+        for idx, row in enumerate(top_cs, 1):
+            manager = row.get("players", {}).get("manager_name") or f"Player {row['player_id']}"
+            cs_text += f"**{idx}.** {manager} - {row['clean_sheets']} Clean Sheets\n"
+        if not cs_text:
+            cs_text = "No clean sheets recorded yet."
+        embed.add_field(name="🛡️ Top Players (Clean Sheets)", value=cs_text, inline=False)
+
         view = StatsView(self, interaction.user.id, hub_view)
         await interaction.edit_original_response(embed=embed, view=view)
         view.message = hub_view.message
@@ -613,6 +826,11 @@ class LeagueCog(commands.Cog):
             
         standings = await fetch_standings(db, season["id"])
         
+        curr = season["current_matchday"]
+        total = season["total_matchdays"]
+        
+        embed.description = f"🟢 **Matchday {curr}/{total} Active**"
+        
         standings_preview = "Pos  Club                  PTS   GD\n"
         standings_preview += "----------------------------------\n"
         for idx, row in enumerate(standings[:5], 1):
@@ -630,9 +848,6 @@ class LeagueCog(commands.Cog):
             inline=False
         )
         
-        curr = season["current_matchday"]
-        total = season["total_matchdays"]
-        
         fixtures_res = await db.table("league_fixtures").select("window_end").eq("season_id", season["id"]).eq("matchday", curr).limit(1).execute()
         window_end_str = ""
         if fixtures_res.data:
@@ -642,8 +857,8 @@ class LeagueCog(commands.Cog):
         embed.add_field(
             name="📅 Season Progress",
             value=(
+                f"🟢 **Status**: Matchday {curr}/{total} Active\n"
                 f"🏆 **Season**: #{season['season_number']}\n"
-                f"⏱️ **Matchday**: {curr} / {total}\n"
                 f"{window_end_str}"
             ),
             inline=False

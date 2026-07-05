@@ -11,6 +11,9 @@ class EventType(str, Enum):
     SAVE = "SAVE"
     YELLOW_CARD = "YELLOW_CARD"
     FULL_TIME = "FULL_TIME"
+    CHANCE = "CHANCE"
+    FOUL = "FOUL"
+    INJURY = "INJURY"
 
 class MatchPlayerCard(BaseModel):
     name: str
@@ -46,6 +49,7 @@ class MatchResult(BaseModel):
     shots_home: int = 10
     shots_away: int = 10
     motm: str = "TBD"
+    key_events: list[dict] = Field(default_factory=list)
 
 class MatchEvent(BaseModel):
     minute: int = Field(..., ge=0, le=90)

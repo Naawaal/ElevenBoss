@@ -77,29 +77,46 @@ async def stream_match(
             actor_name = actor_card.name if hasattr(actor_card, "name") else actor_card.get("name", "Unknown Player")
 
             roll = random.random()
+            assister_name = None
             if roll < 0.20:
                 event_type = "GOAL"
                 if is_home_event:
                     state.home_score += 1
                 else:
                     state.away_score += 1
+                other_players = [p for p in event_squad if (p.name if hasattr(p, "name") else p.get("name", "")) != actor_name]
+                if other_players and random.random() < 0.70:
+                    assister_card = random.choice(other_players)
+                    assister_name = assister_card.name if hasattr(assister_card, "name") else assister_card.get("name", "Unknown Player")
             elif roll < 0.55:
                 event_type = "MISS"
-            elif roll < 0.85:
+            elif roll < 0.80:
                 event_type = "CHANCE"
-            else:
+            elif roll < 0.90:
                 event_type = "FOUL"
                 foul_actor = random.choice(opp_squad)
                 actor_name = foul_actor.name if hasattr(foul_actor, "name") else foul_actor.get("name", "Opponent")
                 event_team = away_name if is_home_event else home_name
+            elif roll < 0.96:
+                event_type = "YELLOW_CARD"
+                foul_actor = random.choice(opp_squad)
+                actor_name = foul_actor.name if hasattr(foul_actor, "name") else foul_actor.get("name", "Opponent")
+                event_team = away_name if is_home_event else home_name
+            else:
+                event_type = "INJURY"
+                injury_actor = random.choice(event_squad)
+                actor_name = injury_actor.name if hasattr(injury_actor, "name") else injury_actor.get("name", "Unknown Player")
 
-            yield {
+            event_data = {
                 "minute": state.minute,
                 "type": event_type,
                 "score_update": f"{state.home_score} - {state.away_score}",
                 "actor": actor_name,
                 "team": event_team
             }
+            if assister_name:
+                event_data["assister"] = assister_name
+            yield event_data
 
     # Yield FULL_TIME at 90'
     state.update_tags()
