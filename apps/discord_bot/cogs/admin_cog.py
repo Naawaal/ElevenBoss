@@ -258,6 +258,87 @@ class AnnouncementSubView(BaseAdminView):
         await interaction.response.defer()
         await show_admin_hub(interaction, self.guild_id, self.owner_id)
 
+class ChannelSearchModal(discord.ui.Modal, title="Configure Channel"):
+    input_text = discord.ui.TextInput(
+        label="Channel Name or ID",
+        placeholder="e.g. announcements or 123456789...",
+        required=True
+    )
+
+    def __init__(self, owner_id: int, guild_id: int, view: ChannelSelectView):
+        super().__init__()
+        self.owner_id = owner_id
+        self.guild_id = guild_id
+        self.view = view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        text = self.input_text.value.strip()
+        guild = interaction.client.get_guild(self.guild_id)
+        if not guild:
+            await interaction.followup.send(embed=error_embed("Server not found."), ephemeral=True)
+            return
+
+        channel = None
+        if text.isdigit():
+            channel = guild.get_channel(int(text))
+        
+        if not channel:
+            channel = next((c for c in guild.text_channels if c.name.lower() == text.lower() or c.name.lower() == text.lower().lstrip('#')), None)
+
+        if not channel:
+            await interaction.followup.send(embed=error_embed(f"No text channel found matching '{text}'."), ephemeral=True)
+            return
+
+        permissions = channel.permissions_for(guild.me)
+        if not (permissions.view_channel and permissions.send_messages):
+            await interaction.followup.send(embed=error_embed(f"Bot lacks permissions to view/send messages in {channel.mention}."), ephemeral=True)
+            return
+
+        db = await get_client()
+        await db.table("guild_config").update({"league_channel_id": channel.id}).eq("guild_id", self.guild_id).execute()
+
+        await interaction.followup.send(f"✅ Announcement channel updated to {channel.mention}.", ephemeral=True)
+        await show_announcements_menu(interaction, self.guild_id, self.owner_id)
+
+class RoleSearchModal(discord.ui.Modal, title="Configure Role"):
+    input_text = discord.ui.TextInput(
+        label="Role Name or ID",
+        placeholder="e.g. Member or 123456789...",
+        required=True
+    )
+
+    def __init__(self, owner_id: int, guild_id: int, view: RoleSelectView):
+        super().__init__()
+        self.owner_id = owner_id
+        self.guild_id = guild_id
+        self.view = view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        text = self.input_text.value.strip()
+        guild = interaction.client.get_guild(self.guild_id)
+        if not guild:
+            await interaction.followup.send(embed=error_embed("Server not found."), ephemeral=True)
+            return
+
+        role = None
+        if text.isdigit():
+            role = guild.get_role(int(text))
+        
+        if not role:
+            role = next((r for r in guild.roles if r.name.lower() == text.lower()), None)
+
+        if not role:
+            await interaction.followup.send(embed=error_embed(f"No role found matching '{text}'."), ephemeral=True)
+            return
+
+        db = await get_client()
+        await db.table("guild_config").update({"announcement_role_id": role.id}).eq("guild_id", self.guild_id).execute()
+
+        await interaction.followup.send(f"✅ Announcement role updated to **{role.name}**.", ephemeral=True)
+        await show_announcements_menu(interaction, self.guild_id, self.owner_id)
+
 class ChannelSelectView(BaseAdminView):
     def __init__(self, owner_id: int, guild_id: int, guild: discord.Guild | None) -> None:
         super().__init__(owner_id)
@@ -291,9 +372,17 @@ class ChannelSelectView(BaseAdminView):
         select.callback = self.channel_select_callback
         self.add_item(select)
 
+        search_btn = discord.ui.Button(style=discord.ButtonStyle.primary, label="🔍 Enter Name/ID")
+        search_btn.callback = self.search_callback
+        self.add_item(search_btn)
+
         cancel_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Cancel")
         cancel_btn.callback = self.cancel_callback
         self.add_item(cancel_btn)
+
+    async def search_callback(self, interaction: discord.Interaction):
+        modal = ChannelSearchModal(self.owner_id, self.guild_id, self)
+        await interaction.response.send_modal(modal)
 
     async def cancel_callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -353,9 +442,17 @@ class RoleSelectView(BaseAdminView):
         select.callback = self.role_select_callback
         self.add_item(select)
 
+        search_btn = discord.ui.Button(style=discord.ButtonStyle.primary, label="🔍 Enter Name/ID")
+        search_btn.callback = self.search_callback
+        self.add_item(search_btn)
+
         cancel_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Cancel")
         cancel_btn.callback = self.cancel_callback
         self.add_item(cancel_btn)
+
+    async def search_callback(self, interaction: discord.Interaction):
+        modal = RoleSearchModal(self.owner_id, self.guild_id, self)
+        await interaction.response.send_modal(modal)
 
     async def cancel_callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
