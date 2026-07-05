@@ -2,8 +2,9 @@
 .env
 
 # === Log files ===
-logs/*.log
-logs/*.log.*
+logs/
+*.log
+*.log.*
 
 # === Python cache ===
 __pycache__/

@@ -24,8 +24,8 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 #### AC-01a: Trigger & Guard
 
-- **GIVEN** an unregistered user runs any game command other than `/register`,
-- **THEN** the bot responds with an ephemeral embed: *"You don't have a club yet! Run `/register` to get started."* No account is created silently.
+- **GIVEN** an unregistered user attempts to run any core gameplay command other than `/register` (e.g., `/match play`, `/gacha claim`),
+- **THEN** the bot intercepts the request and returns an ephemeral error directing them to run `/register`: *"You don't have a club yet! Run `/register` to get started."* No account is created silently.
 - **GIVEN** an already-registered user runs `/register`,
 - **THEN** the bot responds with an ephemeral embed: *"You're already registered as Manager [manager_name] of [club_name]!"* No thread is created.
 
@@ -35,7 +35,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **WHEN** the command is processed,
 - **THEN** the bot creates a **temporary Discord thread** off the channel where the command was invoked.
   - Thread name: `"⚽ ElevenBoss — Welcome, [Username]!"`
-  - Thread type: `discord.ChannelType.private_thread` if the parent channel supports it (e.g., is a `TextChannel` in a guild with the `PRIVATE_THREADS` feature); otherwise fall back to a `public_thread`.
+  - Thread type: `discord.ChannelType.private_thread` if the parent channel supports it (e.g., is a `TextChannel` in a guild with the `PRIVATE_THREADS` feature); if the server lacks private thread permissions, the bot will gracefully fall back to creating a public thread for the setup wizard.
   - Auto-archive duration: **60 minutes** (used as the inactivity timeout).
 - **AND** the bot sends an initial embed inside the thread with a `discord.ui.View` containing a **"Begin Setup →"** button.
 - **AND** the bot responds to the original `/register` interaction with an ephemeral message linking to the thread: *"Your private setup room is ready: [thread link]"*.
@@ -91,11 +91,10 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
      - `4 MID` (Common)
      - `2 FWD` (Common, unless Marquee is a FWD)
      - `1 Marquee` (Rare or Epic) — replaces the Common card in its positional slot.
-  4. Inserts the `squads` row with `formation = '4-4-2'` **and** populates `gk`, `slot_1` through `slot_10` with the **UUIDs of the 11 inserted `player_cards` rows**, ordered by position (GK → DEF → MID → FWD).
-- **AND** the bot sends a final **"Registration Complete"** embed containing:
-  - The Marquee Player's card (name, position, rarity, overall).
-  - The message: *"You've signed **[Marquee Name]** to lead your club, alongside 10 youth academy prospects! Your starting 11 has been auto-assigned in a 4-4-2 and is ready for the pitch."*
-  - A quick-start tip: *"Use `/match play` to get started immediately, or `/squad view` to see your full squad."*
+  4. Inserts the `squads` row with `formation = '4-4-2'` and populates the `squad_assignments` junction table with the 11 inserted `player_cards` rows mapping to `position_slot` 1 through 11 (ordered GK → DEF → MID → FWD) subject to the `UNIQUE(discord_id, position_slot)` constraint.
+- **AND** the bot sends a final **"Registration Complete"** message containing a list of two embeds using premium and clean aesthetics:
+  - **Embed 1 (Captain Reveal / Welcome):** Gold/emerald branded welcome embed displaying the Marquee Captain's details, club details, and a quick-start tip: *"Use `/match play` to get started immediately, or `/squad-view` to see your full squad."*
+  - **Embed 2 (Youth Academy Prospects):** A neutral light-gray list cleanly showing the 10 youth academy prospects with their positions and ratings (e.g., `🧤 GK - [Name] (64 OVR)`).
 - **AND** the thread is **deleted** after a 10-second countdown: *"This setup room will close in 10 seconds..."*
 - **GIVEN** the user does not interact with the onboarding thread for **60 minutes** (thread auto-archives),
 - **THEN** no account is created. The thread auto-archives via Discord's native mechanism. No partial state is left in the database.
@@ -139,12 +138,18 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 **Acceptance Criteria:**
 - **GIVEN** I run `/squad view`,
 - **THEN** I see a paginated embed listing all players I own, with their name, position, rarity, and overall rating.
-- **GIVEN** I run `/squad set-formation <formation>` (e.g., `4-4-2`, `4-3-3`, `3-5-2`),
-- **THEN** the bot validates the formation string conforms to `\d-\d-\d` and sums to 10 (outfield) + 1 goalkeeper = 11 total.
-- **AND** my squad formation is saved to the database.
-- **GIVEN** I run `/squad set-player <slot> <player_id>`,
-- **THEN** the specified player is placed in the specified slot, validated against their primary position.
-- **AND** if the player is already in another slot, they are moved (not duplicated).
+- **GIVEN** I run `/squad set-formation` (with no arguments),
+- **THEN** the bot responds with an interactive View containing a Dropdown Menu listing available formations (`4-4-2`, `4-3-3`, `3-5-2`, `4-2-3-1`, `5-3-2`).
+- **WHEN** I select a formation,
+- **THEN** the bot saves the selected formation in the database and returns a success confirmation embed.
+- **GIVEN** I run `/squad set-player` (with no arguments),
+- **THEN** the bot responds with an interactive View containing two Dropdown Menus:
+  - **Slot Dropdown:** Allows selecting a slot (1-11) in the active formation.
+  - **Player Dropdown:** Starts disabled with a placeholder.
+- **WHEN** I select a Slot from the first dropdown,
+- **THEN** the bot queries my roster and updates the second dropdown to show a dynamically filtered list of my owned player cards matching the required position for that slot (GK, DEF, MID, or FWD), capped at 25 options.
+- **WHEN** I select a player from the second dropdown,
+- **THEN** the selected player card is transactionally assigned to the slot (removing any existing assignment for this card in other slots to avoid duplicates).
 
 ---
 

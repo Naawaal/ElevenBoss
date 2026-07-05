@@ -128,20 +128,24 @@ CREATE TABLE player_cards (
 CREATE TABLE squads (
     discord_id    BIGINT PRIMARY KEY REFERENCES players(discord_id) ON DELETE CASCADE,
     formation     TEXT NOT NULL DEFAULT '4-4-2',
-    gk            UUID REFERENCES player_cards(id),
-    slot_1        UUID REFERENCES player_cards(id),
-    slot_2        UUID REFERENCES player_cards(id),
-    slot_3        UUID REFERENCES player_cards(id),
-    slot_4        UUID REFERENCES player_cards(id),
-    slot_5        UUID REFERENCES player_cards(id),
-    slot_6        UUID REFERENCES player_cards(id),
-    slot_7        UUID REFERENCES player_cards(id),
-    slot_8        UUID REFERENCES player_cards(id),
-    slot_9        UUID REFERENCES player_cards(id),
-    slot_10       UUID REFERENCES player_cards(id),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ```
+The `squads` table links one-to-one with a player's Discord ID, keeping track of their active formation (e.g., `'4-4-2'`).
+
+### `squad_assignments` Table
+```sql
+CREATE TABLE squad_assignments (
+    discord_id      BIGINT NOT NULL REFERENCES squads(discord_id) ON DELETE CASCADE,
+    player_card_id  UUID NOT NULL REFERENCES player_cards(id) ON DELETE CASCADE,
+    position_slot   INTEGER NOT NULL CHECK (position_slot >= 1 AND position_slot <= 11),
+    PRIMARY KEY (discord_id, player_card_id),
+    UNIQUE (discord_id, position_slot)
+);
+```
+This is a junction table mapping a squad to its starting 11 player cards. It is subject to two critical integrity constraints:
+- **Composite `PRIMARY KEY (discord_id, player_card_id)`:** Enforces that a specific player card UUID can only be assigned to a single manager's squad assignment at most once.
+- **`UNIQUE (discord_id, position_slot)`:** Enforces that each position slot (1-11) is occupied by at most one player card for a given manager.
 
 ### `match_history` Table
 ```sql
@@ -217,8 +221,23 @@ class StarterSquad(BaseModel):
 
 - `intents = discord.Intents.default()` — NO `MESSAGE_CONTENT` intent
 - All commands via `app_commands.Group` or `@app_commands.command`
-- `ensure_registered` guard on all non-registration commands: **responds with prompt embed, does NOT create accounts**
 - All commands `defer(ephemeral=True)` immediately
+
+### `middleware/guard.py` — Registration Gatekeeper
+
+Unregistered users are blocked from executing core gameplay commands (such as `/match play`, `/gacha claim`, `/squad view`, etc.) by a middleware check:
+- **`ensure_registered(interaction: discord.Interaction) -> bool`**: Implemented using discord.py's `@app_commands.check` decorator on commands/cogs.
+- **Verification Logic**: Queries the `players` table using the user's `discord_id`.
+- **Response**: If unregistered, intercepts the interaction and returns an ephemeral error embed directing them to run `/register`. It returns `False`, blocking execution. No database rows are created during this check.
+
+### Squad Junction Queries & Slot Assignment
+
+Managing the Starting 11 and squad configuration uses junction table queries against Supabase:
+- **Fetching the Starting 11**: Retrieved via a joined query between `squad_assignments` and `player_cards` (specifically, `.select("position_slot, player_cards(*)")`), filtering by the user's `discord_id`.
+- **Updating a Squad Slot**:
+  1. **Conflict Resolution**: To avoid violating the composite `PRIMARY KEY` or `UNIQUE` constraints (e.g., if a player card is already assigned to a different slot), the command first runs a `DELETE` query on `squad_assignments` targeting the user's `discord_id` and the chosen `player_card_id`.
+  2. **Assignment Update**: An `UPSERT` operation is performed on `squad_assignments` containing `discord_id`, `position_slot`, and `player_card_id` to assign the player to the new slot.
+
 
 ### `core/thread_manager.py` — Thread Lifecycle Module
 
@@ -279,13 +298,12 @@ The `/register` command drives a stateful modal+view flow entirely within the th
                                                               2. INSERT 11 player_cards rows
                                                                  └─ collect returned UUIDs
                                                               3. INSERT squads row with formation='4-4-2'
-                                                                 and gk/slot_1..slot_10 set to
-                                                                 the 11 collected UUIDs
-                                                                 (ordered GK→DEF→MID→FWD)
+                                                              4. INSERT 11 squad_assignments rows
+                                                                 mapping to slots 1-11
                                                                    └─► Marquee Reveal embed
                                                                          (Captain stats displayed)
-                                                                           └─► Registration Complete embed
-                                                                                 ("[Name] + 10 youth, 4-4-2 ready")
+                                                                           └─► Twin-embed Registration Complete
+                                                                                 (Captain stats + 10 youth list)
                                                                                    └─► delete_thread_after(delay=10)
 ```
 

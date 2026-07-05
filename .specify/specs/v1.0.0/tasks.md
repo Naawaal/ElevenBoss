@@ -41,7 +41,7 @@ New-Item -ItemType Directory -Force -Path "packages\gacha\gacha\data"
 # packages/<name>/pyproject.toml
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "<name>"
@@ -112,18 +112,15 @@ CREATE TABLE IF NOT EXISTS player_cards (
 CREATE TABLE IF NOT EXISTS squads (
     discord_id BIGINT PRIMARY KEY REFERENCES players(discord_id) ON DELETE CASCADE,
     formation  TEXT NOT NULL DEFAULT '4-4-2',
-    gk         UUID REFERENCES player_cards(id),
-    slot_1     UUID REFERENCES player_cards(id),
-    slot_2     UUID REFERENCES player_cards(id),
-    slot_3     UUID REFERENCES player_cards(id),
-    slot_4     UUID REFERENCES player_cards(id),
-    slot_5     UUID REFERENCES player_cards(id),
-    slot_6     UUID REFERENCES player_cards(id),
-    slot_7     UUID REFERENCES player_cards(id),
-    slot_8     UUID REFERENCES player_cards(id),
-    slot_9     UUID REFERENCES player_cards(id),
-    slot_10    UUID REFERENCES player_cards(id),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS squad_assignments (
+    discord_id      BIGINT NOT NULL REFERENCES squads(discord_id) ON DELETE CASCADE,
+    player_card_id  UUID NOT NULL REFERENCES player_cards(id) ON DELETE CASCADE,
+    position_slot   INTEGER NOT NULL CHECK (position_slot >= 1 AND position_slot <= 11),
+    PRIMARY KEY (discord_id, player_card_id),
+    UNIQUE (discord_id, position_slot)
 );
 
 CREATE TABLE IF NOT EXISTS match_history (
@@ -145,6 +142,7 @@ CREATE TABLE IF NOT EXISTS match_history (
 CREATE INDEX IF NOT EXISTS idx_player_cards_owner ON player_cards(owner_id);
 CREATE INDEX IF NOT EXISTS idx_match_history_player ON match_history(player_id);
 CREATE INDEX IF NOT EXISTS idx_players_division ON players(division);
+CREATE INDEX IF NOT EXISTS idx_squad_assignments_card ON squad_assignments(player_card_id);
 ```
 
 ### T2.3 — Write `supabase/migrations/003_rpc_functions.sql`
@@ -531,12 +529,17 @@ DECLARE
     v_card_ids   UUID[] := ARRAY[]::UUID[];
     v_card       JSONB;
     v_new_id     UUID;
+    i            INTEGER;
 BEGIN
     -- 1. Create the player account
     INSERT INTO players (discord_id, username, club_name, manager_name)
     VALUES (p_discord_id, p_username, p_club_name, p_manager_name);
 
-    -- 2. Insert all 11 player cards, collecting UUIDs in order
+    -- 2. Create the squad metadata row
+    INSERT INTO squads (discord_id, formation)
+    VALUES (p_discord_id, '4-4-2');
+
+    -- 3. Insert all 11 player cards, collecting UUIDs in order
     FOR v_card IN SELECT * FROM jsonb_array_elements(p_cards)
     LOOP
         INSERT INTO player_cards (owner_id, name, position, rarity, base_rating, overall)
@@ -552,24 +555,12 @@ BEGIN
         v_card_ids := array_append(v_card_ids, v_new_id);
     END LOOP;
 
-    -- 3. Create squad row and populate all 11 slots with the collected UUIDs
-    --    Array index: 1=GK, 2=DEF1, 3=DEF2, 4=DEF3, 5=DEF4,
-    --                 6=MID1, 7=MID2, 8=MID3, 9=MID4, 10=FWD1, 11=FWD2
-    INSERT INTO squads (
-        discord_id, formation,
-        gk,
-        slot_1, slot_2, slot_3, slot_4,
-        slot_5, slot_6, slot_7, slot_8,
-        slot_9, slot_10
-    ) VALUES (
-        p_discord_id, '4-4-2',
-        v_card_ids[1],                              -- GK
-        v_card_ids[2], v_card_ids[3],              -- DEF
-        v_card_ids[4], v_card_ids[5],              -- DEF
-        v_card_ids[6], v_card_ids[7],              -- MID
-        v_card_ids[8], v_card_ids[9],              -- MID
-        v_card_ids[10], v_card_ids[11]             -- FWD
-    );
+    -- 4. Create squad assignments mapping to position slots 1 to 11
+    --    Array index: 1=GK, 2..5=DEF, 6..9=MID, 10..11=FWD
+    FOR i IN 1..11 LOOP
+        INSERT INTO squad_assignments (discord_id, player_card_id, position_slot)
+        VALUES (p_discord_id, v_card_ids[i], i);
+    END LOOP;
 END;
 $$;
 ```

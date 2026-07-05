@@ -26,3 +26,4 @@ This document contains strict constraints and architecture rules for AI agents o
 * Any new features, command flows, database schema changes, or architectural decisions **MUST** be designed and documented in the `.specify/specs/v1.0.0/spec.md` and `.specify/specs/v1.0.0/plan.md` files **BEFORE** writing any code.
 * Implementation must strictly adhere to the approved specifications and technical plans.
 * Any refinements or deviations introduced during coding must be retroactively reconciled in the SDD documents so they remain the single source of truth for the codebase.
+
