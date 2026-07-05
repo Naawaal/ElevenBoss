@@ -557,6 +557,67 @@ CREATE TABLE public.player_xp_log (
 * **`TouchlineView`**: Holds Attack, Defend, and Balanced buttons updating the `MatchState.home_tactics_modifier` live.
 * **Commentary streaming**: Commands `/match-play` consume events from `stream_match`, editing messages in real-time, and concluding with database writes.
 
+---
+
+## 11. ElevenBoss v1.5 Architecture (Unified Development Center UI Refactor)
+
+### A. Dashboard views (`development_cog.py`)
+* **`DevelopmentHubView`**: The central navigation panel presenting buttons for Training Drills, Evolutions, and Skill Allocation.
+* **`TrainingSubView`, `EvolutionsSubView`, `SkillsSubView`**: Independent UI Views containing navigation buttons `[⬅️ Back to Hub]` that use `interaction.response.edit_message` to transition seamlessly between screens without generating separate messages.
+* **Timeout and security**: Explicit 15-minute timeout on all views.
+
+### B. Cross-cog Route integration
+* **`player_cog.py` / `/player-profile`**:
+  * Button `[Start Evolution]` spawns the `EvolutionsSubView` directly, pre-filtered for the selected player ID.
+  * Button `[Level Up]` spawns the `SkillsSubView` directly, pre-filtered for the selected player ID.
+
+---
+
+## 12. ElevenBoss v1.6 Architecture (Unified Marketplace Dashboard)
+
+### A. Marketplace Dashboard views (`marketplace_cog.py`)
+* **`MarketplaceHubView`**: The central panel presenting buttons for Sell Player, Search Market, and My Listings.
+* **`SellPlayerSubView`**: In-place replacement view containing the player select dropdown, confirm button, and `[⬅️ Back to Market]` button using `interaction.response.edit_message`.
+* **Deprecation of old command**: `/sell-player` in `economy_cog.py` is updated to return an ephemeral warning message guiding players to use `/marketplace`.
+
+### B. Logical Locks
+* Checks active squad assignments, active training, and active evolutions before listing player cards for sale. Calls RPC `process_agent_sale` to execute the transaction atomically.
+
+---
+
+## 13. ElevenBoss v1.7 Architecture (Battle Arena Hub)
+
+### A. Battle Dashboard views (`battle_cog.py`)
+* **`ArenaHubView`**: The central navigation panel presenting buttons for Bot Battle, Friendly Match, and Ranked Match.
+* **Slash Command Group**:
+  * `/battle` command: Spawns the central `ArenaHubView`.
+  * `/battle bot` subcommand: Directly executes the live dynamic simulator loop in the Stadium thread.
+* **State Swapping Navigation**:
+  * Clicking `[ 🤖 Bot Battle ]` in the Hub edits the message to inform the user and programmatically launches the `run_bot_battle` simulation routine.
+* **Deprecation of old command**: `/match play` in `match_cog.py` is updated to return an ephemeral warning message directing players to `/battle`.
+
+---
+
+## 14. ElevenBoss v1.8 Architecture (Admin Control Panel)
+
+### A. Database Configurations (`guild_config` table)
+* `guild_id` (BIGINT, PRIMARY KEY)
+* `league_channel_id` (BIGINT, NULLABLE)
+* `announcement_role_id` (BIGINT, NULLABLE)
+* `league_status` (TEXT)
+* `updated_at` (TIMESTAMP)
+
+### B. Admin Panel Views (`admin_cog.py`)
+* **Access Control**: `@app_commands.dm_only()` and `@app_commands.check(is_owner)` are enforced on the `/admin` command.
+* **`GuildSelectView`**: Text select menu listing eligible mutual servers.
+* **`AdminHubView`**: Primary options panel (`📢 Announcements`, `🔄 Switch Server`).
+* **`AnnouncementSubView`**: Submenu displaying target channel/role config settings, with buttons for `Set Channel` and `Set Role`.
+* **`ChannelSelectView` / `RoleSelectView`**: Integrates `discord.ui.ChannelSelect` and `discord.ui.RoleSelect` elements to update values in Supabase, performing strict guild-membership and bot channel permission checks.
+
+
+
+
+
 
 
 

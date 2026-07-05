@@ -290,9 +290,9 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 **Acceptance Criteria:**
 - **AC-06a:** The club's wallet supports both Coins and Tokens.
 - **AC-06b:** Running `/club-finances` displays current Coins/Tokens balances and a calculated weekly wage bill forecast based on the OVR of the manager's current starting 11 squad.
-- **AC-06c:** Running `/sell-player` displays a dropdown of owned players. Selecting a player calculates their agent sale value based on OVR and rarity, presenting a "Confirm Sale" button.
+- **AC-06c:** Entering the **Sell Player** sub-menu of the `/marketplace` hub displays a dropdown of owned players. Selecting a player calculates their agent sale value based on OVR and rarity, presenting a "Confirm Sale" button.
 - **AC-06d:** Clicking "Confirm Sale" transactionally removes the player card from the manager's roster, credits the sale value in coins to the club, and logs the details to the transaction ledger.
-- **AC-06e:** Players currently assigned to the starting 11 squad cannot be sold.
+- **AC-06e:** Players currently assigned to the starting 11 squad, in training, or in active evolutions cannot be sold.
 
 ### US-07: Async Training Hub
 
@@ -302,7 +302,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 **Acceptance Criteria:**
 - **AC-07a:** Managers have access to a maximum of 2 active training slots by default.
-- **AC-07b:** Running `/training-hub` displays all training slots, showing active/completed drills with real-time dynamic countdown timestamps.
+- **AC-07b:** Entering the **Training Drills** sub-menu of the `/development` hub displays all training slots, showing active/completed drills with real-time dynamic countdown timestamps.
 - **AC-07c:** Empty slots display a "Start Drill" button. Clicking it presents a menu to select a player card and drill type (`cardio`, `tactics`, `match_prep`).
 - **AC-07d:** Initiating a drill deducts the drill coin cost, logs it in the ledger, and sets the drill's end time.
 - **AC-07e:** Training XP gains use a diminishing returns scale based on the player's current level.
@@ -321,9 +321,9 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 **Acceptance Criteria:**
 - **AC-08a:** Player cards support role attributes (`GK`, `Defender`, `Midfielder`, `Forward`), morale (impacted by match results), contracts (renewable via coins), and dynamic potential for youth cards (age 16-21).
 - **AC-08b:** PlayStyles act as positive match engine simulation modifiers.
-- **AC-08c:** Running `/player-profile` displays an exhaustive profile (OVR, Role, Level/XP progress bar, PlayStyles, Morale, Contract Days, and Age) with interactive button controls for `[Start Evolution]` and `[Renew Contract]`.
-- **AC-08d:** Running `/player-level-up` allows managers to allocate acquired level-up points to 6 core attributes (PAC, SHO, PAS, DRI, DEF, PHY).
-- **AC-08e:** Running `/evolution-start` spawns a select menu of 3 basic evolution tracks allowing players to undergo progressive training challenges.
+- **AC-08c:** Running `/player-profile` displays an exhaustive profile (OVR, Role, Level/XP progress bar, PlayStyles, Morale, Contract Days, and Age) with interactive button controls for `[Start Evolution]` and `[Level Up]`. These buttons redirect directly to pre-filtered sub-menus in the Development Center.
+- **AC-08d:** Entering the **Skill Allocation** sub-menu of the `/development` hub allows managers to allocate acquired level-up points to 6 core attributes (PAC, SHO, PAS, DRI, DEF, PHY).
+- **AC-08e:** Entering the **Evolutions** sub-menu of the `/development` hub displays options/select menu for 3 basic evolution tracks allowing players to undergo progressive training challenges.
 
 ---
 
@@ -342,6 +342,80 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-09d:** Commentary lines are dynamically generated using a JSON bank (`commentary_bank.json`) which filters and matches context tags, supporting placeholders for team/player actors.
 - **AC-09e:** Discord ticker updates are paced dynamically using the commentary line's `urgency` value (e.g. longer pauses for high-drama cliffhangers).
 - **AC-09f:** Data transaction safety is preserved: Supabase writes (energy cost, rewards, XP logs, evolutions progress) are strictly executed only after the full match stream terminates.
+
+---
+
+# ElevenBoss v1.5 Features
+
+### US-10: Unified Development Center Dashboard
+
+> **As a** football club manager,
+> **I want** a unified hub command (`/development`) that merges all progression UI sub-menus,
+> **So that** I don't have to remember and execute multiple different commands to train, allocate skills, or evolve my players.
+
+**Acceptance Criteria:**
+- **AC-10a:** Slash command `/development` is introduced, opening the central `DevelopmentHubView` containing three button pathways: `[🏋️ Training Drills]`, `[🧬 Evolutions]`, and `[⭐ Allocate Skills]`.
+- **AC-10b:** State-swapping UI: Clicking any button updates/edits the existing dashboard message without spawning a new one or requiring the user to type other commands.
+- **AC-10c:** A back-navigation button `[⬅️ Back to Hub]` is present on all sub-menu screens to allow returns to the main dashboard.
+- **AC-10d:** Quick-action buttons on `/player-profile` (`[Start Evolution]` and `[Level Up]`) correctly route the user by opening the pre-filtered sub-menu of the `/development` flow for that specific card.
+- **AC-10e:** View security and timeouts are enforced: all views have a timeout of at least 15 minutes, and only the invoking manager can interact with the buttons.
+
+---
+
+# ElevenBoss v1.6 Features
+
+### US-11: Unified Marketplace Dashboard
+
+> **As a** football club manager,
+> **I want** a unified hub command (`/marketplace`) to view my coins, sell players, and search the transfer market,
+> **So that** all financial trading activities are centralized.
+
+**Acceptance Criteria:**
+- **AC-11a:** Slash command `/marketplace` is introduced, opening the central `MarketplaceHubView` containing three button pathways: `[💰 Sell Player]`, `[🔍 Search Market (Soon)]` (disabled), and `[📋 My Listings (Soon)]` (disabled).
+- **AC-11b:** Deprecated command: Running the old `/sell-player` command displays an ephemeral warning: *"⚠️ The Marketplace has moved! Please use /marketplace."*
+- **AC-11c:** State-swapping UI: Clicking `[💰 Sell Player]` edits the existing dashboard message to present the player selection dropdown and valuation results in-place.
+- **AC-11d:** Navigation: A `[⬅️ Back to Market]` button is present on the sell screen to return to the Marketplace Hub.
+- **AC-11e:** Roster locks: Player cards that are currently in the Starting 11, active training, or active evolutions cannot be sold and are filtered out of the selection list.
+- **AC-11f:** Security: The view has a 15-minute timeout and only the invoking manager can interact with it.
+
+---
+
+# ElevenBoss v1.7 Features
+
+### US-12: Battle Arena Hub
+
+> **As a** football club manager,
+> **I want** a centralized `/battle` hub to choose bot battles, friendlies, and ranked matches,
+> **So that** all competitive match play pathways are in one unified dashboard.
+
+**Acceptance Criteria:**
+- **AC-12a:** Slash command `/battle` is introduced, opening the central `ArenaHubView` containing three button pathways: `[🤖 Bot Battle]`, `[🤝 Friendly Match (Soon)]` (disabled), and `[🏆 Ranked (Soon)]` (disabled).
+- **AC-12b:** Deprecated command: Running the old `/match play` command displays an ephemeral warning: *"⚠️ The match system has been moved! Please use /battle instead."*
+- **AC-12c:** Bot Battle sub-command: Spawns the subcommand `/battle bot` which runs the live dynamic simulator in the Stadium thread.
+- **AC-12d:** State-swapping UI: Clicking `[🤖 Bot Battle]` inside the Battle Hub launches the Bot Battle logic directly.
+- **AC-12e:** Safety and timeout: All views enforce a 15-minute timeout and verify user identity.
+
+---
+
+# ElevenBoss v1.8 Features
+
+### US-13: Admin Control Panel
+
+> **As a** bot administrator / owner,
+> **I want** a secure, DM-only `/admin` control panel,
+> **So that** I can configure guild-specific league settings and channel announcements.
+
+**Acceptance Criteria:**
+- **AC-13a:** Slash command `/admin` is introduced, restricted to the bot owner, and forced to run in DM channels only (`@app_commands.dm_only()`).
+- **AC-13b:** Server select: Running `/admin` displays a dropdown populated with mutual servers where the bot owner is an `Administrator`.
+- **AC-13c:** Dashboard panels: Choosing a server opens the hub displaying: `[📢 Announcements]`, `[🏆 League Management (Soon)]` (disabled), and `[🔄 Switch Server]`.
+- **AC-13d:** Announcements submenu: Allows setting announcement channels and notification mention roles using `ChannelSelect` and `RoleSelect`.
+- **AC-13e:** Permission checks: When selecting an announcement channel, the bot verifies it has read/send permissions; if not, it reports a clean error.
+- **AC-13f:** Session timeout: Admin panel views timeout in 10 minutes, disabling elements and marking the footer.
+
+
+
+
 
 
 

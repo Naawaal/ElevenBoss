@@ -1,4 +1,4 @@
-# apps/discord_bot/cogs/match_cog.py
+# apps/discord_bot/cogs/battle_cog.py
 from __future__ import annotations
 import logging
 import random
@@ -12,7 +12,6 @@ from match_engine import (
     MatchInput,
     simulate_match,
     EventType,
-    generate_match_script,
     CommentaryEngine,
     MatchState,
     stream_match,
@@ -20,7 +19,7 @@ from match_engine import (
 )
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
-from apps.discord_bot.embeds.common_embeds import error_embed
+from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 
 logger = logging.getLogger(__name__)
 
@@ -63,29 +62,85 @@ class TouchlineView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(style=discord.ButtonStyle.danger, label="⚔️ Attack", custom_id="touchline_attack")
+    @discord.ui.button(style=discord.ButtonStyle.danger, label="⚔️ Attack", custom_id="battle_touchline_attack")
     async def attack_callback(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.state.home_tactics_modifier = 1.3
         await interaction.response.send_message("📣 **Touchline**: Tactical focus shifted to **Attack**!", ephemeral=True)
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="⚖️ Balanced", custom_id="touchline_balanced")
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="⚖️ Balanced", custom_id="battle_touchline_balanced")
     async def balanced_callback(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.state.home_tactics_modifier = 1.0
         await interaction.response.send_message("📣 **Touchline**: Tactics set to **Balanced** shape.", ephemeral=True)
 
-    @discord.ui.button(style=discord.ButtonStyle.primary, label="🛡️ Defend", custom_id="touchline_defend")
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="🛡️ Defend", custom_id="battle_touchline_defend")
     async def defend_callback(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.state.home_tactics_modifier = 0.7
         await interaction.response.send_message("📣 **Touchline**: Tactical focus shifted to **Defend**!", ephemeral=True)
 
-class MatchCog(commands.Cog):
+class ArenaHubView(discord.ui.View):
+    def __init__(self, cog: BattleCog, owner_id: int) -> None:
+        super().__init__(timeout=900)
+        self.cog = cog
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This belongs to another manager.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(style=discord.ButtonStyle.danger, label="🤖 Bot Battle", custom_id="arena_bot_battle")
+    async def bot_battle_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Defer ephemeral button click response
+        await interaction.response.defer(ephemeral=True)
+        # Programmatically execute bot battle simulation
+        await self.cog.execute_bot_battle(interaction)
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="🤝 Friendly Match (Soon)", custom_id="arena_friendly", disabled=True)
+    async def friendly_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="🏆 Ranked (Soon)", custom_id="arena_ranked", disabled=True)
+    async def ranked_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass
+
+class BattleCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="match-play", description="Simulate a league match with dynamic interactive touchline updates.")
+    battle_group = app_commands.Group(name="battle", description="Competitive Battle Arena.", guild_only=True)
+
+    @battle_group.command(name="hub", description="Open the Battle Arena Hub.")
+    @app_commands.guild_only()
     @app_commands.check(ensure_registered)
-    async def match_play(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=False)
+    async def battle_hub(self, interaction: discord.Interaction) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+        
+        db = await get_client()
+        player_res = await db.table("players").select("*").eq("discord_id", interaction.user.id).maybe_single().execute()
+        player = player_res.data
+
+        embed = discord.Embed(
+            title="🏟️ ElevenBoss Battle Arena",
+            description=(
+                f"Welcome to the Battle Arena, Manager **{player['manager_name']}**!\n"
+                f"Choose your competitive match pathway below. Bot battles consume ⚡ 10 energy."
+            ),
+            color=0x00FF87
+        )
+        view = ArenaHubView(self, interaction.user.id)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    @battle_group.command(name="bot", description="Simulate a league match against a division-calibrated AI opponent.")
+    @app_commands.guild_only()
+    @app_commands.check(ensure_registered)
+    async def battle_bot(self, interaction: discord.Interaction) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=False)
+        await self.execute_bot_battle(interaction)
+
+    async def execute_bot_battle(self, interaction: discord.Interaction) -> None:
         try:
             db = await get_client()
 
@@ -124,7 +179,6 @@ class MatchCog(commands.Cog):
             # 4. Construct MatchPlayerCard models including core attributes and morale
             match_cards = []
             for c in active_cards:
-                # Resolve playstyles
                 ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", c["id"]).execute()
                 playstyles = [p["playstyle_key"] for p in ps_res.data] if ps_res.data else []
 
@@ -155,7 +209,7 @@ class MatchCog(commands.Cog):
             state = MatchState(home_rating=my_rating, away_rating=opp_rating)
             commentary_engine = CommentaryEngine()
 
-            # 6. Post Match Ticket in parent channel
+            # 6. Post Match Ticket
             ticket_embed = discord.Embed(
                 title=f"🎫 Match Ticket: {player['club_name']} vs {opp_name}",
                 description="A new league match has kicked off! Live commentary is streaming now.",
@@ -163,7 +217,12 @@ class MatchCog(commands.Cog):
             )
             ticket_embed.add_field(name="Division", value=player["division"], inline=True)
             ticket_embed.add_field(name="Cost", value="⚡ 10 Energy", inline=True)
-            ticket_msg = await interaction.followup.send(embed=ticket_embed)
+            
+            # Post using followup or channel depending on invocation source
+            if interaction.response.is_done():
+                ticket_msg = await interaction.channel.send(embed=ticket_embed)
+            else:
+                ticket_msg = await interaction.followup.send(embed=ticket_embed)
 
             # 7. Spawn Live Stadium public thread
             thread = None
@@ -183,7 +242,7 @@ class MatchCog(commands.Cog):
 
             target = thread if thread else interaction.channel
 
-            # 8. Send Initial Live Match Embed containing Touchline Interactivity View
+            # 8. Send Initial Live Match Embed
             init_embed = discord.Embed(
                 title=f"🏟️ Live Stadium: {player['club_name']} vs {opp_name}",
                 color=0x00FF87
@@ -195,18 +254,16 @@ class MatchCog(commands.Cog):
             touchline_view = TouchlineView(state, interaction.user.id)
             ticker_msg = await target.send(embed=init_embed, view=touchline_view)
 
-            # Construct mock opponent squad for simulator selection
             opp_squad = [
                 MatchPlayerCard(name="Opponent Striker", position="FWD", overall=int(opp_rating)),
                 MatchPlayerCard(name="Opponent Midfielder", position="MID", overall=int(opp_rating)),
                 MatchPlayerCard(name="Opponent Defender", position="DEF", overall=int(opp_rating)),
             ]
 
-            # 9. Commentary Live Loop Generator Streaming
+            # 9. Commentary Streaming Loop
             ticker_history: list[str] = []
             
             async for ev in stream_match(state, match_cards, opp_squad, player["club_name"], opp_name):
-                # Retrieve contextual commentary
                 variables = {
                     "actor": ev["actor"],
                     "team": ev["team"]
@@ -228,7 +285,6 @@ class MatchCog(commands.Cog):
                 ticker_history.append(f"{emo} **{ev['minute']}'** - {text}")
                 recent_ticker = ticker_history[-5:]
 
-                # Update live embed
                 embed = discord.Embed(
                     title=f"🏟️ Live Stadium: {player['club_name']} vs {opp_name}",
                     color=0x00FF87
@@ -239,7 +295,6 @@ class MatchCog(commands.Cog):
 
                 await ticker_msg.edit(embed=embed, view=touchline_view)
 
-                # Dynamic sleep pacing based on commentary urgency
                 if ev["type"] == "FULL_TIME":
                     sleep_time = 2.0
                 elif urgency == "cliffhanger":
@@ -251,7 +306,6 @@ class MatchCog(commands.Cog):
 
                 await asyncio.sleep(sleep_time)
 
-            # Disable touchline view options
             for child in touchline_view.children:
                 child.disabled = True
             await ticker_msg.edit(view=touchline_view)
@@ -285,7 +339,7 @@ class MatchCog(commands.Cog):
                 motm=random.choice(match_cards).name
             )
 
-            # 11. Transaction Safety: Sequential Database Updates
+            # 11. Transaction Safety Payouts
             new_energy = player["energy"] - 10
             new_coins = player["coins"] + result.coins_earned
             new_points = player["league_points"] + result.points_earned
@@ -296,7 +350,7 @@ class MatchCog(commands.Cog):
             new_draws = player["draws"] + (1 if result.result == "draw" else 0)
             new_losses = player["losses"] + (1 if result.result == "loss" else 0)
 
-            # Write club standings
+            # Write standings updates
             await db.table("players").update({
                 "energy": new_energy,
                 "coins": new_coins,
@@ -328,11 +382,11 @@ class MatchCog(commands.Cog):
                 "p_xp_amount": 15
             }).execute()
 
-            # 12. Send Post-Match Press Conference UI
+            # 12. Send Post-Match Press Conference
             press_embed = discord.Embed(
                 title="🎙️ Post-Match Press Conference",
                 description="Reporters gather as the managers discuss the game statistics and performance.",
-                color=0xFFCC00  # Visually distinct Gold color
+                color=0xFFCC00
             )
             
             result_emoji = "🎉 WIN" if result.result == "win" else ("🤝 DRAW" if result.result == "draw" else "💔 LOSS")
@@ -342,7 +396,6 @@ class MatchCog(commands.Cog):
                 value=f"### {result_emoji}\n**{player['club_name']}** `{result.goals_for} - {result.goals_against}` **{opp_name}**",
                 inline=False
             )
-            
             press_embed.add_field(
                 name="📊 Match Statistics",
                 value=(
@@ -352,7 +405,6 @@ class MatchCog(commands.Cog):
                 ),
                 inline=True
             )
-            
             press_embed.add_field(
                 name="🎁 Rewards & Standings",
                 value=(
@@ -361,11 +413,10 @@ class MatchCog(commands.Cog):
                 ),
                 inline=True
             )
-            
             press_embed.set_footer(text="✅ Rewards, XP gains, and evolutions saved to database.")
             await target.send(embed=press_embed)
 
-            # 13. Thread cleanup (rename and schedule archive)
+            # 13. Thread archive task
             if thread:
                 try:
                     await thread.edit(name=f"🏆 {player['club_name']} {result.goals_for}-{result.goals_against} {opp_name}")
@@ -385,9 +436,11 @@ class MatchCog(commands.Cog):
 
         except Exception as e:
             logger.exception("Failed to simulate match.")
-            await interaction.followup.send(
-                embed=error_embed(f"An error occurred while simulating the match: {str(e)}")
-            )
+            # Use appropriate error delivery channel
+            if interaction.response.is_done():
+                await interaction.channel.send(embed=error_embed(f"An error occurred: {str(e)}"))
+            else:
+                await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(MatchCog(bot))
+    await bot.add_cog(BattleCog(bot))

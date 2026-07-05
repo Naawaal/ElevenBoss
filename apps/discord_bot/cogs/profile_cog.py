@@ -16,9 +16,11 @@ class ProfileCog(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="profile", description="View your club's profile, record, and resources.")
+    @app_commands.guild_only()
     @app_commands.check(ensure_registered)
     async def profile(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True)
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         try:
             db = await get_client()
             result = await db.table("players").select("*").eq("discord_id", interaction.user.id).maybe_single().execute()

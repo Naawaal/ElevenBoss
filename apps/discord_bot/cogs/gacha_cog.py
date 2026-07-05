@@ -19,10 +19,11 @@ class GachaCog(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="gacha-claim", description="Claim a free pack of 5 random players every 22 hours.")
+    @app_commands.guild_only()
     @app_commands.check(ensure_registered)
     async def gacha_claim(self, interaction: discord.Interaction) -> None:
-        # Prevent 3-second timeout by deferring immediately
-        await interaction.response.defer(ephemeral=True)
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         try:
             db = await get_client()
             # Fetch player last_claim_at

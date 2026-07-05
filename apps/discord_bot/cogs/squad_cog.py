@@ -244,9 +244,11 @@ class SquadCog(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="squad-view", description="View your current starting 11 and active formation.")
+    @app_commands.guild_only()
     @app_commands.check(ensure_registered)
     async def squad_view(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True)
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         try:
             db = await get_client()
             # Fetch squad metadata
@@ -280,9 +282,11 @@ class SquadCog(commands.Cog):
             )
 
     @app_commands.command(name="squad-set-formation", description="Set your starting formation using an interactive dropdown.")
+    @app_commands.guild_only()
     @app_commands.check(ensure_registered)
     async def squad_set_formation(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True)
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         try:
             await interaction.followup.send(
                 embed=discord.Embed(
@@ -301,9 +305,11 @@ class SquadCog(commands.Cog):
             )
 
     @app_commands.command(name="squad-set-player", description="Assign a roster player to a starting 11 slot using interactive dropdowns.")
+    @app_commands.guild_only()
     @app_commands.check(ensure_registered)
     async def squad_set_player(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True)
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         try:
             db = await get_client()
             # Fetch active formation

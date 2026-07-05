@@ -251,6 +251,7 @@ class OnboardingCog(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="register", description="Register your football club and sign your starting squad.")
+    @app_commands.guild_only()
     async def register(self, interaction: discord.Interaction) -> None:
         # Check registration
         db = await get_client()

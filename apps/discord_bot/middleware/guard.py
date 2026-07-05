@@ -8,24 +8,31 @@ from apps.discord_bot.embeds.common_embeds import error_embed
 async def ensure_registered(interaction: discord.Interaction) -> bool:
     """
     Checks if the user has a registered club.
-    If not, responds with an ephemeral error prompting them to use /register.
-    Does NOT write any database rows.
+    Defers the interaction immediately to prevent 3-second API timeouts.
     """
+    is_public = False
+    if interaction.command:
+        # Check if it is the /battle bot subcommand
+        if interaction.command.name == "bot" and interaction.command.parent and interaction.command.parent.name == "battle":
+            is_public = True
+
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=not is_public)
+
     db = await get_client()
     try:
         result = await db.table("players").select("discord_id") \
             .eq("discord_id", interaction.user.id).maybe_single().execute()
         
         if result is None or result.data is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=error_embed("You don't have a club yet! Run `/register` to get started."),
                 ephemeral=True
             )
             return False
         return True
     except Exception as e:
-        # Fallback error handling in case db query fails
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=error_embed(f"Database error during registration check: {str(e)}"),
             ephemeral=True
         )
