@@ -183,7 +183,10 @@ async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> in
                     color=0x00FF87
                 )
                 first_msg = await thread.send(embed=info_embed)
-                await first_msg.pin()
+                try:
+                    await first_msg.pin()
+                except Exception as pe:
+                    logger.warning(f"Failed to pin introductory message in thread {thread.id}: {pe}")
                 
                 logger.info(f"[Trace] [auto_sim_expired_fixtures] Saving thread ID {thread.id} to guild_config...")
                 await db.table("guild_config").update({"league_updates_thread_id": thread.id}).eq("guild_id", guild_id).execute()

@@ -143,6 +143,8 @@ class StandardMatchHandler(IMatchOutputHandler):
         return self.thread if self.thread else interaction.channel
 
     async def start_match(self, target: discord.abc.Messageable, home_name: str, away_name: str, touchline_view: discord.ui.View | None) -> None:
+        self.home_name = home_name
+        self.away_name = away_name
         init_embed = discord.Embed(
             title=f"🏟️ Live Stadium: {home_name} vs {away_name}",
             color=0x00FF87
@@ -155,10 +157,10 @@ class StandardMatchHandler(IMatchOutputHandler):
 
     async def update_ticker(self, ev: dict, state: MatchState, recent_ticker: list[str], touchline_view: discord.ui.View | None) -> None:
         embed = discord.Embed(
-            title=f"🏟️ Live Stadium: {state.home_name or 'Home'} vs {state.away_name or 'Away'}",
+            title=f"🏟️ Live Stadium: {self.home_name or 'Home'} vs {self.away_name or 'Away'}",
             color=0x00FF87
         )
-        embed.add_field(name="Scoreboard", value=f"🏟️ **{state.home_name or 'Home'}** `{ev['score_update']}` **{state.away_name or 'Away'}**", inline=False)
+        embed.add_field(name="Scoreboard", value=f"🏟️ **{self.home_name or 'Home'}** `{ev['score_update']}` **{self.away_name or 'Away'}**", inline=False)
         embed.add_field(name="📈 Momentum", value=get_momentum_bar(state.momentum), inline=False)
         embed.add_field(name="Commentary Ticker", value="\n".join(recent_ticker), inline=False)
 
@@ -224,6 +226,8 @@ class LeagueMatchHandler(IMatchOutputHandler):
         return self.output_thread
 
     async def start_match(self, target: discord.abc.Messageable, home_name: str, away_name: str, touchline_view: discord.ui.View | None) -> None:
+        self.home_name = home_name
+        self.away_name = away_name
         init_embed = discord.Embed(
             title=f"🏟️ Live League Match: {home_name} vs {away_name}",
             color=0x00FF87
@@ -236,10 +240,10 @@ class LeagueMatchHandler(IMatchOutputHandler):
 
     async def update_ticker(self, ev: dict, state: MatchState, recent_ticker: list[str], touchline_view: discord.ui.View | None) -> None:
         embed = discord.Embed(
-            title=f"🏟️ Live League Match: {state.home_name or 'Home'} vs {state.away_name or 'Away'}",
+            title=f"🏟️ Live League Match: {self.home_name or 'Home'} vs {self.away_name or 'Away'}",
             color=0x00FF87
         )
-        embed.add_field(name="Scoreboard", value=f"🏟️ **{state.home_name or 'Home'}** `{ev['score_update']}` **{state.away_name or 'Away'}**", inline=False)
+        embed.add_field(name="Scoreboard", value=f"🏟️ **{self.home_name or 'Home'}** `{ev['score_update']}` **{self.away_name or 'Away'}**", inline=False)
         embed.add_field(name="📈 Momentum", value=get_momentum_bar(state.momentum), inline=False)
         embed.add_field(name="Live Commentary", value="\n".join(recent_ticker), inline=False)
 
@@ -900,7 +904,10 @@ class BattleCog(commands.Cog):
                             color=0x00FF87
                         )
                         first_msg = await thread.send(embed=info_embed)
-                        await first_msg.pin()
+                        try:
+                            await first_msg.pin()
+                        except Exception as pe:
+                            logger.warning(f"Failed to pin introductory message in thread {thread.id}: {pe}")
                         
                         logger.info(f"[Trace] [execute_league_match] Saving thread ID {thread.id} to guild_config...")
                         await db.table("guild_config").update({"league_updates_thread_id": thread.id}).eq("guild_id", guild_id).execute()
