@@ -725,34 +725,34 @@ class LeagueCog(commands.Cog):
         stats_res = await db.table("player_season_stats").select("*, players(*)").eq("season_id", season["id"]).execute()
         stats_rows = stats_res.data or []
         
-        # Top Goals
-        top_goals = sorted(stats_rows, key=lambda x: x.get("goals", 0), reverse=True)[:5]
-        goals_text = ""
+        # Top Goals (goals > 0)
+        filtered_goals = [r for r in stats_rows if r.get("goals", 0) > 0]
+        top_goals = sorted(filtered_goals, key=lambda x: x["goals"], reverse=True)[:5]
+        goals_lines = []
         for idx, row in enumerate(top_goals, 1):
             manager = row.get("players", {}).get("manager_name") or f"Player {row['player_id']}"
-            goals_text += f"**{idx}.** {manager} - {row['goals']} Goals\n"
-        if not goals_text:
-            goals_text = "No goals recorded yet."
+            goals_lines.append(f"**{idx}.** {manager} - {row['goals']} Goals")
+        goals_text = "\n".join(goals_lines) if goals_lines else "No goals recorded yet."
         embed.add_field(name="👟 Top Scoring Players (Golden Boot)", value=goals_text, inline=False)
 
-        # Top Assists
-        top_assists = sorted(stats_rows, key=lambda x: x.get("assists", 0), reverse=True)[:5]
-        assists_text = ""
+        # Top Assists (assists > 0)
+        filtered_assists = [r for r in stats_rows if r.get("assists", 0) > 0]
+        top_assists = sorted(filtered_assists, key=lambda x: x["assists"], reverse=True)[:5]
+        assists_lines = []
         for idx, row in enumerate(top_assists, 1):
             manager = row.get("players", {}).get("manager_name") or f"Player {row['player_id']}"
-            assists_text += f"**{idx}.** {manager} - {row['assists']} Assists\n"
-        if not assists_text:
-            assists_text = "No assists recorded yet."
+            assists_lines.append(f"**{idx}.** {manager} - {row['assists']} Assists")
+        assists_text = "\n".join(assists_lines) if assists_lines else "No assists recorded yet."
         embed.add_field(name="🤝 Top Assisting Players", value=assists_text, inline=False)
 
-        # Clean Sheets
-        top_cs = sorted(stats_rows, key=lambda x: x.get("clean_sheets", 0), reverse=True)[:5]
-        cs_text = ""
+        # Clean Sheets (clean_sheets > 0)
+        filtered_cs = [r for r in stats_rows if r.get("clean_sheets", 0) > 0]
+        top_cs = sorted(filtered_cs, key=lambda x: x["clean_sheets"], reverse=True)[:5]
+        cs_lines = []
         for idx, row in enumerate(top_cs, 1):
             manager = row.get("players", {}).get("manager_name") or f"Player {row['player_id']}"
-            cs_text += f"**{idx}.** {manager} - {row['clean_sheets']} Clean Sheets\n"
-        if not cs_text:
-            cs_text = "No clean sheets recorded yet."
+            cs_lines.append(f"**{idx}.** {manager} - {row['clean_sheets']} Clean Sheets")
+        cs_text = "\n".join(cs_lines) if cs_lines else "No clean sheets recorded yet."
         embed.add_field(name="🛡️ Top Players (Clean Sheets)", value=cs_text, inline=False)
 
         view = StatsView(self, interaction.user.id, hub_view)
