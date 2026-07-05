@@ -691,9 +691,58 @@ CREATE TABLE public.player_xp_log (
 ### D. Discord Permissions
 * Modify thread creation / setup in `execute_league_match` and `auto_sim_expired_fixtures` to check and adjust permission overwrites if the bot has permission management, setting `add_reactions=True` for `@everyone`.
 
+---
 
+## NSS Match Engine — Highlight-Driven State Machine (v2_simulator.py)
 
+### Architecture
 
+The live-streaming match engine (`packages/match_engine/match_engine/v2_simulator.py`) uses a **Markov-chain state machine** with 6 discrete phases. Only `[VISIBLE]` phases yield events to the Discord handler.
+
+```
+MIDFIELD (Hidden) ──┬──▸ BUILD_UP (Hidden) ──▸ ATTACK [Visible] ──▸ SCORING_OPP [Visible]
+                    │                 │                                    │
+                    │                 └──▸ COUNTER_ATTACK [Visible] ──────┘
+                    │
+                    └──▸ SET_PIECE [Visible] ──▸ SCORING_OPP [Visible]
+```
+
+### Phase Transition Table
+
+| Phase | Visibility | Roll Logic | Success → | Fail → |
+|-------|-----------|------------|-----------|--------|
+| `MIDFIELD` | Hidden | Mid vs Mid + Momentum | `BUILD_UP` (own) | `BUILD_UP` (opp) |
+| `BUILD_UP` | Hidden | Passing vs Defense | `ATTACK` | `COUNTER_ATTACK` (opp) |
+| `ATTACK` | Visible | Creativity vs Defense | `SCORING_OPP` | `MIDFIELD` |
+| `SCORING_OPP` | Visible | Shooting vs GK | Goal→`MIDFIELD`, Save→`SET_PIECE`, Miss→`MIDFIELD` |
+| `SET_PIECE` | Visible | Set piece roll | `SCORING_OPP` (corner) | `MIDFIELD` (cleared) |
+| `COUNTER_ATTACK` | Visible | Speed vs Defense | `SCORING_OPP` | `MIDFIELD` |
+
+### Probability Formula
+
+```
+chance = base_chance + (attacker_stat - defender_stat) / 100 + momentum * 0.05 + stagnation * 0.05
+```
+
+### Momentum System
+
+* Goal: `+3` to scorer, `-2` to conceder
+* Save: `+1` to defending team
+* Decay: `-0.5` every 10 in-game minutes
+* Capped at `±10` internally, mapped to `±100` for Discord display
+
+### Stagnation Counter
+
+Anti-stall mechanism: increments when a phase fails to reach `SCORING_OPP`, adds `stagnation * 0.05` to subsequent attack rolls, resets to 0 on any shot.
+
+### Thread Safety
+
+* Each match instantiates its own `random.Random()` — zero global random state
+* `CommentaryEngine.get_commentary()` accepts an optional `rng` parameter
+
+### Output Contract
+
+All yielded event dicts contain: `minute`, `type`, `score_update`, `actor`, `team` (+optional `assister` on GOALs). Compatible with `IMatchOutputHandler` in `battle_cog.py`.
 
 
 
