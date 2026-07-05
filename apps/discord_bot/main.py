@@ -135,10 +135,19 @@ class ElevenBossBot(commands.Bot):
 
     async def on_ready(self) -> None:
         logger.info(f"Logged in as {self.user.name} ({self.user.id})")
-        logger.info("Synchronizing application command tree...")
+        
+        # Check if we should sync to a specific guild for local development
+        guild_id = os.environ.get("GUILD_ID")
         try:
-            synced = await self.tree.sync()
-            logger.info(f"Command tree synchronized with {len(synced)} commands.")
+            if guild_id:
+                guild = discord.Object(id=int(guild_id))
+                self.tree.copy_global_to(guild=guild)
+                synced = await self.tree.sync(guild=guild)
+                logger.info(f"Command tree synchronized locally to Guild ID {guild_id} with {len(synced)} commands.")
+            else:
+                logger.info("Synchronizing application command tree globally...")
+                synced = await self.tree.sync()
+                logger.info(f"Command tree synchronized globally with {len(synced)} commands.")
         except Exception as e:
             logger.error(f"Failed to sync command tree: {e}", exc_info=True)
 
