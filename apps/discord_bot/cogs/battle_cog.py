@@ -864,7 +864,7 @@ class BattleCog(commands.Cog):
                 await interaction.followup.send(
                     embed=error_embed(
                         f"Your starting squad must have exactly **11 players** assigned to play a match (current: **{count}/11**).\n"
-                        "Configure your starting 11 using `/squad-view` first."
+                        "Configure your starting 11 using `/squad` first."
                     ),
                     ephemeral=True
                 )

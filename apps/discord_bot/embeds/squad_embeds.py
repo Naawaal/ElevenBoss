@@ -75,5 +75,5 @@ def roster_embed(cards: list[dict], current_page: int, total_pages: int) -> disc
         )
         embed.add_field(name=f"{rarity_emoji} {card['name']}", value=details, inline=True)
         
-    embed.set_footer(text="Use /squad-set-player to configure your starting 11.")
+    embed.set_footer(text="Use /squad to configure your starting 11.")
     return embed
