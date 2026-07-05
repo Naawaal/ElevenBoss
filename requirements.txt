@@ -16,11 +16,11 @@ colorama==0.4.6
 cryptography==49.0.0
 deprecation==2.1.0
 discord.py==2.7.1
--e git+https://github.com/Naawaal/ElevenBoss.git@e398d12aff4cb2a1c28e664f37c1e17f917cb8cc#egg=economy&subdirectory=packages/economy
--e git+https://github.com/Naawaal/ElevenBoss.git@e398d12aff4cb2a1c28e664f37c1e17f917cb8cc#egg=energy&subdirectory=packages/energy
+-e packages/economy
+-e packages/energy
 executing==2.2.1
 frozenlist==1.8.0
--e git+https://github.com/Naawaal/ElevenBoss.git@e398d12aff4cb2a1c28e664f37c1e17f917cb8cc#egg=gacha&subdirectory=packages/gacha
+-e packages/gacha
 greenlet==3.5.3
 h11==0.16.0
 h2==4.3.0
@@ -30,10 +30,10 @@ httpx==0.28.1
 hyperframe==6.1.0
 idna==3.18
 iniconfig==2.3.0
--e git+https://github.com/Naawaal/ElevenBoss.git@e398d12aff4cb2a1c28e664f37c1e17f917cb8cc#egg=leagues&subdirectory=packages/leagues
+-e packages/leagues
 Mako==1.3.12
 MarkupSafe==3.0.3
--e git+https://github.com/Naawaal/ElevenBoss.git@e398d12aff4cb2a1c28e664f37c1e17f917cb8cc#egg=match_engine&subdirectory=packages/match_engine
+-e packages/match_engine
 multidict==6.7.1
 packaging==26.2
 pillow==12.2.0
