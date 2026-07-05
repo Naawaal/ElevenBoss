@@ -491,3 +491,44 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **GIVEN** a match result is posted to the centralized `#league-journal` thread,
 - **THEN** the thread permissions must allow all users to add emoji reactions (`Add Reactions`), even if `Send Messages` is disabled for non-admins.
 
+---
+
+### US-18: Live Friendly Matches (Player vs Player)
+
+> **As a** registered manager,
+> **I want to** challenge another manager to a friendly match,
+> **So that** we can watch a live, threaded simulation of our teams playing against each other without affecting competitive league standings.
+
+**Acceptance Criteria:**
+
+#### AC-18a: Challenge Command & Match Lock Guards
+- **GIVEN** a registered user runs `/battle friendly opponent:[@Member]`,
+- **THEN** the bot verifies that:
+  - The target opponent is not the sender themselves.
+  - Both the challenger and the opponent have registered manager profiles.
+  - Neither the challenger nor the opponent has an active record in the `match_locks` table.
+- **AND** if any guard check fails, the bot returns a descriptive ephemeral error.
+- **AND** if all checks pass, the bot responds ephemerally to the challenger: *"Challenge issued to [opponent]!"* and posts a public invitation to the channel: *"⚔️ [Opponent.mention], you have been challenged by [Challenger.name]!"* equipped with a `ChallengeView` containing **Accept** and **Decline** buttons.
+
+#### AC-18b: Challenge UI Verification & Timeout
+- **GIVEN** a spectator (user other than the challenged opponent) clicks **Accept** or **Decline**,
+- **THEN** the bot returns a descriptive ephemeral warning: *"This challenge belongs to another manager."*
+- **GIVEN** the opponent clicks **Decline**,
+- **THEN** the bot edits the original message to: *"Challenge declined by [opponent]."* and disables the buttons.
+- **GIVEN** the challenge is not accepted or declined within **60 seconds**,
+- **THEN** the invitation times out, and the bot edits the message to: *"Challenge to [opponent] timed out."* and disables the buttons.
+
+#### AC-18c: Match Thread Spawning & Live Ticker
+- **GIVEN** the opponent clicks **Accept**,
+- **THEN** the bot deletes or edits the original challenge invitation and creates a public thread named `🤝 [Club1] vs [Club2] – Friendly` off the current channel.
+- **AND** the bot immediately inserts two rows into the `match_locks` table to prevent either player from initiating concurrent matches (friendly, bot, or league).
+- **AND** the bot fetches both players' active squads (starting 11) and initializes the NSS state machine.
+- **AND** the bot streams the live match commentary ticker to the spawned thread in real-time, yielding kickoff, half-time, goals, saves, misses, cards, injuries, and full-time events.
+
+#### AC-18d: Stat Isolation & Thread Clean-up
+- **GIVEN** the friendly match concludes (at minute 90),
+- **THEN** the final score and events are serialized and written to `friendly_match_logs` (Option A). Competitive tables like `match_logs` or `player_season_stats` are completely untouched.
+- **AND** both managers are mentioned in the final whistle embed inside the thread, and their respective entries are deleted from `match_locks`.
+- **AND** the bot schedules a task to archive and lock the thread after a **120-second delay** to keep the server channels clean.
+
+

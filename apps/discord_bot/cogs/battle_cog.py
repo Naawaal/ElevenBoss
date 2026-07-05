@@ -79,6 +79,55 @@ class TouchlineView(discord.ui.View):
         self.state.home_tactics_modifier = 0.7
         await interaction.response.send_message("📣 **Touchline**: Tactical focus shifted to **Defend**!", ephemeral=True)
 
+class ChallengeView(discord.ui.View):
+    def __init__(self, cog: BattleCog, challenger: discord.Member | discord.User, opponent: discord.Member, original_interaction: discord.Interaction) -> None:
+        super().__init__(timeout=60.0)
+        self.cog = cog
+        self.challenger = challenger
+        self.opponent = opponent
+        self.original_interaction = original_interaction
+        self.message = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.opponent.id:
+            await interaction.response.send_message("❌ This challenge belongs to another manager.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(style=discord.ButtonStyle.success, label="✅ Accept", custom_id="challenge_accept")
+    async def accept_callback(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.stop()
+        await interaction.response.defer(ephemeral=False)
+        await interaction.message.edit(content=f"🤝 Challenge accepted by {self.opponent.mention}! Match is preparing...", view=None)
+        
+        asyncio.create_task(
+            self.cog.start_friendly_match(
+                interaction=interaction,
+                challenger=self.challenger,
+                opponent=self.opponent,
+                invitation_msg=interaction.message
+            )
+        )
+
+    @discord.ui.button(style=discord.ButtonStyle.danger, label="❌ Decline", custom_id="challenge_decline")
+    async def decline_callback(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.stop()
+        await interaction.response.edit_message(
+            content=f"❌ The challenge was declined by **{self.opponent.display_name}**.",
+            view=None
+        )
+
+    async def on_timeout(self) -> None:
+        self.stop()
+        if self.message:
+            try:
+                await self.message.edit(
+                    content=f"⏳ The challenge from **{self.challenger.display_name}** to **{self.opponent.display_name}** has timed out.",
+                    view=None
+                )
+            except Exception:
+                pass
+
 class IMatchOutputHandler(abc.ABC):
     @abc.abstractmethod
     async def initialize(self, interaction: discord.Interaction | None, home_name: str, away_name: str, matchday: int = None) -> discord.abc.Messageable:
@@ -685,9 +734,12 @@ class ArenaHubView(discord.ui.View):
         # Programmatically execute bot battle simulation
         await self.cog.execute_bot_battle(interaction)
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="🤝 Friendly Match (Soon)", custom_id="arena_friendly", disabled=True)
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="🤝 Friendly Match", custom_id="arena_friendly")
     async def friendly_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        pass
+        await interaction.response.send_message(
+            "🤝 **Friendly Match**: To challenge another manager, use the `/battle friendly` slash command (e.g. `/battle friendly opponent:@Manager`).",
+            ephemeral=True
+        )
 
     @discord.ui.button(style=discord.ButtonStyle.secondary, label="🏆 Ranked (Soon)", custom_id="arena_ranked", disabled=True)
     async def ranked_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -727,10 +779,59 @@ class BattleCog(commands.Cog):
     async def bot_battle_command(self, interaction: discord.Interaction) -> None:
         await self.execute_bot_battle(interaction)
 
+    @battle_group.command(name="friendly", description="Challenge another manager to a live friendly match.")
+    @app_commands.describe(opponent="The manager you want to challenge.")
+    @app_commands.guild_only()
+    @app_commands.check(ensure_registered)
+    async def friendly_match_command(self, interaction: discord.Interaction, opponent: discord.Member) -> None:
+        challenger = interaction.user
+        if challenger.id == opponent.id:
+            await interaction.followup.send(embed=error_embed("You cannot challenge yourself!"), ephemeral=True)
+            return
+
+        db = await get_client()
+
+        # Check if opponent is registered
+        opp_res = await db.table("players").select("*").eq("discord_id", opponent.id).maybe_single().execute()
+        opp_player = opp_res.data if opp_res else None
+        if not opp_player:
+            await interaction.followup.send(embed=error_embed(f"The manager {opponent.display_name} is not registered yet!"), ephemeral=True)
+            return
+
+        # Check if either player is already locked in match_locks
+        locks_res = await db.table("match_locks").select("*").in_("discord_id", [challenger.id, opponent.id]).execute()
+        active_locks = locks_res.data or []
+        if active_locks:
+            locked_ids = [l["discord_id"] for l in active_locks]
+            if challenger.id in locked_ids and opponent.id in locked_ids:
+                msg = "Both you and the opponent are currently locked in another match."
+            elif challenger.id in locked_ids:
+                msg = "You are currently locked in another match."
+            else:
+                msg = f"{opponent.display_name} is currently locked in another match."
+            await interaction.followup.send(embed=error_embed(msg), ephemeral=True)
+            return
+
+        # Issue challenge
+        await interaction.followup.send(embed=success_embed(f"Challenge issued to {opponent.mention}!"), ephemeral=True)
+
+        view = ChallengeView(self, challenger, opponent, interaction)
+        challenge_msg = await interaction.channel.send(
+            content=f"⚔️ {opponent.mention}, you have been challenged to a Friendly Match by **{challenger.display_name}**!",
+            view=view
+        )
+        view.message = challenge_msg
     async def execute_bot_battle(self, interaction: discord.Interaction) -> None:
+        lock_acquired = False
         try:
             db = await get_client()
- 
+
+            # Concurrency Lock Check
+            locks_res = await db.table("match_locks").select("*").eq("discord_id", interaction.user.id).execute()
+            if locks_res.data:
+                await interaction.followup.send(embed=error_embed("You are currently locked in another match."), ephemeral=True)
+                return
+
             # 1. Fetch player metadata
             player_res = await db.table("players").select("*").eq("discord_id", interaction.user.id).maybe_single().execute()
             player = player_res.data if player_res else None
@@ -738,7 +839,7 @@ class BattleCog(commands.Cog):
             if not player:
                 await interaction.followup.send(embed=error_embed("Player profile not found."), ephemeral=True)
                 return
- 
+
             # 2. Check energy requirement
             if player["energy"] < 10:
                 await interaction.followup.send(
@@ -746,7 +847,11 @@ class BattleCog(commands.Cog):
                     ephemeral=True
                 )
                 return
- 
+
+            # Acquire lock
+            await db.table("match_locks").insert({"discord_id": interaction.user.id, "lock_type": "bot"}).execute()
+            lock_acquired = True
+
             # 3. Fetch starting 11 details
             assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", interaction.user.id).execute()
             assignments = assignments_res.data or []
@@ -943,11 +1048,26 @@ class BattleCog(commands.Cog):
                 await interaction.channel.send(embed=error_embed(f"An error occurred: {str(e)}"))
             else:
                 await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
+        finally:
+            if lock_acquired:
+                await db.table("match_locks").delete().eq("discord_id", interaction.user.id).execute()
 
     async def execute_league_match(self, interaction: discord.Interaction, fixture: dict) -> None:
+        lock_acquired = False
         try:
             db = await get_client()
             user_id = interaction.user.id
+
+            # Concurrency Lock Check
+            locks_res = await db.table("match_locks").select("*").eq("discord_id", user_id).execute()
+            if locks_res.data:
+                await interaction.followup.send(embed=error_embed("You are currently locked in another match."), ephemeral=True)
+                return
+
+            # Acquire lock
+            await db.table("match_locks").insert({"discord_id": user_id, "lock_type": "league"}).execute()
+            lock_acquired = True
+
             fixture_id = fixture["id"]
             
             # Re-fetch fixture to make sure it's not already played
@@ -1085,13 +1205,232 @@ class BattleCog(commands.Cog):
             # Check matchday advancement
             from apps.discord_bot.cogs.league_cog import update_current_matchday
             await update_current_matchday(db, f["season_id"])
-
         except Exception as e:
             logger.exception("Failed to execute league match.")
             if interaction.response.is_done():
                 await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
             else:
                 await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
+        finally:
+            if lock_acquired:
+                await db.table("match_locks").delete().eq("discord_id", user_id).execute()
+
+    async def start_friendly_match(
+        self,
+        interaction: discord.Interaction,
+        challenger: discord.Member | discord.User,
+        opponent: discord.Member,
+        invitation_msg: discord.Message
+    ) -> None:
+        db = await get_client()
+        
+        # 1. Spawning Thread
+        thread = None
+        try:
+            c_res = await db.table("players").select("*").eq("discord_id", challenger.id).maybe_single().execute()
+            o_res = await db.table("players").select("*").eq("discord_id", opponent.id).maybe_single().execute()
+            
+            c_player = c_res.data
+            o_player = o_res.data
+            
+            thread_name = f"🤝 {c_player['club_name']} vs {o_player['club_name']} – Friendly"
+            thread = await invitation_msg.create_thread(
+                name=thread_name,
+                auto_archive_duration=60
+            )
+        except Exception as e:
+            logger.exception("Failed to spawn friendly match thread.")
+            await invitation_msg.channel.send(embed=error_embed(f"Failed to create match thread: {str(e)}"))
+            return
+
+        # 2. Acquire Concurrency Locks
+        try:
+            await db.table("match_locks").upsert([
+                {"discord_id": challenger.id, "lock_type": "friendly"},
+                {"discord_id": opponent.id, "lock_type": "friendly"}
+            ]).execute()
+        except Exception as e:
+            logger.exception("Failed to acquire match locks.")
+            await thread.send(embed=error_embed(f"Failed to acquire match locks: {str(e)}"))
+            return
+
+        try:
+            async def get_squad_cards(discord_id: int):
+                assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", discord_id).execute()
+                assignments = assignments_res.data or []
+                active_cards = [a["player_cards"] for a in assignments if a.get("player_cards")]
+                
+                match_cards = []
+                for c in active_cards:
+                    ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", c["id"]).execute()
+                    playstyles = [p["playstyle_key"] for p in ps_res.data] if ps_res.data else []
+                    match_cards.append(
+                        MatchPlayerCard(
+                            name=c["name"], position=c["position"], overall=c["overall"],
+                            pac=c.get("pac", 50), sho=c.get("sho", 50), pas=c.get("pas", 50),
+                            dri=c.get("dri", 50), def_stat=c.get("def", 50), phy=c.get("phy", 50),
+                            morale=c.get("morale", 80), playstyles=playstyles
+                        )
+                    )
+                return match_cards
+            
+            c_cards = await get_squad_cards(challenger.id)
+            o_cards = await get_squad_cards(opponent.id)
+            
+            if len(c_cards) != 11 or len(o_cards) != 11:
+                error_msg = ""
+                if len(c_cards) != 11:
+                    error_msg += f"❌ Challenger **{c_player['manager_name']}** has {len(c_cards)}/11 players assigned.\n"
+                if len(o_cards) != 11:
+                    error_msg += f"❌ Opponent **{o_player['manager_name']}** has {len(o_cards)}/11 players assigned.\n"
+                await thread.send(embed=error_embed(f"Friendly match cancelled:\n{error_msg}Managers must have exactly 11 active squad players to start."))
+                return
+
+            c_rating = sum(p.overall for p in c_cards) / 11
+            o_rating = sum(p.overall for p in o_cards) / 11
+
+            # 3. Initialize Engine
+            state = MatchState(home_rating=c_rating, away_rating=o_rating)
+            commentary_engine = CommentaryEngine()
+
+            init_embed = discord.Embed(
+                title=f"🏟️ Live Friendly Match: {c_player['club_name']} vs {o_player['club_name']}",
+                color=0x00FF87
+            )
+            init_embed.add_field(name="Scoreboard", value=f"🏟️ **{c_player['club_name']}** `0 - 0` **{o_player['club_name']}**", inline=False)
+            init_embed.add_field(name="📈 Momentum", value=get_momentum_bar(0), inline=False)
+            init_embed.add_field(name="Live Commentary", value="🟢 **0'** - The referee blows the whistle and we are underway!", inline=False)
+            
+            ticker_msg = await thread.send(embed=init_embed)
+
+            # Ticker Streaming Loop
+            ticker_history: list[str] = []
+            key_events_list: list[dict] = []
+            
+            async for ev in stream_match(state, c_cards, o_cards, c_player["club_name"], o_player["club_name"]):
+                variables = {
+                    "actor": ev["actor"],
+                    "team": ev["team"]
+                }
+                comm = commentary_engine.get_commentary(ev["type"], state.context_tags, variables)
+                text = comm["text"]
+                urgency = comm["urgency"]
+
+                emoji_map = {
+                    "KICKOFF": "🟢",
+                    "HALF_TIME": "⏸️",
+                    "GOAL": "⚽",
+                    "SAVE": "🧤",
+                    "MISS": "❌",
+                    "CHANCE": "🎯",
+                    "FOUL": "🟨",
+                    "FULL_TIME": "🏁"
+                }
+                emo = emoji_map.get(ev["type"], "⏱️")
+
+                ticker_history.append(f"{emo} **{ev['minute']}'** - {text}")
+                recent_ticker = ticker_history[-5:]
+
+                embed = discord.Embed(
+                    title=f"🏟️ Live Friendly Match: {c_player['club_name']} vs {o_player['club_name']}",
+                    color=0x00FF87
+                )
+                embed.add_field(name="Scoreboard", value=f"🏟️ **{c_player['club_name']}** `{ev['score_update']}` **{o_player['club_name']}**", inline=False)
+                embed.add_field(name="📈 Momentum", value=get_momentum_bar(state.momentum), inline=False)
+                embed.add_field(name="Live Commentary", value="\n".join(recent_ticker), inline=False)
+
+                await ticker_msg.edit(embed=embed)
+
+                if ev["type"] in ["KICKOFF", "HALF_TIME", "GOAL", "SAVE", "MISS", "CHANCE", "FOUL", "FULL_TIME"]:
+                    event_entry = {
+                        "minute": ev["minute"],
+                        "type": ev["type"],
+                        "actor": ev["actor"],
+                        "team": ev["team"],
+                        "text": text
+                    }
+                    if "assister" in ev:
+                        event_entry["assister"] = ev["assister"]
+                    key_events_list.append(event_entry)
+
+                if ev["type"] in ["FULL_TIME", "HALF_TIME"]:
+                    sleep_time = 2.0
+                elif urgency == "cliffhanger":
+                    sleep_time = 3.5
+                elif urgency == "build_up":
+                    sleep_time = 2.5
+                else:
+                    sleep_time = 1.5
+
+                await asyncio.sleep(sleep_time)
+
+            # Generate Match Statistics
+            box_score = {
+                "possession_home": random.randint(45, 55),
+                "possession_away": random.randint(45, 55),
+                "shots_home": max(state.home_score + 1, random.randint(5, 12)),
+                "shots_away": max(state.away_score + 1, random.randint(5, 12)),
+                "motm": random.choice(c_cards + o_cards).name
+            }
+
+            press_embed = discord.Embed(
+                title="🎙️ Friendly Post-Match Press Conference",
+                description="Reporters gather as the managers discuss the friendly game statistics.",
+                color=0xFFCC00
+            )
+            result_emoji = "🤝 DRAW" if state.home_score == state.away_score else ("🎉 HOME WIN" if state.home_score > state.away_score else "🎉 AWAY WIN")
+            press_embed.add_field(
+                name="🥅 Final Result",
+                value=f"### {result_emoji}\n**{c_player['club_name']}** `{state.home_score} - {state.away_score}` **{o_player['club_name']}**",
+                inline=False
+            )
+            press_embed.add_field(
+                name="📊 Match Statistics",
+                value=(
+                    f"**Possession**: {box_score['possession_home']}% - {box_score['possession_away']}%\n"
+                    f"**Shots**: {box_score['shots_home']} - {box_score['shots_away']}\n"
+                    f"**Man of the Match**: ⭐ **{box_score['motm']}**"
+                ),
+                inline=True
+            )
+            press_embed.set_footer(text="🤝 Match concluded. Friendly match logs are completely isolated.")
+            
+            await thread.send(content=f"🏁 Match finished! {challenger.mention} {opponent.mention}", embed=press_embed)
+
+            # Write friendly match log
+            await db.table("friendly_match_logs").insert({
+                "home_discord_id": challenger.id,
+                "away_discord_id": opponent.id,
+                "home_score": state.home_score,
+                "away_score": state.away_score,
+                "box_score": box_score,
+                "key_events": key_events_list
+            }).execute()
+
+            # Edit thread name
+            try:
+                await thread.edit(name=f"🤝 {c_player['club_name']} {state.home_score}-{state.away_score} {o_player['club_name']} – Friendly")
+            except Exception as e:
+                logger.warning(f"Failed to rename friendly thread: {e}")
+
+            # Schedule Thread Archival and Lock after 120 seconds
+            async def archive_friendly_thread(t: discord.Thread, delay: float) -> None:
+                await asyncio.sleep(delay)
+                try:
+                    await t.edit(locked=True, archived=True)
+                except discord.NotFound:
+                    pass
+                except Exception as err:
+                    logger.warning(f"Failed to lock and archive friendly thread {t.id}: {err}")
+
+            asyncio.create_task(archive_friendly_thread(thread, 120.0))
+
+        except Exception as e:
+            logger.exception("Error during friendly match execution.")
+            await thread.send(embed=error_embed(f"An error occurred during friendly match execution: {str(e)}"))
+        finally:
+            # Release Locks
+            await db.table("match_locks").delete().in_("discord_id", [challenger.id, opponent.id]).execute()
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(BattleCog(bot))

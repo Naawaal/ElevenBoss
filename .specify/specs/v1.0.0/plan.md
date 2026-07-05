@@ -744,6 +744,63 @@ Anti-stall mechanism: increments when a phase fails to reach `SCORING_OPP`, adds
 
 All yielded event dicts contain: `minute`, `type`, `score_update`, `actor`, `team` (+optional `assister` on GOALs). Compatible with `IMatchOutputHandler` in `battle_cog.py`.
 
+---
+
+## 7. Friendly Match System (Player vs Player)
+
+### A. Database Schema Extensions
+We define two tables in `supabase/migrations/011_friendly_matches.sql`:
+
+1. **`match_locks`**:
+   - `discord_id` (BIGINT, PK) — Enforces that a player is in at most one active match at a time.
+   - `lock_type` (TEXT CHECK IN ('friendly', 'league', 'bot')) — The type of match keeping the player locked.
+   - `created_at` (TIMESTAMPTZ DEFAULT NOW())
+2. **`friendly_match_logs`**:
+   - `id` (UUID, PK) — Unique match log identifier.
+   - `home_discord_id` (BIGINT REFERENCES players)
+   - `away_discord_id` (BIGINT REFERENCES players)
+   - `home_score` (INTEGER), `away_score` (INTEGER)
+   - `box_score` (JSONB) — Full statistics breakdown.
+   - `key_events` (JSONB) — Serialized chronological match events timeline.
+   - `played_at` (TIMESTAMPTZ DEFAULT NOW())
+
+### B. Command Flow & Interactions
+
+```
+Challenger: /battle friendly [Opponent]
+  │
+  ├─► Check Registration & match_locks for BOTH players
+  │     (If locked: Return ephemeral error)
+  │
+  ├─► Send Ephemeral: "Challenge issued!"
+  └─► Post Channel Invitation + ChallengeView (Accept / Decline)
+        │
+        ├──► Timeout (60s) or Decline
+        │      Edit message to "timed out / declined", disable buttons
+        │
+        └──► Opponent clicks Accept
+               ├─► Delete/Edit Invitation message
+               ├─► Spawns Public Thread: "🤝 {Club1} vs {Club2} – Friendly"
+               ├─► Insert locks for BOTH users in match_locks table
+               ├─► Start stream_match() inside the thread
+               │     (Streams events with 1-2s delay)
+               ├─► Match Ends (90')
+               │     ├─► Write box score/key events to friendly_match_logs
+               │     ├─► Remove locks from match_locks table
+               │     └─► Mention both managers in thread
+               └─► Wait 120 seconds -> Archive & Lock thread
+```
+
+### C. Lock & Log Management
+- Before starting, the bot runs:
+  `SELECT discord_id FROM match_locks WHERE discord_id IN (challenger_id, opponent_id)`
+- On Accept:
+  `INSERT INTO match_locks (discord_id, lock_type) VALUES (challenger_id, 'friendly'), (opponent_id, 'friendly')`
+- On Finish:
+  `DELETE FROM match_locks WHERE discord_id IN (challenger_id, opponent_id)`
+- Final log entry:
+  `INSERT INTO friendly_match_logs (home_discord_id, away_discord_id, home_score, away_score, box_score, key_events) VALUES (...)`
+
 
 
 
