@@ -1,0 +1,89 @@
+{
+  "KICKOFF": [
+    {
+      "tags": ["generic"],
+      "urgency": "routine",
+      "text": "The referee blows the whistle and we are underway! {team} kicks off."
+    },
+    {
+      "tags": ["generic"],
+      "urgency": "routine",
+      "text": "Kickoff! The crowd roars as the match begins with {team} in possession."
+    }
+  ],
+  "CHANCE": [
+    {
+      "tags": ["generic"],
+      "urgency": "build_up",
+      "text": "{actor} picks up the ball in a dangerous area for {team}!"
+    },
+    {
+      "tags": ["high_momentum"],
+      "urgency": "build_up",
+      "text": "{team} is piling on the pressure, and {actor} finds space at the edge of the box!"
+    },
+    {
+      "tags": ["late"],
+      "urgency": "cliffhanger",
+      "text": "A late surge by {team}! {actor} breaks through the defensive line!"
+    }
+  ],
+  "GOAL": [
+    {
+      "tags": ["generic"],
+      "urgency": "cliffhanger",
+      "text": "GOAL! {actor} curls it beautifully into the top corner for {team}!"
+    },
+    {
+      "tags": ["late"],
+      "urgency": "cliffhanger",
+      "text": "UNBELIEVABLE! {actor} scores a crucial late goal for {team}!"
+    },
+    {
+      "tags": ["high_momentum"],
+      "urgency": "cliffhanger",
+      "text": "{team}'s dominance pays off! {actor} clinical finish puts them ahead!"
+    }
+  ],
+  "FOUL": [
+    {
+      "tags": ["generic"],
+      "urgency": "routine",
+      "text": "Foul! {actor} slides in aggressively and gets a firm talking to by the ref."
+    },
+    {
+      "tags": ["late"],
+      "urgency": "build_up",
+      "text": "Tension is rising! {actor} commits a tactical foul to break the play."
+    }
+  ],
+  "MISS": [
+    {
+      "tags": ["generic"],
+      "urgency": "build_up",
+      "text": "{actor} takes a shot but it flies wide of the post."
+    },
+    {
+      "tags": ["tied"],
+      "urgency": "cliffhanger",
+      "text": "A massive chance wasted! {actor} shoots directly at the keeper!"
+    },
+    {
+      "tags": ["late"],
+      "urgency": "cliffhanger",
+      "text": "So close! {actor}'s late shot strikes the crossbar!"
+    }
+  ],
+  "FULL_TIME": [
+    {
+      "tags": ["generic"],
+      "urgency": "routine",
+      "text": "The referee blows the final whistle. Full time!"
+    },
+    {
+      "tags": ["tied"],
+      "urgency": "routine",
+      "text": "Full time! A hard-fought draw between both sides."
+    }
+  ]
+}

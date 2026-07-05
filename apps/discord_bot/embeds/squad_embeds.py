@@ -35,7 +35,11 @@ def starting_11_embed(formation: str, assignments: dict[int, dict]) -> discord.E
         
         if card:
             rarity_emoji = rarity_emojis.get(card["rarity"], "⚪")
-            value = f"{rarity_emoji} **{card['name']}**\n**{card['overall']} OVR** | {card['position']}"
+            role = card.get("role", "Balanced")
+            morale = card.get("morale", 80)
+            ps_list = card.get("playstyles")
+            ps_str = f"\n✨ {', '.join(ps_list)}" if ps_list else ""
+            value = f"{rarity_emoji} **{card['name']}**\n**{card['overall']} OVR** | {card['position']}\n💼 {role} | Morale: {morale}%{ps_str}"
         else:
             value = "❌ *[EMPTY]*"
         

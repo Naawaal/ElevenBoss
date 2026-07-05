@@ -399,4 +399,165 @@ This layer handles Discord slash command invocation, UI rendering, pacing, and d
 * **CRITICAL**: The bot must NOT perform any database writes (Supabase RPCs or upserts for energy cost, coin rewards, XP, match history insert) until the live ticker loop finishes.
 * If the loop crashes or the connection is severed mid-match, no rewards are given and no energy is deducted. This prevents half-applied states or reward duplication.
 
+---
+
+## 8. ElevenBoss v1.2 Architecture (Economy & Training System)
+
+### A. Database Extensions & Ledger
+
+#### 1. Table Alterations
+* **`players` table extension:** Add `tokens` (INT default 0) and `training_slots_max` (INT default 2) columns. Convert `coins` from `INTEGER` to `BIGINT`.
+
+#### 2. Economy Ledger
+```sql
+CREATE TABLE public.economy_ledger (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    club_id     BIGINT NOT NULL REFERENCES public.players(discord_id) ON DELETE CASCADE,
+    amount      BIGINT NOT NULL,
+    currency    TEXT NOT NULL CHECK (currency IN ('coins', 'tokens')),
+    source      TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+#### 3. Active Training Drills
+```sql
+CREATE TABLE public.active_training (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    club_id     BIGINT NOT NULL REFERENCES public.players(discord_id) ON DELETE CASCADE,
+    card_id     UUID NOT NULL REFERENCES public.player_cards(id) ON DELETE CASCADE,
+    drill_type  TEXT NOT NULL CHECK (drill_type IN ('cardio', 'tactics', 'match_prep')),
+    end_time    TIMESTAMPTZ NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+---
+
+### B. Atomic SQL RPC Transactions
+
+#### 1. `process_training_start`
+* **Purpose:** Safely starts a training drill if the user has slots available and sufficient coins.
+* **Arguments:** `p_club_id BIGINT, p_card_id UUID, p_drill TEXT, p_cost BIGINT, p_duration_hours NUMERIC`.
+* **Execution:**
+  1. Lock `players` row.
+  2. Verify player owns `player_cards` card.
+  3. Verify card is not already training.
+  4. Verify active drills count is less than `training_slots_max`.
+  5. Verify coins are greater than or equal to `p_cost`.
+  6. Deduct `p_cost` from `players.coins`.
+  7. Insert negative amount transaction log into `economy_ledger`.
+  8. Insert training drill row into `active_training`.
+
+#### 2. `process_agent_sale`
+* **Purpose:** Transactionally deletes a player card, credits the sale value in coins, and logs it.
+* **Arguments:** `p_club_id BIGINT, p_card_id UUID, p_sale_value BIGINT`.
+* **Execution:**
+  1. Verify card ownership.
+  2. Delete player card from `player_cards`.
+  3. Add `p_sale_value` to `players.coins`.
+  4. Insert transaction log into `economy_ledger`.
+
+---
+
+### C. Pure Logic Packages
+
+#### 1. Economy Package (`packages/economy/`)
+* **`calculate_weekly_wages(squad, config)`:** Calculates wage bill forecast. Wage: `(OVR - 40)^2 * wage_scale_factor + 10`.
+* **`generate_agent_offer(player_ovr, player_rarity, config)`:** Computes buyer offer: `((OVR - 45)^2.5 * 1.5 + 50) * rarity_multiplier`.
+
+#### 2. Training Package (`packages/training/`)
+* **`calculate_xp_gain(drill, player_lvl, config)`:** Computes training drill XP: `drill_base_xp * (1.0 / (1.0 + 0.05 * (player_lvl - 1)))`.
+
+---
+
+## 9. ElevenBoss v1.3 Architecture (Player Lifecycle & Evolutions)
+
+### A. Database Extensions & Evolution Tracking
+
+#### 1. Table Alterations
+* **`player_cards` table extension:** Add `role` (TEXT default 'Balanced'), `morale` (INT default 80), `contract_expires_at` (TIMESTAMPTZ), `potential` (INT), and `age` (INT default 25). Also ensure it has `xp` (INT default 0).
+
+#### 2. Player PlayStyles
+```sql
+CREATE TABLE public.player_playstyles (
+    card_id        UUID NOT NULL REFERENCES public.player_cards(id) ON DELETE CASCADE,
+    playstyle_key  TEXT NOT NULL,
+    PRIMARY KEY (card_id, playstyle_key)
+);
+```
+
+#### 3. Active Evolutions
+```sql
+CREATE TABLE public.active_evolutions (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    card_id           UUID NOT NULL REFERENCES public.player_cards(id) ON DELETE CASCADE,
+    evolution_id      TEXT NOT NULL,
+    target_metric     TEXT NOT NULL,
+    current_progress  INTEGER NOT NULL DEFAULT 0,
+    target_goal       INTEGER NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+#### 4. Player XP Logs
+```sql
+CREATE TABLE public.player_xp_log (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    card_id     UUID NOT NULL REFERENCES public.player_cards(id) ON DELETE CASCADE,
+    xp_amount   INTEGER NOT NULL,
+    source      TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+---
+
+### B. Atomic SQL RPC Transactions
+
+#### 1. `process_match_result`
+* **Purpose:** Atomically updates player metrics (distributes role-based XP, updates evolutions progress, and adjusts morale) after a simulated match.
+* **Arguments:** `p_result TEXT, p_card_ids UUID[], p_xp_amount INTEGER`.
+* **Execution:**
+  1. Update `player_cards` set `xp = xp + p_xp_amount` for all cards in `p_card_ids`.
+  2. Log XP additions to `player_xp_log` for each card.
+  3. Increment `current_progress` in `active_evolutions` for cards in `p_card_ids` where target_metric is matched.
+  4. Adjust morale: +5 for win, +1 for draw, -5 for loss, clamped to [10, 100].
+
+#### 2. `renew_contract`
+* **Purpose:** Deducts contract costs from coins and extends the expiry timestamp.
+* **Arguments:** `p_club_id BIGINT, p_card_id UUID, p_cost BIGINT, p_extension_days INTEGER`.
+* **Execution:**
+  1. Verify card ownership.
+  2. Verify player coins >= `p_cost`.
+  3. Deduct `p_cost` from `players.coins`.
+  4. Update `player_cards` contract expiry date.
+  5. Log ledger transaction.
+
+---
+
+### C. Pure Logic Player Engine Package (`packages/player_engine/`)
+* **`calculate_level(xp)`**: Returns the level given current XP based on the exponential curve: `100 * 1.12^level`.
+* **`roll_dynamic_potential(age, recent_ratings)`**: Calculates dynamic potential improvements for young players (age 16-21).
+* **`calculate_contract_renewal_cost(ovr, config)`**: Computes coin renewal fees.
+
+---
+
+## 10. ElevenBoss v1.4 Architecture (Live Stadium V2 — Dynamic Match Engine)
+
+### A. Core Commentary Data Layer
+* **`commentary_bank.json`**: Static JSON file storing commentary templates categorized by events (`KICKOFF`, `CHANCE`, `GOAL`, `FOUL`, `MISS`, `FULL_TIME`). Contains metadata fields for `tags` and `urgency`.
+* **`CommentaryEngine`**: Python class loaded at runtime to filter lines using active context tags, resolving placeholder formatting.
+
+### B. Live Simulator State Machine (`v2_simulator.py`)
+* **`MatchState`**: tracks home/away ratings, current score, minute, momentum (-100 to 100), tactics modifier, and a list of context tags.
+* **`stream_match(state, home_squad, away_squad)`**: Async generator yielding events in random minute intervals, adjusting momentum and determining events.
+
+### C. Touchline Interactivity Flow
+* **`TouchlineView`**: Holds Attack, Defend, and Balanced buttons updating the `MatchState.home_tactics_modifier` live.
+* **Commentary streaming**: Commands `/match-play` consume events from `stream_match`, editing messages in real-time, and concluding with database writes.
+
+
+
+
 

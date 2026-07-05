@@ -277,4 +277,72 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-05f:** To ensure data integrity, all database updates (deducting energy, crediting coins/XP, logging match history) are executed *after* the final whistle event and before the Press Conference UI is posted.
 - **AC-05g:** If thread creation is not supported or fails (e.g., in DMs or due to missing permissions), the command falls back gracefully to running in the parent channel.
 
+---
+
+# ElevenBoss v1.2 Features
+
+### US-06: Club Economy & Wages
+
+> **As a** football club manager,
+> **I want** to manage my club's finances, review wage bills, and sell players,
+> **So that** I can fund my squad development and make strategic player transactions.
+
+**Acceptance Criteria:**
+- **AC-06a:** The club's wallet supports both Coins and Tokens.
+- **AC-06b:** Running `/club-finances` displays current Coins/Tokens balances and a calculated weekly wage bill forecast based on the OVR of the manager's current starting 11 squad.
+- **AC-06c:** Running `/sell-player` displays a dropdown of owned players. Selecting a player calculates their agent sale value based on OVR and rarity, presenting a "Confirm Sale" button.
+- **AC-06d:** Clicking "Confirm Sale" transactionally removes the player card from the manager's roster, credits the sale value in coins to the club, and logs the details to the transaction ledger.
+- **AC-06e:** Players currently assigned to the starting 11 squad cannot be sold.
+
+### US-07: Async Training Hub
+
+> **As a** football club manager,
+> **I want** to train my player cards in specific drills asynchronously,
+> **So that** their attributes and levels improve over time.
+
+**Acceptance Criteria:**
+- **AC-07a:** Managers have access to a maximum of 2 active training slots by default.
+- **AC-07b:** Running `/training-hub` displays all training slots, showing active/completed drills with real-time dynamic countdown timestamps.
+- **AC-07c:** Empty slots display a "Start Drill" button. Clicking it presents a menu to select a player card and drill type (`cardio`, `tactics`, `match_prep`).
+- **AC-07d:** Initiating a drill deducts the drill coin cost, logs it in the ledger, and sets the drill's end time.
+- **AC-07e:** Training XP gains use a diminishing returns scale based on the player's current level.
+- **AC-07f:** A player card can only be in one active training drill at a time, and a drill cannot be started if all training slots are currently full.
+
+---
+
+# ElevenBoss v1.3 Features
+
+### US-08: Player Lifecycle & Evolutions
+
+> **As a** football club manager,
+> **I want** to track my players' aging, roles, PlayStyles, morale, contracts, and evolution tracks,
+> **So that** my squad development feels complete and progressive.
+
+**Acceptance Criteria:**
+- **AC-08a:** Player cards support role attributes (`GK`, `Defender`, `Midfielder`, `Forward`), morale (impacted by match results), contracts (renewable via coins), and dynamic potential for youth cards (age 16-21).
+- **AC-08b:** PlayStyles act as positive match engine simulation modifiers.
+- **AC-08c:** Running `/player-profile` displays an exhaustive profile (OVR, Role, Level/XP progress bar, PlayStyles, Morale, Contract Days, and Age) with interactive button controls for `[Start Evolution]` and `[Renew Contract]`.
+- **AC-08d:** Running `/player-level-up` allows managers to allocate acquired level-up points to 6 core attributes (PAC, SHO, PAS, DRI, DEF, PHY).
+- **AC-08e:** Running `/evolution-start` spawns a select menu of 3 basic evolution tracks allowing players to undergo progressive training challenges.
+
+---
+
+# ElevenBoss v1.4 Features
+
+### US-09: Live Stadium V2 (Dynamic Match Engine)
+
+> **As a** football club manager,
+> **I want** to play matches that respond to live touchline tactical adjustments and show dynamic, context-aware commentary,
+> **So that** I feel like an active manager during games rather than a passive observer.
+
+**Acceptance Criteria:**
+- **AC-09a:** Match simulation streams events dynamically in real-time via an async generator, advancing by random minute phases (6-12 mins) up to 90'.
+- **AC-09b:** Interactive Touchline buttons (`[ Attack ]`, `[ Defend ]`, `[ Balanced ]`) allow managers to alter match math (momentum and ratings weight) mid-game.
+- **AC-09c:** The match simulator maintains a `MatchState` object containing scores, minute, momentum, and dynamic context tags (e.g. `tied`, `late`, `high_momentum`).
+- **AC-09d:** Commentary lines are dynamically generated using a JSON bank (`commentary_bank.json`) which filters and matches context tags, supporting placeholders for team/player actors.
+- **AC-09e:** Discord ticker updates are paced dynamically using the commentary line's `urgency` value (e.g. longer pauses for high-drama cliffhangers).
+- **AC-09f:** Data transaction safety is preserved: Supabase writes (energy cost, rewards, XP logs, evolutions progress) are strictly executed only after the full match stream terminates.
+
+
+
 

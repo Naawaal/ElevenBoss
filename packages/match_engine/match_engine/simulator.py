@@ -6,17 +6,65 @@ from .models import MatchInput, MatchResult
 def simulate_match(match_input: MatchInput) -> MatchResult:
     """
     Simulates a match between the player's team and an AI opponent:
-    - Team Rating = average overall rating of starting 11.
-    - Applies a normal distribution modifier (±15%) to both ratings.
+    - Calculates effective overall rating based on 6 core attributes.
+    - Applies Morale modifiers (+/- based on >50 or <30).
+    - Applies PlayStyle multipliers (5% boost to matching attributes).
     - Higher modified rating wins; draw if difference is <= 3 points.
     - Calculates coins and points rewards.
-    - Generates realistic goal scorelines matching the result.
+    - Generates realistic goal scorelines and stats.
     """
     my_players = match_input.my_players
     if not my_players:
         raise ValueError("Match requires at least one player card.")
 
-    my_rating = sum(p.overall for p in my_players) / len(my_players)
+    total_effective = 0.0
+
+    # Stat-to-PlayStyle mappings
+    playstyle_boosts = {
+        "pac": ["Rapid", "Quick Step", "speed_boost"],
+        "sho": ["Finesse Shot", "Power Header", "shooting_boost"],
+        "pas": ["Whipped Pass", "Tiki Taka", "passing_boost"],
+        "dri": ["Technical", "Trickster", "dribble_boost"],
+        "def_stat": ["Intercept", "Slide Tackle", "defense_boost"],
+        "phy": ["Bruiser", "Relentless", "physical_boost"]
+    }
+
+    for p in my_players:
+        # 1. Morale Modifiers
+        morale_mod = 0.0
+        if p.morale > 50:
+            morale_mod = (p.morale - 50) * 0.1
+        elif p.morale < 30:
+            morale_mod = -((30 - p.morale) * 0.2)
+            
+        pac = p.pac + morale_mod
+        sho = p.sho + morale_mod
+        pas = p.pas + morale_mod
+        dri = p.dri + morale_mod
+        df = p.def_stat + morale_mod
+        phy = p.phy + morale_mod
+
+        # 2. PlayStyle Multipliers
+        for ps in p.playstyles:
+            for stat_name, ps_list in playstyle_boosts.items():
+                if ps in ps_list:
+                    if stat_name == "pac":
+                        pac *= 1.05
+                    elif stat_name == "sho":
+                        sho *= 1.05
+                    elif stat_name == "pas":
+                        pas *= 1.05
+                    elif stat_name == "dri":
+                        dri *= 1.05
+                    elif stat_name == "def_stat":
+                        df *= 1.05
+                    elif stat_name == "phy":
+                        phy *= 1.05
+
+        effective_ovr = (pac + sho + pas + dri + df + phy) / 6.0
+        total_effective += effective_ovr
+
+    my_rating = total_effective / len(my_players)
     opp_rating = match_input.opponent_base_rating
 
     # Apply normal distribution modifier (±15% via std dev of 5% of rating)
@@ -34,7 +82,6 @@ def simulate_match(match_input: MatchInput) -> MatchResult:
         points_earned = 1
     elif diff > 3.0:
         result = "win"
-        # Determine winning margin based on diff
         margin = max(1, int(round(diff / 6.0)) + random.choice([0, 1]))
         goals_against = random.choice([0, 1, 2])
         goals_for = goals_against + margin

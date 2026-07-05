@@ -16,6 +16,18 @@ class MatchPlayerCard(BaseModel):
     name: str
     position: str
     overall: int = Field(..., ge=1)
+    pac: int = 50
+    sho: int = 50
+    pas: int = 50
+    dri: int = 50
+    def_stat: int = Field(50, alias="def")
+    phy: int = 50
+    morale: int = 80
+    playstyles: list[str] = Field(default_factory=list)
+
+    class Config:
+        populate_by_name = True
+        arbitrary_types_allowed = True
 
 class MatchInput(BaseModel):
     my_players: list[MatchPlayerCard]

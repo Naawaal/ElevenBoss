@@ -35,7 +35,9 @@ class ElevenBossBot(commands.Bot):
             "apps.discord_bot.cogs.squad_cog",
             "apps.discord_bot.cogs.match_cog",
             "apps.discord_bot.cogs.player_cog",
-            "apps.discord_bot.cogs.profile_cog"
+            "apps.discord_bot.cogs.profile_cog",
+            "apps.discord_bot.cogs.economy_cog",
+            "apps.discord_bot.cogs.training_cog"
         ]
 
     async def setup_hook(self) -> None:

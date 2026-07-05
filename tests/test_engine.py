@@ -34,7 +34,19 @@ def test_match_simulator():
     """
     # 1. Create a mock starting 11 using MatchPlayerCard
     my_players = [
-        MatchPlayerCard(name=f"Player {i}", position="DEF", overall=70)
+        MatchPlayerCard(
+            name=f"Player {i}",
+            position="DEF",
+            overall=70,
+            pac=70,
+            sho=70,
+            pas=70,
+            dri=70,
+            def_stat=70,
+            phy=70,
+            morale=50,
+            playstyles=[]
+        )
         for i in range(11)
     ]
     
@@ -114,3 +126,36 @@ def test_generate_match_script():
     # 5. Count total goal events in between
     goal_events = [ev for ev in events if ev.type == EventType.GOAL]
     assert len(goal_events) == 3 # 2 home goals + 1 away goal
+
+def test_commentary_engine_fallback() -> None:
+    from match_engine import CommentaryEngine
+    engine = CommentaryEngine()
+
+    # 1. Match specific tags: "late" is matched for CHANCE
+    variables = {"actor": "John Doe", "team": "FC Barcelona"}
+    res_late = engine.get_commentary("CHANCE", ["late"], variables)
+    assert "defensive line" in res_late["text"] or "dangerous area" in res_late["text"]
+    assert res_late["urgency"] in ["routine", "build_up", "cliffhanger"]
+
+    # 2. Fall back to generic tags when no matching tags found
+    res_fallback = engine.get_commentary("CHANCE", ["unknown_tag_abc"], variables)
+    assert "picks up" in res_fallback["text"]
+    assert res_fallback["urgency"] == "build_up"
+
+def test_match_state_tag_generation() -> None:
+    from match_engine import MatchState
+
+    # Early, tied, balanced state
+    state = MatchState(home_rating=75.0, away_rating=72.0, minute=10, home_score=1, away_score=1, momentum=10)
+    state.update_tags()
+    assert "early" in state.context_tags
+    assert "tied" in state.context_tags
+    assert "high_momentum" not in state.context_tags
+
+    # Late, home leading, high momentum state
+    state2 = MatchState(home_rating=75.0, away_rating=72.0, minute=80, home_score=2, away_score=1, momentum=60)
+    state2.update_tags()
+    assert "late" in state2.context_tags
+    assert "home_leading" in state2.context_tags
+    assert "high_momentum" in state2.context_tags
+
