@@ -531,4 +531,30 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AND** both managers are mentioned in the final whistle embed inside the thread, and their respective entries are deleted from `match_locks`.
 - **AND** the bot schedules a task to archive and lock the thread after a **120-second delay** to keep the server channels clean.
 
+---
+
+## 19. Global League Points (LP) & Divisions System
+
+### Global vs. Server League Points
+- **Server League Points**: Weekly competitive points reset to 0 at the end of each week. Determines server-specific division promotion/relegation.
+- **Global League Points (LP)**: Persistent global ranking points tracked via the `global_lp` column in `players`. Determines the player's Global Division.
+
+### Global Divisions & Scaling
+- **Global Division**: Derived dynamically from `global_lp` by checking the highest division threshold met in the `global_divisions` table.
+- **AI Scaling**: Bot OVR ranges and coin rewards scale based on the user's current Global Division:
+  - **Bronze III**: 0 LP, Bot 50-60 OVR, 100 Coins Win Reward
+  - **Bronze II**: 100 LP, Bot 55-65 OVR, 125 Coins Win Reward
+  - **Bronze I**: 250 LP, Bot 60-70 OVR, 150 Coins Win Reward
+  - **Silver III**: 500 LP, Bot 70-75 OVR, 200 Coins Win Reward
+  - **Silver II**: 750 LP, Bot 75-80 OVR, 250 Coins Win Reward
+  - **Silver I**: 1000 LP, Bot 80-85 OVR, 300 Coins Win Reward
+  - **Gold**: 1500 LP, Bot 85-90 OVR, 400 Coins Win Reward
+  - **Elite**: 2500 LP, Bot 90-95 OVR, 600 Coins Win Reward
+
+### Match Payout Formula
+- **Win**: +15 LP, `win_coins` awarded.
+- **Draw**: +5 LP, `win_coins / 3` (integer division) awarded.
+- **Loss**: -10 LP (clamped to 0 minimum), `15` coins consolation.
+
+
 

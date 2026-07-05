@@ -801,6 +801,33 @@ Challenger: /battle friendly [Opponent]
 - Final log entry:
   `INSERT INTO friendly_match_logs (home_discord_id, away_discord_id, home_score, away_score, box_score, key_events) VALUES (...)`
 
+---
+
+## 20. Global LP & Divisions System Technical Plan
+
+### A. Database Additions
+- **`global_divisions` Table**:
+  - `id` SERIAL PRIMARY KEY
+  - `name` TEXT UNIQUE NOT NULL
+  - `min_lp` INTEGER NOT NULL
+  - `bot_ovr_min` INTEGER NOT NULL
+  - `bot_ovr_max` INTEGER NOT NULL
+  - `win_coins` INTEGER NOT NULL
+- **`players` Table Modification**:
+  - ADD COLUMN `global_lp` INTEGER DEFAULT 0 NOT NULL CHECK (global_lp >= 0)
+
+### B. Logic Integration
+1. **Division Lookup Flow**:
+   - Query all divisions in `global_divisions` order by `min_lp` descending.
+   - Match player's `global_lp` to find the highest threshold reached.
+2. **Dynamic Bot Battle Math**:
+   - Calibrate bot opponent rating randomly: `opp_rating = random.randint(bot_ovr_min, bot_ovr_max)`
+   - Apply reward scaling atomically to `players` table:
+     - **Win**: `global_lp = global_lp + 15`, `coins = coins + win_coins`, `league_points = league_points + 3`
+     - **Draw**: `global_lp = global_lp + 5`, `coins = coins + (win_coins / 3)`, `league_points = league_points + 1`
+     - **Loss**: `global_lp = max(0, global_lp - 10)`, `coins = coins + 15`, `league_points = league_points + 0`
+
+
 
 
 

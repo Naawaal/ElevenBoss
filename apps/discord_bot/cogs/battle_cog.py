@@ -147,7 +147,7 @@ class IMatchOutputHandler(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def finalize_match(self, result: MatchResult, state: MatchState, home_name: str, away_name: str, motm: str, active_earned: int, active_pts: int, user_id: int, home_team_id: int, away_team_id: int) -> None:
+    async def finalize_match(self, result: MatchResult, state: MatchState, home_name: str, away_name: str, motm: str, active_earned: int, active_pts: int, user_id: int, home_team_id: int, away_team_id: int, **kwargs) -> None:
         """Send post-match press conference, pings, and handle thread renaming/archival."""
         pass
 
@@ -218,7 +218,7 @@ class StandardMatchHandler(IMatchOutputHandler):
 
         await self.ticker_msg.edit(embed=embed, view=touchline_view)
 
-    async def finalize_match(self, result: MatchResult, state: MatchState, home_name: str, away_name: str, motm: str, active_earned: int, active_pts: int, user_id: int, home_team_id: int, away_team_id: int) -> None:
+    async def finalize_match(self, result: MatchResult, state: MatchState, home_name: str, away_name: str, motm: str, active_earned: int, active_pts: int, user_id: int, home_team_id: int, away_team_id: int, **kwargs) -> None:
         target = self.thread if self.thread else self.ticker_msg.channel
         press_embed = discord.Embed(
             title="🎙️ Post-Match Press Conference",
@@ -241,12 +241,21 @@ class StandardMatchHandler(IMatchOutputHandler):
             ),
             inline=True
         )
+        
+        lp_change = kwargs.get("lp_change")
+        total_lp = kwargs.get("total_lp")
+        division_name = kwargs.get("division_name")
+        
+        rewards_lines = [f"🪙 **+{active_earned} coins**"]
+        if lp_change is not None:
+            sign = "+" if lp_change >= 0 else ""
+            rewards_lines.append(f"🏆 **{sign}{lp_change} LP** (Total: {total_lp} LP - {division_name})")
+        else:
+            rewards_lines.append(f"🏆 **+{active_pts} league pts**")
+
         press_embed.add_field(
             name="🎁 Rewards",
-            value=(
-                f"🪙 **+{active_earned} coins**\n"
-                f"🏆 **+{active_pts} league pts**"
-            ),
+            value="\n".join(rewards_lines),
             inline=True
         )
         press_embed.set_footer(text="✅ Rewards, XP gains, and league standings saved to database.")
@@ -303,7 +312,7 @@ class LeagueMatchHandler(IMatchOutputHandler):
 
         await self.ticker_msg.edit(embed=embed, view=touchline_view)
 
-    async def finalize_match(self, result: MatchResult, state: MatchState, home_name: str, away_name: str, motm: str, active_earned: int, active_pts: int, user_id: int, home_team_id: int, away_team_id: int) -> None:
+    async def finalize_match(self, result: MatchResult, state: MatchState, home_name: str, away_name: str, motm: str, active_earned: int, active_pts: int, user_id: int, home_team_id: int, away_team_id: int, **kwargs) -> None:
         if self.ticker_msg:
             try:
                 finished_embed = discord.Embed(
@@ -892,32 +901,56 @@ class BattleCog(commands.Cog):
                     )
                 )
  
-            division = player["division"]
-            opp_rating = DIVISION_OPPONENT_RATINGS.get(division, 55.0)
-            opp_name = random.choice(OPPONENT_NAMES.get(division, ["AI Club"]))
- 
+            # Fetch global divisions
+            div_res = await db.table("global_divisions").select("*").order("min_lp", desc=True).execute()
+            divisions = div_res.data or []
+
+            user_lp = player.get("global_lp", 0)
+            current_div = None
+            for div in divisions:
+                if user_lp >= div["min_lp"]:
+                    current_div = div
+                    break
+            
+            if not current_div:
+                current_div = {"name": "Bronze III", "bot_ovr_min": 50, "bot_ovr_max": 60, "win_coins": 100}
+
+            div_name_base = current_div["name"].split()[0]  # e.g., Bronze, Silver, Gold, Elite
+            mapping = {
+                "Bronze": "Grassroots",
+                "Silver": "Semi-Pro",
+                "Gold": "Professional",
+                "Elite": "Elite"
+            }
+            mapped_key = mapping.get(div_name_base, "Grassroots")
+            opp_name = random.choice(OPPONENT_NAMES.get(mapped_key, ["AI Club"]))
+            
+            bot_min = current_div["bot_ovr_min"]
+            bot_max = current_div["bot_ovr_max"]
+            opp_rating = float(random.randint(bot_min, bot_max))
+
             # Compute manager team base rating
             my_rating = sum(p.overall for p in match_cards) / len(match_cards)
- 
+
             # 5. Instantiate V2 MatchState and CommentaryEngine
             state = MatchState(home_rating=my_rating, away_rating=opp_rating)
             commentary_engine = CommentaryEngine()
- 
+
             # Instantiate StandardMatchHandler
             handler = StandardMatchHandler(self.bot, league_mode=False)
- 
+
             # Initialize target channel
             target = await handler.initialize(interaction, player["club_name"], opp_name)
- 
+
             touchline_view = TouchlineView(state, interaction.user.id)
             await handler.start_match(target, player["club_name"], opp_name, touchline_view)
- 
+
             opp_squad = [
                 MatchPlayerCard(name="Opponent Striker", position="FWD", overall=int(opp_rating)),
                 MatchPlayerCard(name="Opponent Midfielder", position="MID", overall=int(opp_rating)),
                 MatchPlayerCard(name="Opponent Defender", position="DEF", overall=int(opp_rating)),
             ]
- 
+
             # Commentary Streaming Loop
             ticker_history: list[str] = []
             
@@ -929,7 +962,7 @@ class BattleCog(commands.Cog):
                 comm = commentary_engine.get_commentary(ev["type"], state.context_tags, variables)
                 text = comm["text"]
                 urgency = comm["urgency"]
- 
+
                 emoji_map = {
                     "KICKOFF": "🟢",
                     "HALF_TIME": "⏸️",
@@ -940,12 +973,12 @@ class BattleCog(commands.Cog):
                     "FULL_TIME": "🏁"
                 }
                 emo = emoji_map.get(ev["type"], "⏱️")
- 
+
                 ticker_history.append(f"{emo} **{ev['minute']}'** - {text}")
                 recent_ticker = ticker_history[-5:]
- 
+
                 await handler.update_ticker(ev, state, recent_ticker, touchline_view)
- 
+
                 if ev["type"] in ["FULL_TIME", "HALF_TIME"]:
                     sleep_time = 2.0
                 elif urgency == "cliffhanger":
@@ -954,26 +987,33 @@ class BattleCog(commands.Cog):
                     sleep_time = 2.5
                 else:
                     sleep_time = 1.5
- 
+
                 await asyncio.sleep(sleep_time)
- 
+
             for child in touchline_view.children:
                 child.disabled = True
             
             # Generate MatchResult and rewards
+            win_coins = current_div["win_coins"]
             if state.home_score > state.away_score:
                 res_str = "win"
-                coins_earned = 150
+                coins_earned = win_coins
                 points_earned = 3
+                lp_change = 15
             elif state.home_score == state.away_score:
                 res_str = "draw"
-                coins_earned = 50
+                coins_earned = win_coins // 3
                 points_earned = 1
+                lp_change = 5
             else:
                 res_str = "loss"
-                coins_earned = 0
+                coins_earned = 15  # consolation
                 points_earned = 0
- 
+                lp_change = -10
+
+            new_lp = max(0, user_lp + lp_change)
+            actual_lp_change = new_lp - user_lp
+
             result = MatchResult(
                 result=res_str,
                 goals_for=state.home_score,
@@ -988,30 +1028,31 @@ class BattleCog(commands.Cog):
                 shots_away=max(state.away_score + 1, random.randint(5, 12)),
                 motm=random.choice(match_cards).name
             )
- 
+
             # Transaction Safety Payouts
             new_energy = player["energy"] - 10
             new_coins = player["coins"] + result.coins_earned
             new_points = player["league_points"] + result.points_earned
             new_gd = player["goal_difference"] + (result.goals_for - result.goals_against)
             new_matches_played = player["matches_played"] + 1
- 
+
             new_wins = player["wins"] + (1 if result.result == "win" else 0)
             new_draws = player["draws"] + (1 if result.result == "draw" else 0)
             new_losses = player["losses"] + (1 if result.result == "loss" else 0)
- 
-            # Write standings updates
+
+            # Write standings updates (including global_lp)
             await db.table("players").update({
                 "energy": new_energy,
                 "coins": new_coins,
                 "league_points": new_points,
+                "global_lp": new_lp,
                 "goal_difference": new_gd,
                 "matches_played": new_matches_played,
                 "wins": new_wins,
                 "draws": new_draws,
                 "losses": new_losses
             }).eq("discord_id", interaction.user.id).execute()
- 
+
             # Insert history
             await db.table("match_history").insert({
                 "player_id": interaction.user.id,
@@ -1023,7 +1064,7 @@ class BattleCog(commands.Cog):
                 "coins_earned": result.coins_earned,
                 "points_earned": result.points_earned
             }).execute()
- 
+
             # Atomically update player card XP, evolution tracks, and morale
             card_ids = [c["id"] for c in active_cards]
             await db.rpc("process_match_result", {
@@ -1031,7 +1072,14 @@ class BattleCog(commands.Cog):
                 "p_card_ids": card_ids,
                 "p_xp_amount": 15
             }).execute()
- 
+
+            # Match new division for displaying in press conference
+            new_div_name = "Bronze III"
+            for div in divisions:
+                if new_lp >= div["min_lp"]:
+                    new_div_name = div["name"]
+                    break
+
             await handler.finalize_match(
                 result=result,
                 state=state,
