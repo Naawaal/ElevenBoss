@@ -413,10 +413,45 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-13e:** Permission checks: When selecting an announcement channel, the bot verifies it has read/send permissions; if not, it reports a clean error.
 - **AC-13f:** Session timeout: Admin panel views timeout in 10 minutes, disabling elements and marking the footer.
 
+---
 
+## 15. League Notification Policy
 
+### AC-15a: Split-Payload Delivery
 
+- **GIVEN** a league announcement is sent (e.g. season start, season end),
+- **THEN** the notification must use a split-payload structure:
+  - Role mentions reside in message `content` to trigger pings.
+  - Announcement details reside in `embeds` for clean formatting.
+  - Fetch `announcement_role_id` from the `guild_config` database table.
+  - Construct the message `content` as: `f"<@&{role_id}>\n\n{message_body}"` (only include the role mention if `role_id` is not None).
+  - Verify `announcement_role_id` exists in the guild. If the role does not exist, do not include the mention in the content to avoid "broken ping" strings like `<@&None>`.
 
+---
 
+## 16. League Journal & Auto-Archival System
 
+### AC-16a: Centralized League Journal Thread
+- **GIVEN** a league match is simulated (manually or auto-simulated),
+- **THEN** all commentary updates, scoreboard tickers, and final results must be directed to a single centralized public thread named `#league-journal`.
+- **AND** the thread ID is stored in the `guild_config` table under `league_updates_thread_id` (BIGINT).
+- **AND** if the thread does not exist or has been deleted, the bot must automatically re-create the thread in the configured `league_channel_id` channel, post a pinned introductory/rules embed, and save the new thread ID to the database.
 
+### AC-16b: Live-Scroll Ticker (Commentary Rolling Buffer)
+- **GIVEN** a live match is streaming commentary,
+- **THEN** the simulator must edit a single persistent embed field (`Live Commentary`) instead of flooding the channel with individual event messages.
+- **AND** the `Live Commentary` field must display a rolling buffer of only the 5 most recent commentary events.
+
+### AC-16c: Sequential Background Auto-Simulation
+- **GIVEN** background auto-simulation is run (via the 10-minute interval job or admin force-sim command),
+- **THEN** all unplayed matches that have exceeded their window end must be simulated sequentially to prevent rate limits and ensure Commentary is delivered correctly.
+
+### AC-16d: Season End Summary & Archival Flow
+- **GIVEN** the admin ends the season via the `/admin` control panel,
+- **THEN** the bot must calculate final season statistics including:
+  - League Champions (highest points, goal difference, goals for)
+  - Top Scoring Club (highest total goals scored)
+  - Best Defense (fewest total goals conceded)
+- **AND** post the detailed Season Summary and awards embed to the League Journal thread.
+- **AND** wait exactly 30 seconds before renaming the thread to `🏆-season-{season_number}-concluded`, locking it, and archiving it.
+- **AND** reset `league_updates_thread_id` to NULL in `guild_config` so the next season gets a fresh journal thread.

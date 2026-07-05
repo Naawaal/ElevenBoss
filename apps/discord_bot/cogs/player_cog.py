@@ -119,7 +119,7 @@ class PlayerProfileView(discord.ui.View):
             db = await get_client()
 
             card_res = await db.table("player_cards").select("overall").eq("id", self.card_id).maybe_single().execute()
-            ovr = card_res.data["overall"] if card_res.data else 50
+            ovr = card_res.data["overall"] if (card_res and card_res.data) else 50
             cost = calculate_contract_renewal_cost(ovr, GameConfig())
 
             res = await db.rpc("renew_contract", {
@@ -170,18 +170,16 @@ class PlayerProfileView(discord.ui.View):
         try:
             db = await get_client()
 
-            # Fetch active evolution
             evo_res = await db.table("active_evolutions").select("*").eq("card_id", self.card_id).maybe_single().execute()
-            evo = evo_res.data
+            evo = evo_res.data if evo_res else None
             if not evo or evo["current_progress"] < evo["target_goal"]:
                 await interaction.followup.send(embed=error_embed("Evolution is not complete yet."), ephemeral=True)
                 return
 
             track = EVOLUTION_TRACKS[evo["evolution_id"]]
 
-            # Fetch card
             card_res = await db.table("player_cards").select("*").eq("id", self.card_id).maybe_single().execute()
-            card = card_res.data
+            card = card_res.data if card_res else None
 
             new_stat_val = card[track["reward_stat"]] + track["reward_val"]
             new_overall = card["overall"] + 1
@@ -230,7 +228,7 @@ class PlayerCog(commands.Cog):
 
             # 1. Fetch player card details
             card_res = await db.table("player_cards").select("*").eq("id", player_id).maybe_single().execute()
-            card = card_res.data
+            card = card_res.data if card_res else None
             if not card:
                 await interaction.followup.send(embed=error_embed("Player card not found."), ephemeral=True)
                 return
@@ -246,7 +244,7 @@ class PlayerCog(commands.Cog):
 
             # 3. Fetch active evolution track
             evo_res = await db.table("active_evolutions").select("*").eq("card_id", player_id).maybe_single().execute()
-            evo = evo_res.data
+            evo = evo_res.data if evo_res else None
             
             has_evo = evo is not None
             can_claim = has_evo and evo["current_progress"] >= evo["target_goal"]

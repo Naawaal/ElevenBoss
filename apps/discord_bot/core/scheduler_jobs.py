@@ -121,7 +121,7 @@ async def _send_dm(bot: commands.Bot, user_id: int, message: str) -> None:
     except Exception as e:
         logger.warning(f"Failed to send DM to user {user_id}: {e}")
 
-async def auto_sim_expired_fixtures_job() -> None:
+async def auto_sim_expired_fixtures_job(bot: commands.Bot) -> None:
     """APScheduler interval job to auto-simulate expired league fixtures."""
     logger.info("Executing auto simulation check for expired fixtures...")
     try:
@@ -131,7 +131,7 @@ async def auto_sim_expired_fixtures_job() -> None:
         seasons = seasons_res.data or []
         for s in seasons:
             from apps.discord_bot.cogs.league_cog import auto_sim_expired_fixtures
-            count = await auto_sim_expired_fixtures(db, s["id"])
+            count = await auto_sim_expired_fixtures(db, s["id"], bot)
             if count > 0:
                 logger.info(f"Auto-simulated {count} fixtures for season {s['id']}")
     except Exception as e:

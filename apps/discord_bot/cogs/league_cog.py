@@ -11,6 +11,7 @@ from discord.ext import commands
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from match_engine import generate_round_robin_fixtures, simulate_match, MatchInput, MatchPlayerCard
+from apps.discord_bot.core.locks import get_guild_thread_lock
 
 logger = logging.getLogger(__name__)
 
@@ -94,100 +95,130 @@ async def fetch_standings(db, season_id: str) -> list[dict]:
 
 
 # --- AUTO SIMULATION OF EXPIRED MATCHDAY WINDOWS ---
-async def auto_sim_expired_fixtures(db, season_id: str) -> int:
+async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> int:
     """
     Scans for unplayed fixtures of the season where window_end has passed,
-    and runs a direct simulation. Returns count of auto-simulated matches.
+    and runs simulation sequentially via run_league_match_simulation.
     """
     now = datetime.now(timezone.utc)
-    fixtures_res = await db.table("league_fixtures").select("*").eq("season_id", season_id).eq("is_played", False).execute()
+    # Query fixtures
+    fixtures_res = await db.table("league_fixtures").select("*, home:players!league_fixtures_home_team_id_fkey(*), away:players!league_fixtures_away_team_id_fkey(*)").eq("season_id", season_id).eq("is_played", False).execute()
     fixtures = fixtures_res.data or []
     
+    # Get guild_id
+    season_res = await db.table("league_seasons").select("league_id").eq("id", season_id).maybe_single().execute()
+    season_data = season_res.data if season_res else None
+    if not season_data:
+        return 0
+    league_id = season_data["league_id"]
+    
+    league_res = await db.table("leagues").select("guild_id").eq("id", league_id).maybe_single().execute()
+    league_data = league_res.data if league_res else None
+    if not league_data:
+        return 0
+    guild_id = league_data["guild_id"]
+    
+    guild = bot.get_guild(guild_id)
+    if not guild:
+        logger.warning(f"Guild {guild_id} not found/cached by bot.")
+        return 0
+        
+    # Resolve thread (with concurrency lock)
+    logger.info(f"[Trace] [auto_sim_expired_fixtures] Auto-sim match checking/creation requested for guild {guild_id}. Requesting lock...")
+    
+    lock = await get_guild_thread_lock(guild_id)
+    async with lock:
+        logger.info(f"[Trace] [auto_sim_expired_fixtures] Lock acquired for guild {guild_id}.")
+        config_res = await db.table("guild_config").select("*").eq("guild_id", guild_id).maybe_single().execute()
+        config = config_res.data if config_res else None
+        
+        league_channel_id = config.get("league_channel_id") if config else None
+        league_updates_thread_id = config.get("league_updates_thread_id") if config else None
+        
+        logger.info(f"[Trace] [auto_sim_expired_fixtures] DB thread check: league_updates_thread_id={league_updates_thread_id}")
+
+        if not league_channel_id:
+            logger.warning(f"league_channel_id not configured for guild {guild_id}")
+            return 0
+            
+        announcement_channel = guild.get_channel(league_channel_id)
+        if not announcement_channel:
+            logger.warning(f"announcement_channel {league_channel_id} not found in guild {guild_id}")
+            return 0
+            
+        thread = None
+        if league_updates_thread_id:
+            thread = guild.get_thread(league_updates_thread_id)
+            logger.info(f"[Trace] [auto_sim_expired_fixtures] Cache check for thread {league_updates_thread_id}: thread_found={thread is not None}")
+            if not thread:
+                try:
+                    thread = await guild.fetch_channel(league_updates_thread_id)
+                    logger.info(f"[Trace] [auto_sim_expired_fixtures] API fetch check for thread {league_updates_thread_id}: thread_found={thread is not None}")
+                except discord.NotFound:
+                    logger.warning(f"[Trace] [auto_sim_expired_fixtures] API fetch failed: thread {league_updates_thread_id} NotFound.")
+                    thread = None
+                except Exception as e:
+                    logger.error(f"[Trace] [auto_sim_expired_fixtures] API fetch failed with error: {e}")
+                    thread = None
+
+        if not thread:
+            logger.info(f"[Trace] [auto_sim_expired_fixtures] Thread is missing or invalid. Initiating thread creation in channel {league_channel_id}...")
+            try:
+                thread = await announcement_channel.create_thread(
+                    name="📰 league-journal",
+                    type=discord.ChannelType.public_thread,
+                    auto_archive_duration=60
+                )
+                logger.info(f"[Trace] [auto_sim_expired_fixtures] Thread created successfully with ID {thread.id}. Posting intro rules...")
+                info_embed = discord.Embed(
+                    title="🏆 ElevenBoss League Journal",
+                    description=(
+                        "Welcome to the official League Journal! Here you will find live match tickers, "
+                        "results, and season summaries.\n\n"
+                        "**League Rules & Info:**\n"
+                        "• Play matches using `/league hub` before the matchday window ends.\n"
+                        "• Unplayed matches will be auto-simulated at the end of the window.\n"
+                        "• Win = 3 pts, Draw = 1 pt, Loss = 0 pts."
+                    ),
+                    color=0x00FF87
+                )
+                first_msg = await thread.send(embed=info_embed)
+                await first_msg.pin()
+                
+                logger.info(f"[Trace] [auto_sim_expired_fixtures] Saving thread ID {thread.id} to guild_config...")
+                await db.table("guild_config").update({"league_updates_thread_id": thread.id}).eq("guild_id", guild_id).execute()
+                logger.info(f"[Trace] [auto_sim_expired_fixtures] Thread ID {thread.id} successfully confirmed in DB.")
+            except Exception as e:
+                logger.exception("Failed to create League Journal thread in auto-sim.")
+                return 0
+        else:
+            logger.info(f"[Trace] [auto_sim_expired_fixtures] Reusing existing thread {thread.id}.")
+
+    logger.info(f"[Trace] [auto_sim_expired_fixtures] Released lock for guild {guild_id}.")
+
+    from apps.discord_bot.cogs.battle_cog import run_league_match_simulation, LeagueMatchHandler
+
     simulated_count = 0
     for f in fixtures:
-        window_end = datetime.fromisoformat(f["window_end"].replace("Z", "+00:00"))
+        window_end_val = f.get("window_end")
+        if not window_end_val:
+            continue
+        window_end = datetime.fromisoformat(window_end_val.replace("Z", "+00:00"))
         if now > window_end:
-            home_id = f["home_team_id"]
-            away_id = f["away_team_id"]
-            
-            home_p_res = await db.table("players").select("*").eq("discord_id", home_id).maybe_single().execute()
-            home_p = home_p_res.data if home_p_res else None
-            
-            away_p_res = await db.table("players").select("*").eq("discord_id", away_id).maybe_single().execute()
-            away_p = away_p_res.data if away_p_res else None
-            
-            if not home_p or not away_p:
-                continue
-                
-            home_rating = 60.0
-            if home_p.get("is_ai"):
-                home_rating = float(home_p.get("ai_rating") or 60.0)
-            else:
-                cards_res = await db.table("squad_assignments").select("player_cards(overall)").eq("discord_id", home_id).execute()
-                cards = cards_res.data or []
-                if len(cards) == 11:
-                    home_rating = sum(c["player_cards"]["overall"] for c in cards if c.get("player_cards")) / 11.0
-                    
-            away_rating = 60.0
-            if away_p.get("is_ai"):
-                away_rating = float(away_p.get("ai_rating") or 60.0)
-            else:
-                cards_res = await db.table("squad_assignments").select("player_cards(overall)").eq("discord_id", away_id).execute()
-                cards = cards_res.data or []
-                if len(cards) == 11:
-                    away_rating = sum(c["player_cards"]["overall"] for c in cards if c.get("player_cards")) / 11.0
-            
-            mod_home = home_rating * (1.0 + random.gauss(0.0, 0.05))
-            mod_away = away_rating * (1.0 + random.gauss(0.0, 0.05))
-            diff = mod_home - mod_away
-            
-            if abs(diff) <= 3.0:
-                goals = random.choice([0, 0, 1, 1, 2, 2, 3])
-                home_score = goals
-                away_score = goals
-            elif diff > 3.0:
-                margin = max(1, int(round(diff / 6.0)) + random.choice([0, 1]))
-                away_score = random.choice([0, 1, 2])
-                home_score = away_score + margin
-            else:
-                margin = max(1, int(round(abs(diff) / 6.0)) + random.choice([0, 1]))
-                home_score = random.choice([0, 1, 2])
-                away_score = home_score + margin
-                
-            await db.table("league_fixtures").update({
-                "home_score": home_score,
-                "away_score": away_score,
-                "is_played": True,
-                "played_at": now.isoformat()
-            }).eq("id", f["id"]).execute()
-            
-            simulated_count += 1
-            
-            if not home_p.get("is_ai"):
-                res_str = "win" if home_score > away_score else ("draw" if home_score == away_score else "loss")
-                pts = 3 if res_str == "win" else (1 if res_str == "draw" else 0)
-                gd = home_score - away_score
-                await db.table("players").update({
-                    "league_points": home_p["league_points"] + pts,
-                    "goal_difference": home_p["goal_difference"] + gd,
-                    "matches_played": home_p["matches_played"] + 1,
-                    "wins": home_p["wins"] + (1 if res_str == "win" else 0),
-                    "draws": home_p["draws"] + (1 if res_str == "draw" else 0),
-                    "losses": home_p["losses"] + (1 if res_str == "loss" else 0)
-                }).eq("discord_id", home_id).execute()
-                
-            if not away_p.get("is_ai"):
-                res_str = "win" if away_score > home_score else ("draw" if home_score == away_score else "loss")
-                pts = 3 if res_str == "win" else (1 if res_str == "draw" else 0)
-                gd = away_score - home_score
-                await db.table("players").update({
-                    "league_points": away_p["league_points"] + pts,
-                    "goal_difference": away_p["goal_difference"] + gd,
-                    "matches_played": away_p["matches_played"] + 1,
-                    "wins": away_p["wins"] + (1 if res_str == "win" else 0),
-                    "draws": away_p["draws"] + (1 if res_str == "draw" else 0),
-                    "losses": away_p["losses"] + (1 if res_str == "loss" else 0)
-                }).eq("discord_id", away_id).execute()
+            try:
+                handler = LeagueMatchHandler(thread)
+                await run_league_match_simulation(
+                    bot=bot,
+                    db=db,
+                    guild=guild,
+                    fixture=f,
+                    active_player_id=None,
+                    handler=handler
+                )
+                simulated_count += 1
+                await asyncio.sleep(2.0)
+            except Exception as e:
+                logger.exception(f"Failed to auto-simulate fixture {f['id']}: {e}")
                 
     if simulated_count > 0:
         await update_current_matchday(db, season_id)
@@ -355,7 +386,7 @@ class LeagueCog(commands.Cog):
             season = season_res.data if season_res else None
             
         if season:
-            await auto_sim_expired_fixtures(db, season["id"])
+            await auto_sim_expired_fixtures(db, season["id"], self.bot)
             season_res = await db.table("league_seasons").select("*").eq("id", season["id"]).maybe_single().execute()
             season = season_res.data if season_res else None
 
@@ -376,7 +407,7 @@ class LeagueCog(commands.Cog):
             season = season_res.data if season_res else None
             
         if season:
-            await auto_sim_expired_fixtures(db, season["id"])
+            await auto_sim_expired_fixtures(db, season["id"], self.bot)
             season_res = await db.table("league_seasons").select("*").eq("id", season["id"]).maybe_single().execute()
             season = season_res.data if season_res else None
 
@@ -617,6 +648,32 @@ class LeagueCog(commands.Cog):
         
         embed.set_footer(text=f"ElevenBoss League System • Active Season • Registered Managers: {reg_count}")
         return embed
+
+async def send_league_announcement(guild: discord.Guild, channel_id: int, embed: discord.Embed, message_body: str = "") -> None:
+    """
+    Sends a league announcement with a split-payload structure:
+    Role mentions reside in message content to trigger pings,
+    while announcement details reside in embeds for formatting.
+    """
+    db = await get_client()
+    config_res = await db.table("guild_config").select("announcement_role_id").eq("guild_id", guild.id).maybe_single().execute()
+    role_id = config_res.data.get("announcement_role_id") if config_res and config_res.data else None
+    
+    content = ""
+    if role_id:
+        role = guild.get_role(role_id)
+        if role:
+            content = f"<@&{role_id}>"
+            if message_body:
+                content += f"\n\n{message_body}"
+        elif message_body:
+            content = message_body
+    elif message_body:
+        content = message_body
+        
+    channel = guild.get_channel(channel_id)
+    if channel:
+        await channel.send(content=content if content else None, embed=embed)
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(LeagueCog(bot))

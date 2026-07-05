@@ -561,7 +561,7 @@ async def admin_start_season(interaction: discord.Interaction, guild_id: int, ow
     league_id = league_res.data["id"]
 
     # Determine season number
-    seasons_res = await db.table("league_seasons").select("season_number").eq("league_id", league_id).order("season_number", descending=True).limit(1).execute()
+    seasons_res = await db.table("league_seasons").select("season_number").eq("league_id", league_id).order("season_number", desc=True).limit(1).execute()
     next_season_num = 1
     if seasons_res.data:
         next_season_num = seasons_res.data[0]["season_number"] + 1
@@ -584,7 +584,7 @@ async def admin_start_season(interaction: discord.Interaction, guild_id: int, ow
 
     # Create AI participants
     ai_participants = []
-    min_p_res = await db.table("players").select("discord_id").order("discord_id", descending=False).limit(1).execute()
+    min_p_res = await db.table("players").select("discord_id").order("discord_id", desc=False).limit(1).execute()
     current_min = min_p_res.data[0]["discord_id"] if min_p_res.data else 0
     if current_min > 0:
         current_min = 0
@@ -657,18 +657,17 @@ async def admin_start_season(interaction: discord.Interaction, guild_id: int, ow
     config_res = await db.table("guild_config").select("league_channel_id").eq("guild_id", guild_id).maybe_single().execute()
     chan_id = config_res.data.get("league_channel_id") if config_res.data else None
     if chan_id:
-        channel = guild.get_channel(chan_id)
-        if channel:
-            ann_embed = discord.Embed(
-                title=f"🏆 ElevenBoss League: Season {next_season_num} Begins!",
-                description=(
-                    f"The seasonal league has officially started! **{target_size} teams** will battle over "
-                    f"**{total_weeks} matchdays** for glory.\n\n"
-                    f"Check `/league hub` to view standings and play your fixtures!"
-                ),
-                color=0x00FF87
-            )
-            await channel.send(embed=ann_embed)
+        ann_embed = discord.Embed(
+            title=f"🏆 ElevenBoss League: Season {next_season_num} Begins!",
+            description=(
+                f"The seasonal league has officially started! **{target_size} teams** will battle over "
+                f"**{total_weeks} matchdays** for glory.\n\n"
+                f"Check `/league hub` to view standings and play your fixtures!"
+            ),
+            color=0x00FF87
+        )
+        from apps.discord_bot.cogs.league_cog import send_league_announcement
+        await send_league_announcement(guild, chan_id, ann_embed, "A new league season has begun!")
 
     await show_league_management(interaction, guild_id, owner_id)
 
@@ -695,26 +694,86 @@ async def admin_end_season(interaction: discord.Interaction, guild_id: int, owne
         "end_time": datetime.now(timezone.utc).isoformat()
     }).eq("id", season["id"]).execute()
 
-    await db.table("guild_config").update({"league_status": "inactive"}).eq("guild_id", guild_id).execute()
+    # Reset thread ID and status
+    config_res = await db.table("guild_config").select("*").eq("guild_id", guild_id).maybe_single().execute()
+    config = config_res.data if config_res else None
+    
+    league_updates_thread_id = config.get("league_updates_thread_id") if config else None
+    chan_id = config.get("league_channel_id") if config else None
+
+    await db.table("guild_config").update({
+        "league_status": "inactive",
+        "league_updates_thread_id": None
+    }).eq("guild_id", guild_id).execute()
 
     standings = await fetch_standings(db, season["id"])
     winner = standings[0]["club_name"] if standings else "N/A"
 
+    # Calculate stats
+    top_scorers = sorted(standings, key=lambda x: x["goals_for"], reverse=True)
+    top_scorer_club = top_scorers[0]["club_name"] if top_scorers else "N/A"
+    top_scorer_goals = top_scorers[0]["goals_for"] if top_scorers else 0
+
+    best_defenses = sorted(standings, key=lambda x: x["goals_against"])
+    best_defense_club = best_defenses[0]["club_name"] if best_defenses else "N/A"
+    best_defense_goals = best_defenses[0]["goals_against"] if best_defenses else 0
+
     await interaction.followup.send(embed=success_embed(f"⏹️ **Season {season['season_number']} ended.** Standings finalized."))
 
-    config_res = await db.table("guild_config").select("league_channel_id").eq("guild_id", guild_id).maybe_single().execute()
-    chan_id = config_res.data.get("league_channel_id") if config_res.data else None
+    summary_embed = discord.Embed(
+        title=f"🏆 Season {season['season_number']} Summary & Awards",
+        description=(
+            f"The season has officially concluded! Here is the summary of achievements:\n\n"
+            f"👑 **Champions**: **{winner}** 🏆\n"
+            f"⚽ **Top Scoring Club**: **{top_scorer_club}** ({top_scorer_goals} goals)\n"
+            f"🛡️ **Best Defense**: **{best_defense_club}** ({best_defense_goals} goals conceded)\n\n"
+            f"**Final Standings:**\n"
+        ),
+        color=0xFFCC00
+    )
+    for idx, row in enumerate(standings[:5], 1):
+        summary_embed.description += f"**{idx}. {row['club_name']}** — {row['points']} pts (GD: {row['goal_difference']})\n"
+
+    # Post Season Summary to Journal thread
+    thread = None
+    if league_updates_thread_id:
+        thread = guild.get_thread(league_updates_thread_id)
+        if not thread:
+            try:
+                thread = await guild.fetch_channel(league_updates_thread_id)
+            except Exception:
+                thread = None
+
+    if thread:
+        try:
+            await thread.send(embed=summary_embed)
+            
+            # Archive/rename thread after 30s delay in background
+            async def archive_thread_after_delay(t: discord.Thread, s_num: int):
+                await asyncio.sleep(30.0)
+                try:
+                    await t.edit(
+                        name=f"🏆-season-{s_num}-concluded",
+                        locked=True,
+                        archived=True
+                    )
+                except Exception as err:
+                    logger.warning(f"Failed to lock and archive thread {t.id}: {err}")
+            
+            asyncio.create_task(archive_thread_after_delay(thread, season["season_number"]))
+        except Exception as e:
+            logger.exception("Failed to send final summary to League Journal thread.")
+
     if chan_id:
-        channel = guild.get_channel(chan_id)
-        if channel:
-            ann_embed = discord.Embed(
-                title=f"🏁 ElevenBoss League: Season {season['season_number']} Concluded!",
-                description=f"Congratulations to the champions **{winner}**! 🏆\n\n**Final Top 3:**\n",
-                color=0xFFCC00
-            )
-            for idx, row in enumerate(standings[:3], 1):
-                ann_embed.description += f"**{idx}. {row['club_name']}** — {row['points']} pts (GD: {row['goal_difference']})\n"
-            await channel.send(embed=ann_embed)
+        ann_embed = discord.Embed(
+            title=f"🏁 ElevenBoss League: Season {season['season_number']} Concluded!",
+            description=f"Congratulations to the champions **{winner}**! 🏆\n\n**Final Top 3:**\n",
+            color=0xFFCC00
+        )
+        for idx, row in enumerate(standings[:3], 1):
+            ann_embed.description += f"**{idx}. {row['club_name']}** — {row['points']} pts (GD: {row['goal_difference']})\n"
+        from apps.discord_bot.cogs.league_cog import send_league_announcement
+        await send_league_announcement(guild, chan_id, ann_embed, f"Season {season['season_number']} has concluded!")
 
     await show_league_management(interaction, guild_id, owner_id)
 
@@ -756,7 +815,7 @@ async def admin_execute_kick(interaction: discord.Interaction, kicked_id: int, g
 
     await db.table("league_participants").update({"is_active": False}).eq("season_id", season["id"]).eq("player_id", kicked_id).execute()
 
-    min_p_res = await db.table("players").select("discord_id").order("discord_id", descending=False).limit(1).execute()
+    min_p_res = await db.table("players").select("discord_id").order("discord_id", desc=False).limit(1).execute()
     current_min = min_p_res.data[0]["discord_id"] if min_p_res.data else 0
     if current_min > 0:
         current_min = 0
@@ -814,7 +873,7 @@ async def admin_force_sim(interaction: discord.Interaction, guild_id: int, owner
     for f in fixtures:
         await db.table("league_fixtures").update({"window_end": datetime.now(timezone.utc).isoformat()}).eq("id", f["id"]).execute()
 
-    simulated = await auto_sim_expired_fixtures(db, season["id"])
+    simulated = await auto_sim_expired_fixtures(db, season["id"], interaction.client)
 
     await interaction.followup.send(embed=success_embed(f"🎲 **Force-simulated {simulated} matches** for Matchday {curr}."))
     await show_league_management(interaction, guild_id, owner_id)

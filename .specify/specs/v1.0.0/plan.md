@@ -614,6 +614,44 @@ CREATE TABLE public.player_xp_log (
 * **`AnnouncementSubView`**: Submenu displaying target channel/role config settings, with buttons for `Set Channel` and `Set Role`.
 * **`ChannelSelectView` / `RoleSelectView`**: Integrates `discord.ui.ChannelSelect` and `discord.ui.RoleSelect` elements to update values in Supabase, performing strict guild-membership and bot channel permission checks.
 
+---
+
+## 15. ElevenBoss v1.9 Architecture (League Notification Delivery)
+
+### A. Split-Payload Announcement Helper
+* **`send_league_announcement(guild, channel_id, embed, message_body)`**: Refactors the notification formatting logic to resolve the ping issue.
+  1. Fetches `announcement_role_id` for the specific `guild_id` from `guild_config`.
+  2. Constructs the message `content` as: `f"<@&{role_id}>\n\n{message_body}"` if the role is found.
+  3. Verifies role existence within the guild. If not found, excludes the mention to prevent broken pings.
+  4. Dispatches the notification using `channel.send(content=formatted_content, embed=announcement_embed)`.
+
+---
+
+## 16. ElevenBoss v2.0 Architecture (League Journal & Auto-Archival)
+
+### A. Database Schema (`guild_config` table update)
+* `league_updates_thread_id` (BIGINT, NULLABLE) - Stores the centralized active League Journal thread ID.
+
+### B. Engine Abstraction (`IMatchOutputHandler` and implementations)
+* **`IMatchOutputHandler`**: Abstract interface specifying:
+  - `initialize(...)`: Setup of commentary channel/thread.
+  - `start_match(...)`: Post initial scoreboard state.
+  - `update_ticker(...)`: Edit scoreboard/ticker state with rolling commentary updates.
+  - `finalize_match(...)`: Post-match stats and rewards summary.
+* **`StandardMatchHandler`**: Handles standard bot battles, spawning a unique dynamic thread and archiving it.
+* **`LeagueMatchHandler`**: Handles league fixtures, directing output to the centralized Journal thread, utilizing message edits for live-scrolling commentary (rolling 5 events), and disabling views.
+
+### C. Sequential Auto-Simulation
+* **`auto_sim_expired_fixtures(...)`**: Scans for expired matches, resolves/creates the journal thread, and runs matches sequentially using the match engine (`run_league_match_simulation`) to avoid rate-limiting.
+
+### D. Conclude Season Flow (`admin_end_season(...)`)
+1. Marks the active season completed.
+2. Calculates final statistics (champion, top scoring club, best defense).
+3. Posts the detailed Season Summary embed to the Journal thread.
+4. Spawns a background task to wait 30 seconds, then rename/lock/archive the thread.
+5. Resets `league_updates_thread_id` in `guild_config` to NULL.
+
+
 
 
 

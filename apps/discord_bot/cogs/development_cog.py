@@ -73,7 +73,7 @@ def make_xp_bar(current: int, needed: int) -> str:
 async def show_hub(interaction: discord.Interaction, owner_id: int):
     db = await get_client()
     player_res = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
-    player = player_res.data
+    player = player_res.data if player_res else None
     
     embed = discord.Embed(
         title="🏋️‍♂️ Development Center",
@@ -117,7 +117,7 @@ class DevelopmentHubView(discord.ui.View):
 async def show_training_menu(interaction: discord.Interaction, owner_id: int):
     db = await get_client()
     player_res = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
-    player = player_res.data
+    player = player_res.data if player_res else None
     max_slots = player.get("training_slots_max", 2)
 
     drills_res = await db.table("active_training").select("*, player_cards(*)").eq("club_id", owner_id).execute()
@@ -244,7 +244,7 @@ class ClaimDrillButton(discord.ui.Button):
             db = await get_client()
 
             card_res = await db.table("player_cards").select("*").eq("id", self.card_id).maybe_single().execute()
-            card = card_res.data
+            card = card_res.data if card_res else None
             if not card:
                 await interaction.followup.send(embed=error_embed("Player card not found."), ephemeral=True)
                 return
@@ -454,11 +454,11 @@ async def show_evols_menu(interaction: discord.Interaction, owner_id: int, prese
     target_card_id = preselected_card_id or roster[0]["id"]
     
     card_res = await db.table("player_cards").select("*").eq("id", target_card_id).maybe_single().execute()
-    card = card_res.data
+    card = card_res.data if card_res else None
 
     # Fetch active evolution for the card
     evo_res = await db.table("active_evolutions").select("*").eq("card_id", target_card_id).maybe_single().execute()
-    evo = evo_res.data
+    evo = evo_res.data if evo_res else None
 
     embed = discord.Embed(
         title=f"🧬 Evolutions: {card['name']}",
@@ -544,7 +544,6 @@ class EvolutionsSubView(discord.ui.View):
             # Insert active evolutions record
             await db.table("active_evolutions").insert({
                 "card_id": self.card["id"],
-                "class_type": "standard", # default
                 "evolution_id": evo_key,
                 "target_metric": track["metric"],
                 "target_goal": track["goal"],
@@ -622,7 +621,7 @@ async def show_skills_menu(interaction: discord.Interaction, owner_id: int, pres
 
     target_card_id = preselected_card_id or roster[0]["id"]
     card_res = await db.table("player_cards").select("*").eq("id", target_card_id).maybe_single().execute()
-    card = card_res.data
+    card = card_res.data if card_res else None
 
     embed = discord.Embed(
         title=f"⭐ Allocate Skills: {card['name']}",
@@ -702,7 +701,7 @@ class SkillPointButton(discord.ui.Button):
             db = await get_client()
 
             card_res = await db.table("player_cards").select("*").eq("id", self.card_id).maybe_single().execute()
-            card = card_res.data
+            card = card_res.data if card_res else None
             if not card or card.get("skill_points", 0) <= 0:
                 return
 
