@@ -101,8 +101,9 @@ class IMatchOutputHandler(abc.ABC):
         pass
 
 class StandardMatchHandler(IMatchOutputHandler):
-    def __init__(self, bot: commands.Bot) -> None:
+    def __init__(self, bot: commands.Bot, league_mode: bool = False) -> None:
         self.bot = bot
+        self.league_mode = league_mode
         self.ticket_msg = None
         self.thread = None
         self.ticker_msg = None
@@ -126,7 +127,7 @@ class StandardMatchHandler(IMatchOutputHandler):
             self.ticket_msg = await interaction.followup.send(embed=ticket_embed)
 
         self.thread = None
-        if interaction.guild and hasattr(interaction.channel, "create_thread"):
+        if not self.league_mode and interaction.guild and hasattr(interaction.channel, "create_thread"):
             try:
                 self.thread = await interaction.channel.create_thread(
                     name=f"🏟️ {home_name} vs {away_name} - Live",
@@ -723,6 +724,9 @@ class BattleCog(commands.Cog):
     @battle_group.command(name="bot", description="Simulate a league match against a division-calibrated AI opponent.")
     @app_commands.guild_only()
     @app_commands.check(ensure_registered)
+    async def bot_battle_command(self, interaction: discord.Interaction) -> None:
+        await self.execute_bot_battle(interaction)
+
     async def execute_bot_battle(self, interaction: discord.Interaction) -> None:
         try:
             db = await get_client()
