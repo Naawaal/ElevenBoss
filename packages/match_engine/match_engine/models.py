@@ -1,6 +1,16 @@
 # packages/match_engine/match_engine/models.py
 from __future__ import annotations
+from enum import Enum
+from typing import Optional
 from pydantic import BaseModel, Field
+
+class EventType(str, Enum):
+    KICKOFF = "KICKOFF"
+    GOAL = "GOAL"
+    MISS = "MISS"
+    SAVE = "SAVE"
+    YELLOW_CARD = "YELLOW_CARD"
+    FULL_TIME = "FULL_TIME"
 
 class MatchPlayerCard(BaseModel):
     name: str
@@ -19,3 +29,14 @@ class MatchResult(BaseModel):
     opponent_rating: float = Field(..., ge=0.0)
     coins_earned: int = Field(..., ge=0)
     points_earned: int = Field(..., ge=0)
+    possession_home: int = 50
+    possession_away: int = 50
+    shots_home: int = 10
+    shots_away: int = 10
+    motm: str = "TBD"
+
+class MatchEvent(BaseModel):
+    minute: int = Field(..., ge=0, le=90)
+    type: EventType
+    text: str
+    score_update: Optional[str] = None

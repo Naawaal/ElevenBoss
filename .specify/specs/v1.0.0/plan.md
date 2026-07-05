@@ -353,3 +353,50 @@ pip install -e packages/energy
 | APScheduler (not Celery/Redis) | Simpler ops footprint; runs in bot's event loop |
 | Bulk UPDATE for energy regen | Single DB round-trip for all players; efficient at scale |
 | SQL stored procedures for financial transactions | PostgreSQL-level atomicity stronger than app-level retry |
+
+---
+
+## 7. ElevenBoss v1.1 Architecture (Live Match Commentary)
+
+### A. Pure Logic Layer (`packages/engine/`)
+
+This layer remains 100% database-agnostic and Discord-agnostic, ensuring business rules can be reused across any UI or platform.
+
+#### 1. Models (`packages/engine/models.py`)
+Add the following models:
+* `EventType` (Enum): Represents the type of match event (e.g., `KICKOFF`, `GOAL`, `MISS`, `SAVE`, `YELLOW_CARD`, `FULL_TIME`).
+* `MatchEvent` (Pydantic Model):
+  * `minute` (int): Match minute (1-90).
+  * `type` (EventType): The type of event.
+  * `text` (str): Commentary text of the event. Must use pure text (no Discord `<@id>` mentions) to ensure reusability.
+  * `score_update` (str | None): Current score update formatted as `HomeScore - AwayScore` (e.g. `1 - 0`), if any.
+
+#### 2. Commentary Generator (`packages/engine/commentary.py`)
+* Implement a stateless, pure function: `generate_match_script(result: MatchResult) -> list[MatchEvent]`.
+* Inputs: The simulated `MatchResult` (containing final score, team names, statistics).
+* Outputs: A list of 5 to 7 chronological `MatchEvent` objects beginning with `KICKOFF` (0'), containing 3 to 5 key actions (goals, saves, cards) mapped to realistic minutes, and concluding with `FULL_TIME` (90') matching the simulated score.
+
+---
+
+### B. Application Presentation Layer (`apps/discord_bot/cogs/match_cog.py`)
+
+This layer handles Discord slash command invocation, UI rendering, pacing, and database mutation scheduling.
+
+#### 1. Command Invocation
+* Command `/match play` must immediately invoke `await interaction.response.defer(ephemeral=False)`.
+
+#### 2. Live Stadium Thread & Ticker Flow
+* **Match Ticket:** Send a rich embed to the main channel representing the match ticket.
+* **Public Thread Creation:** Create a public thread on the ticket message: `await message.create_thread(name=f"🏟️ {home_team} vs {away_team} - Live", auto_archive_duration=60)`.
+* **Fallback Channel Handling:** If thread creation is unsupported (e.g. DMs, missing permissions), catch the exception, log a warning, and fall back to streaming events inside the parent channel.
+* **Commentary Stream:** Send the initial kickoff message inside the thread (or channel if fallback) and run the live commentary loop:
+  * Iterate through `MatchEvent` list. For each event, edit the commentary message with a 5-event live-scroll history.
+  * Pause for `asyncio.sleep(1.5)` between events (`2.0` on full time).
+* **Press Conference Summary:** Upon completion, send a separate "Post-Match Press Conference" embed in the thread showing stats (Possession, Shots, MOTM) and rewards.
+* **Rename & Archive Cleanup:** Edit the thread name to display the final score (e.g. `🏆 {home_team} {score} {away_team}`). Schedule a background task (`asyncio.create_task`) that sleeps for 180 seconds and then locks and archives the thread (`await thread.edit(locked=True, archived=True)`).
+
+#### 3. Delayed Database Mutations
+* **CRITICAL**: The bot must NOT perform any database writes (Supabase RPCs or upserts for energy cost, coin rewards, XP, match history insert) until the live ticker loop finishes.
+* If the loop crashes or the connection is severed mid-match, no rewards are given and no energy is deducted. This prevents half-applied states or reward duplication.
+
+

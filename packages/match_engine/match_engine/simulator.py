@@ -48,6 +48,23 @@ def simulate_match(match_input: MatchInput) -> MatchResult:
         coins_earned = 0
         points_earned = 0
 
+    # Generate possession based on the rating difference
+    pos_base = 50 + int(diff * 1.5)
+    pos_base = max(30, min(70, pos_base))
+    possession_home = pos_base + random.randint(-5, 5)
+    possession_home = max(20, min(80, possession_home))
+    possession_away = 100 - possession_home
+
+    # Generate shots correlated with possession and goals
+    shots_home = max(goals_for + 1, int(possession_home * 0.25) + random.randint(-2, 4))
+    shots_away = max(goals_against + 1, int(possession_away * 0.25) + random.randint(-2, 4))
+
+    # Generate Man of the Match (MOTM)
+    if result == "win" or (result == "draw" and random.random() > 0.5):
+        motm = random.choice(my_players).name
+    else:
+        motm = "AI Opponent Star Player"
+
     return MatchResult(
         result=result,
         goals_for=goals_for,
@@ -56,4 +73,9 @@ def simulate_match(match_input: MatchInput) -> MatchResult:
         opponent_rating=round(opp_rating, 2),
         coins_earned=coins_earned,
         points_earned=points_earned,
+        possession_home=possession_home,
+        possession_away=possession_away,
+        shots_home=shots_home,
+        shots_away=shots_away,
+        motm=motm,
     )

@@ -257,3 +257,24 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - Premium currency or monetisation.
 - Web dashboard.
 - Player positions enforcing positional penalties (v1.0.0 uses flat rating averages only).
+
+---
+
+# ElevenBoss v1.1 Features
+
+### US-05: Live Match Commentary
+
+> **As a** football club manager,
+> **I want** to watch the events of my match unfold in real-time via a commentary ticker,
+> **So that** I experience the suspense of a real match rather than just seeing an instant final score.
+
+**Acceptance Criteria:**
+- **AC-05a:** The match simulation engine generates a chronological script of events (goals, misses, saves, yellow cards) that culminate in the pre-calculated final score.
+- **AC-05b:** Running `/match play` posts a "Match Ticket" embed in the main channel and spawns a public thread named `"🏟️ [Home] vs [Away] - Live"`.
+- **AC-05c:** The live commentary ticker plays out dynamically inside the public thread, showing a 5-event live-scroll history and pausing for 1.5 to 2.0 seconds between events to build suspense.
+- **AC-05d:** Upon match completion, a "Post-Match Press Conference" embed is posted in the thread detailing final score, stats (Possession, Shots, MOTM), and rewards.
+- **AC-05e:** The thread is renamed to display the final score (e.g. `🏆 [Home] [Score] [Away]`) and is locked and archived after 3 minutes.
+- **AC-05f:** To ensure data integrity, all database updates (deducting energy, crediting coins/XP, logging match history) are executed *after* the final whistle event and before the Press Conference UI is posted.
+- **AC-05g:** If thread creation is not supported or fails (e.g., in DMs or due to missing permissions), the command falls back gracefully to running in the parent channel.
+
+
