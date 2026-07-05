@@ -24,3 +24,24 @@ async def get_client() -> Client:
         _supabase_client = await acreate_client(url, key)
     
     return _supabase_client
+
+async def close_client() -> None:
+    """
+    Cleanly closes the Supabase client HTTP sessions to release connections.
+    """
+    global _supabase_client
+    if _supabase_client is not None:
+        # Close postgrest client session
+        if hasattr(_supabase_client, "postgrest") and hasattr(_supabase_client.postgrest, "aclient"):
+            try:
+                await _supabase_client.postgrest.aclient.aclose()
+            except Exception:
+                pass
+        # Close storage client session
+        if hasattr(_supabase_client, "storage") and hasattr(_supabase_client.storage, "aclient"):
+            try:
+                await _supabase_client.storage.aclient.aclose()
+            except Exception:
+                pass
+        _supabase_client = None
+

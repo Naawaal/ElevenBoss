@@ -62,6 +62,68 @@ class ElevenBossBot(commands.Bot):
         self.scheduler.start()
         logger.info("APScheduler initialized and jobs started.")
 
+        # Start a simple web server for Render health checks and UptimeRobot pings if PORT exists
+        port = os.environ.get("PORT")
+        if port:
+            try:
+                port_int = int(port)
+                import asyncio
+                asyncio.create_task(self._start_web_server(port_int))
+            except ValueError:
+                logger.error(f"Invalid PORT environment variable value: {port}. Web server not started.")
+
+    async def _start_web_server(self, port: int) -> None:
+        from aiohttp import web
+        
+        async def handle_health(request):
+            return web.json_response({
+                "status": "ok",
+                "bot": self.user.name if self.user else "connecting"
+            })
+
+        app = web.Application()
+        app.router.add_get("/", handle_health)
+        app.router.add_get("/health", handle_health)
+        
+        self._web_runner = web.AppRunner(app)
+        await self._web_runner.setup()
+        self._web_site = web.TCPSite(self._web_runner, "0.0.0.0", port)
+        await self._web_site.start()
+        logger.info(f"Web server started on port {port} for Render health checks.")
+
+    async def close(self) -> None:
+        """
+        Cleanly closes the bot, stops background jobs, web server, and releases DB connections.
+        """
+        logger.info("Stopping background web server...")
+        if hasattr(self, "_web_site") and self._web_site:
+            try:
+                await self._web_site.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping web site: {e}")
+        if hasattr(self, "_web_runner") and self._web_runner:
+            try:
+                await self._web_runner.cleanup()
+            except Exception as e:
+                logger.warning(f"Error cleaning up web runner: {e}")
+
+        logger.info("Stopping background scheduler...")
+        if hasattr(self, "scheduler") and self.scheduler.running:
+            try:
+                self.scheduler.shutdown()
+            except Exception as e:
+                logger.error(f"Failed to stop background scheduler: {e}", exc_info=True)
+
+        logger.info("Releasing database client connection pools...")
+        try:
+            from apps.discord_bot.db.client import close_client
+            await close_client()
+        except Exception as e:
+            logger.error(f"Failed to close Supabase client sessions: {e}", exc_info=True)
+
+        await super().close()
+        logger.info("Shutdown sequence completed.")
+
     async def on_ready(self) -> None:
         logger.info(f"Logged in as {self.user.name} ({self.user.id})")
         logger.info("Synchronizing application command tree...")
