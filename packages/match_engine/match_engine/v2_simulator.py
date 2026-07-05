@@ -288,6 +288,7 @@ async def stream_match(
     attacking: MatchTeamState = home       # who currently has the ball
     defending: MatchTeamState = away
     last_decay_minute = 0
+    halftime_yielded = False
 
     state.update_tags()
 
@@ -302,6 +303,20 @@ async def stream_match(
 
     # ── MAIN MARKOV LOOP ────────────────────────────────────────────────
     while state.minute < 90:
+        # Check if we should insert half-time first
+        if state.minute >= 45 and not halftime_yielded:
+            state.minute = 45
+            halftime_yielded = True
+            state.update_tags()
+            yield {
+                "minute": 45,
+                "type": "HALF_TIME",
+                "score_update": f"{state.home_score} - {state.away_score}",
+                "actor": "The referee",
+                "team": home_name,
+            }
+            phase = Phase.MIDFIELD
+            continue
         # Apply tactics modifier to home attack rating
         effective_home_attack = home.attack * state.home_tactics_modifier
 

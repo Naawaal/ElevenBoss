@@ -540,7 +540,7 @@ async def run_league_match_simulation(
         urgency = comm["urgency"]
         
         emoji_map = {
-            "KICKOFF": "🟢", "GOAL": "⚽", "MISS": "❌",
+            "KICKOFF": "🟢", "HALF_TIME": "⏸️", "GOAL": "⚽", "MISS": "❌",
             "CHANCE": "🎯", "FOUL": "💥", "YELLOW_CARD": "🟨",
             "INJURY": "🩹", "FULL_TIME": "🏁"
         }
@@ -550,7 +550,7 @@ async def run_league_match_simulation(
         recent_ticker = ticker_history[-5:]
         
         # Accumulate key events
-        if ev["type"] in ["KICKOFF", "GOAL", "YELLOW_CARD", "INJURY", "FULL_TIME"]:
+        if ev["type"] in ["KICKOFF", "HALF_TIME", "GOAL", "YELLOW_CARD", "INJURY", "FULL_TIME"]:
             event_entry = {
                 "minute": ev["minute"],
                 "type": ev["type"],
@@ -564,8 +564,8 @@ async def run_league_match_simulation(
             
         await handler.update_ticker(ev, state, recent_ticker, touchline_view)
         
-        if ev["type"] == "FULL_TIME":
-            sleep_time = 1.0
+        if ev["type"] in ["FULL_TIME", "HALF_TIME"]:
+            sleep_time = 2.0
         elif urgency == "cliffhanger":
             sleep_time = 2.0
         elif urgency == "build_up":
@@ -825,6 +825,7 @@ class BattleCog(commands.Cog):
  
                 emoji_map = {
                     "KICKOFF": "🟢",
+                    "HALF_TIME": "⏸️",
                     "GOAL": "⚽",
                     "MISS": "❌",
                     "CHANCE": "🎯",
@@ -838,7 +839,7 @@ class BattleCog(commands.Cog):
  
                 await handler.update_ticker(ev, state, recent_ticker, touchline_view)
  
-                if ev["type"] == "FULL_TIME":
+                if ev["type"] in ["FULL_TIME", "HALF_TIME"]:
                     sleep_time = 2.0
                 elif urgency == "cliffhanger":
                     sleep_time = 3.5

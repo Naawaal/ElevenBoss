@@ -290,6 +290,28 @@
       "text": "Worrying scenes late on — {actor} pulls up and can't continue."
     }
   ],
+  "HALF_TIME": [
+    {
+      "tags": ["generic"],
+      "urgency": "routine",
+      "text": "The referee blows the whistle for half-time. The players head to the dressing rooms."
+    },
+    {
+      "tags": ["tied"],
+      "urgency": "routine",
+      "text": "Half-time! The teams go into the break completely level."
+    },
+    {
+      "tags": ["home_leading"],
+      "urgency": "routine",
+      "text": "Half-time! The home side holds a slim advantage at the break."
+    },
+    {
+      "tags": ["away_leading"],
+      "urgency": "routine",
+      "text": "Half-time! The away team leads as the first half comes to a close."
+    }
+  ],
   "FULL_TIME": [
     {
       "tags": ["generic"],

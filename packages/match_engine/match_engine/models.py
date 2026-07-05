@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 class EventType(str, Enum):
     KICKOFF = "KICKOFF"
+    HALF_TIME = "HALF_TIME"
     GOAL = "GOAL"
     MISS = "MISS"
     SAVE = "SAVE"

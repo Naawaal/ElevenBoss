@@ -111,7 +111,7 @@ async def run_trace() -> None:
 
         # ── Pretty print ────────────────────────────────────────────────
         emoji_map = {
-            "KICKOFF": "🟢", "GOAL": "⚽", "MISS": "❌", "SAVE": "🧤",
+            "KICKOFF": "🟢", "HALF_TIME": "⏸️", "GOAL": "⚽", "MISS": "❌", "SAVE": "🧤",
             "CHANCE": "🎯", "FOUL": "💥", "YELLOW_CARD": "🟨",
             "INJURY": "🩹", "FULL_TIME": "🏁",
         }
