@@ -138,10 +138,32 @@ class ElevenBossBot(commands.Bot):
         
         # Check if we should sync to a specific guild for local development
         guild_id = os.environ.get("GUILD_ID")
+        # #region agent log
+        try:
+            import json, time
+            _gid = int(guild_id) if guild_id else None
+            _member_guild_ids = [g.id for g in self.guilds]
+            _payload = {"sessionId": "c42e6b", "hypothesisId": "A", "location": "main.py:on_ready", "message": "sync path inputs", "data": {"guild_id_set": bool(guild_id), "guild_id": _gid, "environment": os.environ.get("ENVIRONMENT"), "bot_guild_count": len(_member_guild_ids), "bot_in_target_guild": _gid in _member_guild_ids if _gid else None, "bot_guild_ids": _member_guild_ids}, "timestamp": int(time.time() * 1000)}
+            logger.info("[DEBUG-c42e6b] %s", json.dumps(_payload))
+            with open("debug-c42e6b.log", "a", encoding="utf-8") as _df:
+                _df.write(json.dumps(_payload) + "\n")
+        except Exception:
+            pass
+        # #endregion
         try:
             if guild_id:
                 guild = discord.Object(id=int(guild_id))
                 self.tree.copy_global_to(guild=guild)
+                # #region agent log
+                try:
+                    import json, time
+                    _payload = {"sessionId": "c42e6b", "hypothesisId": "B", "location": "main.py:on_ready", "message": "attempting guild sync", "data": {"guild_id": int(guild_id), "command_count": len(self.tree.get_commands())}, "timestamp": int(time.time() * 1000)}
+                    logger.info("[DEBUG-c42e6b] %s", json.dumps(_payload))
+                    with open("debug-c42e6b.log", "a", encoding="utf-8") as _df:
+                        _df.write(json.dumps(_payload) + "\n")
+                except Exception:
+                    pass
+                # #endregion
                 synced = await self.tree.sync(guild=guild)
                 logger.info(f"Command tree synchronized locally to Guild ID {guild_id} with {len(synced)} commands.")
             else:
@@ -149,6 +171,16 @@ class ElevenBossBot(commands.Bot):
                 synced = await self.tree.sync()
                 logger.info(f"Command tree synchronized globally with {len(synced)} commands.")
         except Exception as e:
+            # #region agent log
+            try:
+                import json, time
+                _payload = {"sessionId": "c42e6b", "hypothesisId": "C", "location": "main.py:on_ready", "message": "sync failed", "data": {"error": str(e), "error_type": type(e).__name__, "discord_code": getattr(e, "code", None), "guild_id": int(guild_id) if guild_id else None}, "timestamp": int(time.time() * 1000)}
+                logger.info("[DEBUG-c42e6b] %s", json.dumps(_payload))
+                with open("debug-c42e6b.log", "a", encoding="utf-8") as _df:
+                    _df.write(json.dumps(_payload) + "\n")
+            except Exception:
+                pass
+            # #endregion
             logger.error(f"Failed to sync command tree: {e}", exc_info=True)
 
 def main() -> None:
