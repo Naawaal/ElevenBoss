@@ -324,6 +324,10 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-08c:** Running `/player-profile` displays an exhaustive profile (OVR, Role, Level/XP progress bar, PlayStyles, Morale, Contract Days, and Age) with interactive button controls for `[Start Evolution]` and `[Level Up]`. These buttons redirect directly to pre-filtered sub-menus in the Development Center.
 - **AC-08d:** Entering the **Skill Allocation** sub-menu of the `/development` hub allows managers to allocate acquired level-up points to 6 core attributes (PAC, SHO, PAS, DRI, DEF, PHY).
 - **AC-08e:** Entering the **Evolutions** sub-menu of the `/development` hub displays options/select menu for 3 basic evolution tracks allowing players to undergo progressive training challenges.
+- **AC-08f:** A club may have at most **3** simultaneous active evolutions (`status = 'active'`). Attempting to start a 4th is rejected server-side with a clear error message.
+- **AC-08g:** After a **cold** evolution start, the club enters a **10-hour cooldown** before another cold start. Cancelling an active evolution grants a **replacement** start in the freed slot without waiting for the cooldown; replacement starts do not reset the cooldown timer.
+- **AC-08h:** The Evolution Command Center displays active slot usage (e.g. `2/3 slots used`), training energy, start-cost summary, cooldown until the next cold start, active evolutions with match progress, and recently completed history.
+- **AC-08i:** Starting an evolution deducts **25 training energy** and **10 × player OVR coins** atomically in `start_player_evolution`. Insufficient training energy or coins blocks the start with no partial deduction. Replacement starts pay the same fee.
 
 ---
 

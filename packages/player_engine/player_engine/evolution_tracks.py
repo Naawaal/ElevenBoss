@@ -38,9 +38,31 @@ EVOLUTION_TRACKS: dict[str, dict] = {
 }
 
 CANCEL_FEE_COINS = 100
+MAX_ACTIVE_EVOLUTIONS = 3
+EVOLUTION_START_COOLDOWN_HOURS = 10
+EVOLUTION_START_ENERGY = 25
+EVOLUTION_START_COIN_MULTIPLIER = 10
 
 VALID_TRACK_IDS = frozenset(EVOLUTION_TRACKS.keys())
 
 
 def track_goal(track_id: str) -> int:
     return int(EVOLUTION_TRACKS[track_id]["matches_required"])
+
+
+def evolution_start_cost(ovr: int) -> tuple[int, int]:
+    """Returns (energy, coins) for starting an evolution on an OVR-rated card."""
+    return EVOLUTION_START_ENERGY, EVOLUTION_START_COIN_MULTIPLIER * ovr
+
+
+def format_cooldown_remaining(seconds: int) -> str:
+    """Format seconds as e.g. '7h 32m' for hub display."""
+    if seconds <= 0:
+        return "Ready"
+    hours, rem = divmod(seconds, 3600)
+    minutes = rem // 60
+    if hours and minutes:
+        return f"{hours}h {minutes}m"
+    if hours:
+        return f"{hours}h"
+    return f"{minutes}m"

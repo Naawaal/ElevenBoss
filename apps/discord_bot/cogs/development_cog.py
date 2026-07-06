@@ -1,5 +1,7 @@
 # apps/discord_bot/cogs/development_cog.py
 from __future__ import annotations
+import json
+import time
 import logging
 import discord
 from discord import app_commands
@@ -10,11 +12,37 @@ from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.core.select_helpers import rebuild_select_options
 from apps.discord_bot.core.view_helpers import disable_view_on_timeout
-from player_engine import CANCEL_FEE_COINS, EVOLUTION_TRACKS
+from player_engine import (
+    CANCEL_FEE_COINS,
+    EVOLUTION_START_ENERGY,
+    EVOLUTION_TRACKS,
+    MAX_ACTIVE_EVOLUTIONS,
+    evolution_start_cost,
+    format_cooldown_remaining,
+)
 
 from apps.discord_bot.middleware.match_lock import assert_not_in_match
 
 logger = logging.getLogger(__name__)
+
+_DEBUG_LOG = "debug-476bbf.log"
+
+
+def _agent_debug_log(location: str, message: str, data: dict, hypothesis_id: str) -> None:
+    # #region agent log
+    try:
+        with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "sessionId": "476bbf",
+                "timestamp": int(time.time() * 1000),
+                "location": location,
+                "message": message,
+                "data": data,
+                "hypothesisId": hypothesis_id,
+            }) + "\n")
+    except OSError:
+        pass
+    # #endregion
 
 
 def _evo_played(evo: dict) -> int:
@@ -43,6 +71,26 @@ def _is_active_evo(evo: dict | None) -> bool:
     return bool(evo and evo.get("status", "active") == "active")
 
 
+async def fetch_evolution_hub_status(db, owner_id: int) -> dict:
+    res = await db.rpc("get_evolution_hub_status", {"p_owner_id": owner_id}).execute()
+    return res.data or {}
+
+
+def evolution_start_gate_message(status: dict) -> str | None:
+    active_count = int(status.get("active_count", 0))
+    if active_count >= MAX_ACTIVE_EVOLUTIONS:
+        return (
+            f"You already have {MAX_ACTIVE_EVOLUTIONS} evolutions in progress. "
+            "Wait for one to complete or cancel an existing one."
+        )
+    if status.get("can_start"):
+        return None
+    remaining = int(status.get("cooldown_remaining_seconds", 0))
+    if remaining > 0:
+        return f"Next evolution available in {format_cooldown_remaining(remaining)}."
+    return "You cannot start a new evolution right now."
+
+
 STAT_DRILLS = {
     "pac_sprint": "⚡ Pace Sprint",
     "sho_finishing": "🎯 Finishing Drill",
@@ -60,10 +108,17 @@ def _api_message(exc: Exception) -> str:
 
 
 async def _edit_hub_message(interaction: discord.Interaction, embed: discord.Embed, view: discord.ui.View) -> None:
-    if interaction.response.is_done():
-        await interaction.edit_original_response(embed=embed, view=view)
-    else:
+    if not interaction.response.is_done():
         await interaction.response.edit_message(embed=embed, view=view)
+        return
+    if interaction.message is not None:
+        try:
+            # ponytail: after defer(), message.edit() 404s on ephemeral — use webhook edit.
+            await interaction.followup.edit_message(interaction.message.id, embed=embed, view=view)
+        except discord.NotFound:
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        return
+    await interaction.edit_original_response(embed=embed, view=view)
 
 
 # --- Navigation / Switch helpers ---
@@ -78,10 +133,7 @@ async def show_hub(interaction: discord.Interaction, owner_id: int):
         color=0x00FF87
     )
     view = DevelopmentHubView(owner_id)
-    if interaction.response.is_done():
-        await interaction.edit_original_response(embed=embed, view=view)
-    else:
-        await interaction.response.edit_message(embed=embed, view=view)
+    await _edit_hub_message(interaction, embed, view)
 
 # --- VIEWS ---
 
@@ -122,6 +174,14 @@ async def show_training_menu(interaction: discord.Interaction, owner_id: int) ->
     db = await get_client()
     energy_res = await db.rpc("sync_training_energy", {"p_club_id": owner_id}).execute()
     energy = energy_res.data or {}
+    # #region agent log
+    _agent_debug_log(
+        "development_cog.py:show_training_menu",
+        "sync_training_energy ok",
+        {"keys": sorted(energy.keys()), "daily_drill_limit": energy.get("daily_drill_limit")},
+        "B",
+    )
+    # #endregion
 
     roster_res = await db.table("player_cards").select("*").eq("owner_id", owner_id).order("overall", desc=True).execute()
     roster = roster_res.data or []
@@ -253,6 +313,14 @@ class StatDrillView(discord.ui.View):
                 "p_drill_id": self.selected_drill,
             }).execute()
             result = res.data or {}
+            # #region agent log
+            _agent_debug_log(
+                "development_cog.py:run_drill_callback",
+                "process_stat_drill ok",
+                {"stat": result.get("stat"), "new_ovr": result.get("new_ovr")},
+                "A",
+            )
+            # #endregion
             selected_p = next(p for p in self.eligible_players if str(p["id"]) == str(self.selected_card_id))
             stat = str(result.get("stat", "")).upper()
             levels = int(result.get("levels_gained", 0))
@@ -273,6 +341,18 @@ class StatDrillView(discord.ui.View):
 
         except Exception as exc:
             logger.exception("Failed running stat drill.")
+            # #region agent log
+            err_data = {"type": type(exc).__name__, "message": str(exc)}
+            if isinstance(exc, APIError):
+                err_data["code"] = getattr(exc, "code", None)
+                err_data["details"] = getattr(exc, "details", None)
+            _agent_debug_log(
+                "development_cog.py:run_drill_callback",
+                "process_stat_drill failed",
+                err_data,
+                "A",
+            )
+            # #endregion
             await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
 
 
@@ -408,7 +488,15 @@ class FusionConfirmButton(discord.ui.Button):
             logger.exception("Card fusion failed.")
             for child in self.view.children:
                 child.disabled = False
-            await interaction.edit_original_response(view=self.view)
+            if interaction.message and interaction.response.is_done():
+                try:
+                    await interaction.followup.edit_message(interaction.message.id, view=self.view)
+                except discord.NotFound:
+                    pass
+            elif interaction.message:
+                await interaction.message.edit(view=self.view)
+            else:
+                await interaction.edit_original_response(view=self.view)
             await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
 
 
@@ -480,15 +568,8 @@ class CardFusionView(discord.ui.View):
 
 async def show_club_evolutions_hub(interaction: discord.Interaction, owner_id: int) -> None:
     db = await get_client()
-    active_res = await db.table("active_evolutions").select(
-        "*, player_cards(name, overall)"
-    ).eq("owner_id", owner_id).eq("status", "active").execute()
-    active = active_res.data or []
-
-    history_res = await db.table("active_evolutions").select(
-        "*, player_cards(name)"
-    ).eq("owner_id", owner_id).eq("status", "completed").order("completed_at", desc=True).limit(5).execute()
-    history = history_res.data or []
+    status = await fetch_evolution_hub_status(db, owner_id)
+    active = status.get("active") or []
 
     embed = discord.Embed(
         title="🧬 Evolution Command Center",
@@ -496,54 +577,84 @@ async def show_club_evolutions_hub(interaction: discord.Interaction, owner_id: i
         color=0x00FF87,
     )
 
+    slots_label = status.get("slots_label") or f"{len(active)}/{MAX_ACTIVE_EVOLUTIONS} slots used"
+    embed.add_field(name="Slots", value=slots_label, inline=True)
+
+    remaining = int(status.get("cooldown_remaining_seconds", 0))
+    if status.get("can_cold_start"):
+        cooldown_text = "Ready to start a new evolution"
+    elif status.get("can_replace"):
+        cooldown_text = "Replacement start available (after cancel)"
+    else:
+        cooldown_text = f"Next evolution available in {format_cooldown_remaining(remaining)}"
+    embed.add_field(name="Cooldown", value=cooldown_text, inline=True)
+
+    training_energy = status.get("training_energy", 0)
+    embed.add_field(
+        name="Resources",
+        value=(
+            f"⚡ Training Energy: `{training_energy}/100`\n"
+            f"💰 Start cost: `{EVOLUTION_START_ENERGY} energy` + `10×OVR` coins per track"
+        ),
+        inline=False,
+    )
+
     if active:
         lines = []
         for evo in active:
-            card = evo.get("player_cards") or {}
+            card_name = evo.get("card_name") or "?"
             track = EVOLUTION_TRACKS.get(evo["evolution_id"], {"name": evo["evolution_id"]})
             played = _evo_played(evo)
             required = _evo_required(evo)
             bar = make_match_progress_bar(played, required)
             ready = " ✅ **READY TO CLAIM**" if played >= required else ""
-            lines.append(f"**{card.get('name', '?')}** — {track['name']}\n{bar}{ready}")
+            lines.append(f"**{card_name}** — {track['name']}\n{bar}{ready}")
         embed.add_field(name=f"Active ({len(active)})", value="\n\n".join(lines), inline=False)
     else:
         embed.add_field(name="Active", value="No players are currently evolving.", inline=False)
 
+    history = status.get("recent_completed") or []
     if history:
         hist_lines = [
-            f"**{(h.get('player_cards') or {}).get('name', '?')}** — "
+            f"**{h.get('card_name', '?')}** — "
             f"{EVOLUTION_TRACKS.get(h['evolution_id'], {}).get('name', h['evolution_id'])}"
             for h in history
         ]
         embed.add_field(name="Recently Completed", value="\n".join(hist_lines), inline=False)
 
-    view = ClubEvolutionsHubView(owner_id, active)
-    if interaction.response.is_done():
-        await interaction.edit_original_response(embed=embed, view=view)
-    else:
-        await interaction.response.edit_message(embed=embed, view=view)
+    view = ClubEvolutionsHubView(owner_id, active, status)
+    await _edit_hub_message(interaction, embed, view)
 
 
 class ClubEvolutionsHubView(discord.ui.View):
-    def __init__(self, owner_id: int, active_evos: list[dict]) -> None:
+    def __init__(self, owner_id: int, active_evos: list[dict], hub_status: dict | None = None) -> None:
         super().__init__(timeout=900)
         self.owner_id = owner_id
         self.active_evos = active_evos
+        self.hub_status = hub_status or {}
 
-        start_btn = discord.ui.Button(style=discord.ButtonStyle.success, label="Start New Evolution", row=0)
+        can_start = bool(self.hub_status.get("can_start")) and len(active_evos) < MAX_ACTIVE_EVOLUTIONS
+        start_btn = discord.ui.Button(
+            style=discord.ButtonStyle.success,
+            label="Start New Evolution",
+            row=0,
+            disabled=not can_start,
+        )
         start_btn.callback = self.start_new_callback
         self.add_item(start_btn)
 
         if active_evos:
             options = []
             for evo in active_evos[:25]:
-                card = evo.get("player_cards") or {}
+                card_name = evo.get("card_name")
+                if not card_name:
+                    card = evo.get("player_cards") or {}
+                    card_name = card.get("name", "?")
                 track = EVOLUTION_TRACKS.get(evo["evolution_id"], {})
                 played = _evo_played(evo)
                 required = _evo_required(evo)
                 options.append(discord.SelectOption(
-                    label=f"Cancel: {card.get('name', '?')}",
+                    label=f"Cancel: {card_name}",
                     description=f"{track.get('name', '?')} ({played}/{required})",
                     value=evo["id"],
                 ))
@@ -565,6 +676,10 @@ class ClubEvolutionsHubView(discord.ui.View):
         await show_hub(interaction, self.owner_id)
 
     async def start_new_callback(self, interaction: discord.Interaction) -> None:
+        gate = evolution_start_gate_message(self.hub_status)
+        if gate:
+            await interaction.response.send_message(embed=error_embed(gate), ephemeral=True)
+            return
         await show_evols_menu(interaction, self.owner_id)
 
     async def cancel_select_callback(self, interaction: discord.Interaction) -> None:
@@ -594,18 +709,17 @@ class ClubEvolutionsHubView(discord.ui.View):
 
 async def show_evols_menu(interaction: discord.Interaction, owner_id: int, preselected_card_id: str | None = None):
     db = await get_client()
-    
+    hub_status = await fetch_evolution_hub_status(db, owner_id)
+    gate = evolution_start_gate_message(hub_status)
+
     # 1. Fetch roster
     roster_res = await db.table("player_cards").select("id, name, overall").eq("owner_id", owner_id).order("overall", desc=True).execute()
     roster = roster_res.data or []
 
     if not roster:
         embed = discord.Embed(title="🧬 Evolutions Hub", description="No players in your roster to evolve.", color=0x00FF87)
-        view = EvolutionsSubView(owner_id, None, None, roster)
-        if interaction.response.is_done():
-            await interaction.edit_original_response(embed=embed, view=view)
-        else:
-            await interaction.response.edit_message(embed=embed, view=view)
+        view = EvolutionsSubView(owner_id, None, None, roster, hub_status=hub_status)
+        await _edit_hub_message(interaction, embed, view)
         return
 
     # Choose selected card
@@ -620,6 +734,8 @@ async def show_evols_menu(interaction: discord.Interaction, owner_id: int, prese
 
     completed_res = await db.table("active_evolutions").select("evolution_id").eq("card_id", target_card_id).eq("status", "completed").execute()
     completed_tracks = {r["evolution_id"] for r in (completed_res.data or [])}
+
+    energy_cost, coin_cost = evolution_start_cost(card["overall"])
 
     embed = discord.Embed(
         title=f"🧬 Evolutions: {card['name']}",
@@ -640,13 +756,32 @@ async def show_evols_menu(interaction: discord.Interaction, owner_id: int, prese
             inline=False,
         )
     else:
-        embed.add_field(name="Status", value="No active evolution. Pick a track below to start.", inline=False)
+        if completed_tracks:
+            done = [
+                f"✅ {EVOLUTION_TRACKS[t]['name']}"
+                for t in completed_tracks
+                if t in EVOLUTION_TRACKS
+            ]
+            embed.add_field(
+                name="Completed Tracks",
+                value="\n".join(done) if done else "None",
+                inline=False,
+            )
+        else:
+            embed.add_field(name="Status", value="No active evolution. Pick a track below to start.", inline=False)
 
-    view = EvolutionsSubView(owner_id, card, evo, roster, completed_tracks)
-    if interaction.response.is_done():
-        await interaction.edit_original_response(embed=embed, view=view)
-    else:
-        await interaction.response.edit_message(embed=embed, view=view)
+        embed.add_field(
+            name="Start Cost",
+            value=f"⚡ `{energy_cost} training energy` + 🪙 `{coin_cost:,} coins`",
+            inline=False,
+        )
+        if gate:
+            embed.add_field(name="Cannot Start", value=gate, inline=False)
+
+    view = EvolutionsSubView(
+        owner_id, card, evo, roster, completed_tracks, hub_status=hub_status, start_blocked=bool(gate)
+    )
+    await _edit_hub_message(interaction, embed, view)
 
 
 class EvolutionsSubView(discord.ui.View):
@@ -657,12 +792,16 @@ class EvolutionsSubView(discord.ui.View):
         active_evo: dict | None,
         roster: list[dict],
         completed_tracks: set[str] | None = None,
+        hub_status: dict | None = None,
+        start_blocked: bool = False,
     ) -> None:
         super().__init__(timeout=900)
         self.owner_id = owner_id
         self.card = card
         self.active_evo = active_evo
         self.completed_tracks = completed_tracks or set()
+        self.hub_status = hub_status or {}
+        self.start_blocked = start_blocked
 
         if roster:
             player_options = [
@@ -673,11 +812,12 @@ class EvolutionsSubView(discord.ui.View):
             player_sel.callback = self.player_select_callback
             self.add_item(player_sel)
 
-        if card and not _is_active_evo(active_evo):
+        if card and not _is_active_evo(active_evo) and not self.start_blocked:
+            energy_cost, coin_cost = evolution_start_cost(card["overall"])
             evo_options = [
                 discord.SelectOption(
                     label=track["name"],
-                    description=f"Play {track['goal']} matches → +{track['reward_val']} {track['reward_stat'].upper()}",
+                    description=f"{energy_cost}⚡ + {coin_cost:,}🪙 | {track['goal']} matches → +{track['reward_val']} {track['reward_stat'].upper()}",
                     value=k,
                 )
                 for k, track in EVOLUTION_TRACKS.items()
@@ -734,16 +874,25 @@ class EvolutionsSubView(discord.ui.View):
             evo_key = interaction.data["values"][0]
             track = EVOLUTION_TRACKS[evo_key]
 
-            await db.rpc("start_player_evolution", {
+            gate = evolution_start_gate_message(self.hub_status)
+            if gate:
+                await interaction.followup.send(embed=error_embed(gate), ephemeral=True)
+                return
+
+            res = await db.rpc("start_player_evolution", {
                 "p_owner_id": self.owner_id,
                 "p_card_id": self.card["id"],
                 "p_track_id": evo_key,
             }).execute()
+            result = res.data or {}
+            energy_spent = result.get("energy_spent", EVOLUTION_START_ENERGY)
+            coins_spent = result.get("coins_spent", evolution_start_cost(self.card["overall"])[1])
 
             await interaction.followup.send(
                 embed=success_embed(
                     f"🧬 **Evolution Started!**\n\n"
                     f"**{self.card['name']}** is now on **{track['name']}**.\n"
+                    f"• Spent: `{energy_spent} energy` + `🪙 {coins_spent:,} coins`\n"
                     f"• Objective: Play **{track['goal']} matches** with this player in your starting XI.\n"
                     f"• Reward: `+{track['reward_val']} {track['reward_stat'].upper()}`"
                 ),
@@ -797,6 +946,7 @@ class EvolutionsSubView(discord.ui.View):
             applied = result.get("reward", track["reward_val"])
             reward_stat = result.get("stat", track["reward_stat"].upper())
 
+            await show_evols_menu(interaction, self.owner_id, preselected_card_id=self.card["id"])
             await interaction.followup.send(
                 embed=success_embed(
                     f"🧬 **Evolution Completed!**\n\n"
@@ -806,7 +956,6 @@ class EvolutionsSubView(discord.ui.View):
                 ),
                 ephemeral=True
             )
-            await show_evols_menu(interaction, self.owner_id, preselected_card_id=self.card["id"])
 
         except Exception as e:
             logger.exception("Failed claiming evolution reward.")
@@ -823,10 +972,7 @@ async def show_skills_menu(interaction: discord.Interaction, owner_id: int, pres
     if not roster:
         embed = discord.Embed(title="⭐ Skill Allocation", description="No roster players found.", color=0x00FF87)
         view = SkillsSubView(owner_id, None, roster)
-        if interaction.response.is_done():
-            await interaction.edit_original_response(embed=embed, view=view)
-        else:
-            await interaction.response.edit_message(embed=embed, view=view)
+        await _edit_hub_message(interaction, embed, view)
         return
 
     target_card_id = preselected_card_id or roster[0]["id"]
@@ -848,10 +994,7 @@ async def show_skills_menu(interaction: discord.Interaction, owner_id: int, pres
     )
 
     view = SkillsSubView(owner_id, card, roster)
-    if interaction.response.is_done():
-        await interaction.edit_original_response(embed=embed, view=view)
-    else:
-        await interaction.response.edit_message(embed=embed, view=view)
+    await _edit_hub_message(interaction, embed, view)
 
 
 class SkillsSubView(discord.ui.View):

@@ -84,37 +84,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION public.process_match_result(
-    p_result TEXT,
-    p_card_ids UUID[],
-    p_xp_amount INTEGER
-) RETURNS BOOLEAN AS $$
-DECLARE
-    v_card_id UUID;
-    v_morale_delta INTEGER;
-BEGIN
-    IF p_result = 'win' THEN
-        v_morale_delta := 5;
-    ELSIF p_result = 'draw' THEN
-        v_morale_delta := 1;
-    ELSE
-        v_morale_delta := -5;
-    END IF;
-
-    FOREACH v_card_id IN ARRAY p_card_ids LOOP
-        UPDATE public.player_cards
-        SET xp = xp + p_xp_amount,
-            morale = LEAST(100, GREATEST(10, morale + v_morale_delta))
-        WHERE id = v_card_id;
-
-        INSERT INTO public.player_xp_log (card_id, xp_amount, source)
-        VALUES (v_card_id, p_xp_amount, 'match_simulation');
-    END LOOP;
-
-    PERFORM public.tick_evolution_match_progress(p_card_ids);
-    RETURN TRUE;
-END;
-$$ LANGUAGE plpgsql;
+-- process_match_result overload fix: see 021_process_match_result_overload_fix.sql
 
 CREATE OR REPLACE FUNCTION public.start_player_evolution(
     p_owner_id BIGINT,
@@ -317,7 +287,7 @@ DECLARE
     v_coins BIGINT;
     v_energy INTEGER;
     v_daily INTEGER;
-    v_daily_limit INTEGER;
+    v_reset DATE;
     v_stat_col TEXT;
     v_ovr NUMERIC;
     v_old_stat INTEGER;
@@ -325,12 +295,15 @@ DECLARE
     v_new_ovr INTEGER;
     v_cost BIGINT;
     v_levels INTEGER;
+    v_daily_limit INTEGER := 20;
 BEGIN
-    PERFORM public.assert_not_in_match(p_owner_id);
+    PERFORM public.sync_training_energy(p_owner_id);
 
-    SELECT coins, training_energy, daily_drill_count, daily_drill_limit
-    INTO v_coins, v_energy, v_daily, v_daily_limit
+    SELECT training_energy, coins, daily_drill_count, daily_drill_reset_at
+    INTO v_energy, v_coins, v_daily, v_reset
     FROM public.players WHERE discord_id = p_owner_id FOR UPDATE;
+
+    PERFORM public.assert_not_in_match(p_owner_id);
 
     IF v_daily >= v_daily_limit THEN
         RAISE EXCEPTION 'Daily drill limit reached';

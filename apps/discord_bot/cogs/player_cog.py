@@ -7,7 +7,20 @@ from discord import app_commands
 from discord.ext import commands
 
 from player_engine import GameConfig, calculate_contract_renewal_cost, format_potential_display, EVOLUTION_TRACKS
-from apps.discord_bot.cogs.development_cog import make_match_progress_bar, _evo_played, _evo_required, _is_active_evo
+from apps.discord_bot.cogs.development_cog import (
+    make_match_progress_bar,
+    _evo_played,
+    _evo_required,
+    _is_active_evo,
+    evolution_start_gate_message,
+    fetch_evolution_hub_status,
+)
+from apps.discord_bot.db.client import get_client
+from apps.discord_bot.middleware.guard import ensure_registered
+from apps.discord_bot.middleware.match_lock import assert_not_in_match
+from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
+
+logger = logging.getLogger(__name__)
 
 async def player_id_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
     try:
@@ -42,6 +55,7 @@ def make_xp_bar(current: int, needed: int) -> str:
     filled = min(total_bars, int((current / needed) * total_bars))
     empty = total_bars - filled
     return f"`[{'█' * filled}{'░' * empty}]` ({current}/{needed} XP)"
+
 
 class PlayerProfileView(discord.ui.View):
     def __init__(self, card_id: str, owner_id: int, card_name: str, has_evo: bool, can_claim: bool, renewal_cost: int, card_data: dict) -> None:
@@ -127,7 +141,13 @@ class PlayerProfileView(discord.ui.View):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("This belongs to another manager.", ephemeral=True)
             return
-        # Cross-cog routing to Development Evolutions Sub-menu
+        await interaction.response.defer(ephemeral=True)
+        db = await get_client()
+        hub_status = await fetch_evolution_hub_status(db, self.owner_id)
+        gate = evolution_start_gate_message(hub_status)
+        if gate:
+            await interaction.followup.send(embed=error_embed(gate), ephemeral=True)
+            return
         from apps.discord_bot.cogs.development_cog import show_evols_menu
         await show_evols_menu(interaction, self.owner_id, preselected_card_id=self.card_id)
 
@@ -147,6 +167,10 @@ class PlayerProfileView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         try:
             db = await get_client()
+            lock_msg = await assert_not_in_match(db, self.owner_id)
+            if lock_msg:
+                await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
+                return
 
             evo_res = await db.table("active_evolutions").select("*").eq("card_id", self.card_id).eq("status", "active").maybe_single().execute()
             evo = evo_res.data if evo_res else None
@@ -165,8 +189,10 @@ class PlayerProfileView(discord.ui.View):
             applied = result.get("reward", track["reward_val"])
             reward_stat = result.get("stat", track["reward_stat"].upper())
 
-            self.evo_btn.disabled = True
-            await interaction.edit_original_response(view=self)
+            payload = await build_player_profile(db, self.card_id, self.owner_id)
+            if payload and interaction.message:
+                embed, view = payload
+                await interaction.followup.edit_message(interaction.message.id, embed=embed, view=view)
 
             await interaction.followup.send(
                 embed=success_embed(
@@ -184,6 +210,85 @@ class PlayerProfileView(discord.ui.View):
             await interaction.followup.send(embed=error_embed(_api_message(e)), ephemeral=True)
 
 
+async def build_player_profile(
+    db,
+    player_id: str,
+    owner_id: int,
+) -> tuple[discord.Embed, PlayerProfileView] | None:
+    card_res = await db.table("player_cards").select("*").eq("id", player_id).maybe_single().execute()
+    card = card_res.data if card_res else None
+    if not card or card["owner_id"] != owner_id:
+        return None
+
+    ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", player_id).execute()
+    playstyles = [p["playstyle_key"] for p in ps_res.data] if ps_res.data else []
+    playstyles_str = ", ".join(playstyles) if playstyles else "None"
+
+    evo_res = await db.table("active_evolutions").select("*").eq("card_id", player_id).eq("status", "active").maybe_single().execute()
+    evo = evo_res.data if evo_res else None
+    has_evo = _is_active_evo(evo)
+    can_claim = has_evo and _evo_played(evo) >= _evo_required(evo)
+
+    level, curr_xp, needed_xp = get_xp_progress(card.get("xp", 0))
+    xp_bar = make_xp_bar(curr_xp, needed_xp)
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    expiry_str = card.get("contract_expires_at")
+    if expiry_str:
+        expiry = datetime.datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
+        days_left = max(0, (expiry - now).days)
+        contract_val = f"⏳ `{days_left} Days` (Expires <t:{int(expiry.timestamp())}:D>)"
+    else:
+        contract_val = "❌ `No Active Contract`"
+
+    renewal_cost = calculate_contract_renewal_cost(card["overall"], GameConfig())
+    embed = discord.Embed(
+        title=f"📋 Roster Profile: {card['name']}",
+        description=(
+            f"Level **{level}** {card['rarity']} Player Card (OVR **{card['overall']}**)\n"
+            f"*Potential (POT) is the maximum OVR this player can reach through training.*"
+        ),
+        color=0x00FF87,
+    )
+    embed.add_field(name="📋 Role Style", value=card.get("role", "Balanced"), inline=True)
+    embed.add_field(
+        name="🎂 Age / Potential",
+        value=format_potential_display(card.get("potential"), card.get("age", 25)),
+        inline=True,
+    )
+    embed.add_field(name="😊 Morale Rating", value=f"Morale **{card.get('morale', 80)}/100**", inline=True)
+    embed.add_field(name="📈 Level & Experience Progression", value=xp_bar, inline=False)
+    embed.add_field(
+        name="📈 Player Skill Attributes",
+        value=(
+            f"⚡ **PAC**: `{card.get('pac', 50)}` | "
+            f"🎯 **SHO**: `{card.get('sho', 50)}` | "
+            f"🧠 **PAS**: `{card.get('pas', 50)}`\n"
+            f"👟 **DRI**: `{card.get('dri', 50)}` | "
+            f"🛡️ **DEF**: `{card.get('def', 50)}` | "
+            f"💪 **PHY**: `{card.get('phy', 50)}`"
+        ),
+        inline=False,
+    )
+    embed.add_field(name="✨ PlayStyles", value=playstyles_str, inline=True)
+    embed.add_field(name="📄 Contract Status", value=contract_val, inline=False)
+    embed.add_field(name="⭐ Skill Points Available", value=f"**{card.get('skill_points', 0)}**", inline=False)
+
+    if has_evo:
+        track = EVOLUTION_TRACKS.get(evo["evolution_id"], {"name": "Unknown Evolution"})
+        played = _evo_played(evo)
+        required = _evo_required(evo)
+        progress_str = (
+            f"### 🧬 {track['name']}\n"
+            f"{make_match_progress_bar(played, required)}\n"
+            f"*Play matches with this player in your starting XI to progress.*"
+        )
+        embed.add_field(name="Evolution In Progress", value=progress_str, inline=False)
+
+    view = PlayerProfileView(player_id, owner_id, card["name"], has_evo, can_claim, renewal_cost, card)
+    return embed, view
+
+
 class PlayerCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -197,93 +302,12 @@ class PlayerCog(commands.Cog):
             await interaction.response.defer(ephemeral=True)
         try:
             db = await get_client()
-
-            # 1. Fetch player card details
-            card_res = await db.table("player_cards").select("*").eq("id", player_id).maybe_single().execute()
-            card = card_res.data if card_res else None
-            if not card:
+            payload = await build_player_profile(db, player_id, interaction.user.id)
+            if not payload:
                 await interaction.followup.send(embed=error_embed("Player card not found."), ephemeral=True)
                 return
 
-            if card["owner_id"] != interaction.user.id:
-                await interaction.followup.send(embed=error_embed("You do not own this player card."), ephemeral=True)
-                return
-
-            # 2. Fetch playstyles
-            ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", player_id).execute()
-            playstyles = [p["playstyle_key"] for p in ps_res.data] if ps_res.data else []
-            playstyles_str = ", ".join(playstyles) if playstyles else "None"
-
-            # 3. Fetch active evolution track
-            evo_res = await db.table("active_evolutions").select("*").eq("card_id", player_id).eq("status", "active").maybe_single().execute()
-            evo = evo_res.data if evo_res else None
-
-            has_evo = _is_active_evo(evo)
-            can_claim = has_evo and _evo_played(evo) >= _evo_required(evo)
-
-            # XP progress bar
-            level, curr_xp, needed_xp = get_xp_progress(card.get("xp", 0))
-            xp_bar = make_xp_bar(curr_xp, needed_xp)
-
-            # Contract expiry days
-            now = datetime.datetime.now(datetime.timezone.utc)
-            expiry_str = card.get("contract_expires_at")
-            if expiry_str:
-                expiry = datetime.datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
-                days_left = (expiry - now).days
-                days_left = max(0, days_left)
-                contract_val = f"⏳ `{days_left} Days` (Expires <t:{int(expiry.timestamp())}:D>)"
-            else:
-                contract_val = "❌ `No Active Contract`"
-
-            renewal_cost = calculate_contract_renewal_cost(card["overall"], GameConfig())
-
-            embed = discord.Embed(
-                title=f"📋 Roster Profile: {card['name']}",
-                description=(
-                    f"Level **{level}** {card['rarity']} Player Card (OVR **{card['overall']}**)\n"
-                    f"*Potential (POT) is the maximum OVR this player can reach through training.*"
-                ),
-                color=0x00FF87
-            )
-            embed.add_field(name="📋 Role Style", value=card.get("role", "Balanced"), inline=True)
-            embed.add_field(
-                name="🎂 Age / Potential",
-                value=format_potential_display(card.get("potential"), card.get("age", 25)),
-                inline=True,
-            )
-            embed.add_field(name="😊 Morale Rating", value=f"Morale **{card.get('morale', 80)}/100**", inline=True)
-            embed.add_field(name="📈 Level & Experience Progression", value=xp_bar, inline=False)
-            
-            # Attributes
-            embed.add_field(
-                name="📈 Player Skill Attributes",
-                value=(
-                    f"⚡ **PAC**: `{card.get('pac', 50)}` | "
-                    f"🎯 **SHO**: `{card.get('sho', 50)}` | "
-                    f"🧠 **PAS**: `{card.get('pas', 50)}`\n"
-                    f"👟 **DRI**: `{card.get('dri', 50)}` | "
-                    f"🛡️ **DEF**: `{card.get('def', 50)}` | "
-                    f"💪 **PHY**: `{card.get('phy', 50)}`"
-                ),
-                inline=False
-            )
-            embed.add_field(name="✨ PlayStyles", value=playstyles_str, inline=True)
-            embed.add_field(name="📄 Contract Status", value=contract_val, inline=False)
-            embed.add_field(name="⭐ Skill Points Available", value=f"**{card.get('skill_points', 0)}**", inline=False)
-
-            if has_evo:
-                track = EVOLUTION_TRACKS.get(evo["evolution_id"], {"name": "Unknown Evolution"})
-                played = _evo_played(evo)
-                required = _evo_required(evo)
-                progress_str = (
-                    f"### 🧬 {track['name']}\n"
-                    f"{make_match_progress_bar(played, required)}\n"
-                    f"*Play matches with this player in your starting XI to progress.*"
-                )
-                embed.add_field(name="Evolution In Progress", value=progress_str, inline=False)
-
-            view = PlayerProfileView(player_id, interaction.user.id, card["name"], has_evo, can_claim, renewal_cost, card)
+            embed, view = payload
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
         except Exception as e:

@@ -926,9 +926,16 @@ Challenger: /battle friendly [Opponent]
 
 ### G. Evolution Lifecycle (v1)
 * **`active_evolutions`** extended with `status` (`active`/`completed`/`cancelled`), `matches_played`, `owner_id`, history retained on claim.
-* **RPCs**: `start_player_evolution`, `cancel_player_evolution` (100 coin fee), `tick_evolution_match_progress`; claim marks `completed` instead of delete.
+* **RPCs**: `start_player_evolution`, `cancel_player_evolution` (100 coin fee), `tick_evolution_match_progress`, `get_evolution_hub_status`; claim marks `completed` instead of delete.
+* **Club pacing (v1.1)**: max **3** active evolutions per owner; **10-hour** cold-start cooldown on `players.last_evolution_started_at`; replacement bypass after cancel.
+* **Start cost**: **25 training energy** + **10 × OVR coins** (ledger source `evolution_start`).
 * **UI**: Club Evolution Command Center in `/development` → Evolutions; progress bars on profile.
 * **Friendly matches** now tick evolution progress via `tick_evolution_match_progress`.
+
+### H. Evolution Club Limits Migration (023)
+* **Column**: `players.last_evolution_started_at TIMESTAMPTZ` — stamped only on cold starts.
+* **`start_player_evolution`**: atomic slot cap, cooldown/replacement logic, resource deduction, ledger write.
+* **`get_evolution_hub_status`**: single RPC for hub slot/cooldown/energy/cost display.
 
 ### E. Design Decisions (v1.0.0)
 * AC-07 async training slots: **deprecated** in favor of AC-10 stat drills (spec note only).

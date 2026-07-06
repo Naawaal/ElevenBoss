@@ -18,6 +18,13 @@ This document contains strict constraints and architecture rules for AI agents o
 * All complex mutations (such as user registration, player transactions/purchases, league resets) must be handled via **atomic Supabase RPCs** (stored procedures) or safe, transaction-like **upserts**.
 * **Never** write application-level loops that execute multiple sequential `INSERT` or `UPDATE` queries if they can be combined or batched. This minimizes network round-trips and prevents half-applied states.
 
+## 3b. The Schema Rule (do not break production DB)
+* **Columns are defined only in `supabase/migrations/`** — never `SELECT`, `INSERT`, or `UPDATE` a column name in SQL/RPCs unless it exists in a migration `ALTER TABLE` / `CREATE TABLE` in this repo. Constants (e.g. `daily_drill_limit := 20`) are **not** columns.
+* **When replacing an RPC**, diff against the previous migration version; do not drop calls like `sync_training_energy` or swap column names without checking `015_hardening_schema.sql` and peers.
+* **Every schema change** gets a new numbered migration file; never edit an already-applied migration in place on remote — add a forward fix migration instead (repo source files may be corrected for fresh installs).
+* **After migrations**, run `supabase/scripts/verify_required_schema.sql` (or rely on the guard block in the latest migration) before shipping bot changes that depend on new tables/columns.
+* **Extend the guard lists** in `verify_required_schema.sql` and migration `022+` when adding tables/columns the bot or RPCs require.
+
 ## 4. The UI Rule
 * Discord slash commands must invoke `await interaction.response.defer(ephemeral=True)` (or `ephemeral=False` as appropriate) **immediately** at the start of command execution.
 * This prevents Discord's built-in 3-second API timeout limit from being exceeded during database requests or external processing.
