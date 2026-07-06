@@ -242,6 +242,8 @@ $$ LANGUAGE plpgsql;
 -- Agent sale (server-priced)
 -- ---------------------------------------------------------------------------
 
+DROP FUNCTION IF EXISTS public.process_agent_sale(BIGINT, UUID, BIGINT);
+
 CREATE OR REPLACE FUNCTION public.process_agent_sale(
     p_club_id BIGINT,
     p_card_id UUID
@@ -295,6 +297,8 @@ $$ LANGUAGE plpgsql;
 -- ---------------------------------------------------------------------------
 -- Fodder fusion (OVR via recalculate)
 -- ---------------------------------------------------------------------------
+
+DROP FUNCTION IF EXISTS public.train_with_fodder(BIGINT, UUID, UUID);
 
 CREATE OR REPLACE FUNCTION public.train_with_fodder(
     p_owner_id BIGINT,
