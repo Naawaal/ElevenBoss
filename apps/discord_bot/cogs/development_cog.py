@@ -25,7 +25,7 @@ from apps.discord_bot.middleware.match_lock import assert_not_in_match
 
 logger = logging.getLogger(__name__)
 
-_DEBUG_LOG = "debug-476bbf.log"
+_DEBUG_LOG = "debug-4aa967.log"
 
 
 def _agent_debug_log(location: str, message: str, data: dict, hypothesis_id: str) -> None:
@@ -33,7 +33,7 @@ def _agent_debug_log(location: str, message: str, data: dict, hypothesis_id: str
     try:
         with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps({
-                "sessionId": "476bbf",
+                "sessionId": "4aa967",
                 "timestamp": int(time.time() * 1000),
                 "location": location,
                 "message": message,
@@ -307,6 +307,25 @@ class StatDrillView(discord.ui.View):
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
 
+            selected_p = next(p for p in self.eligible_players if str(p["id"]) == str(self.selected_card_id))
+            drill_stat_key = {
+                "pac_sprint": "pac", "sho_finishing": "sho", "pas_distribution": "pas",
+                "dri_dribble": "dri", "def_tackling": "def", "phy_strength": "phy",
+            }.get(self.selected_drill, "pac")
+            # #region agent log
+            _agent_debug_log(
+                "development_cog.py:run_drill_callback",
+                "pre drill state",
+                {
+                    "overall": selected_p.get("overall"),
+                    "potential": selected_p.get("potential"),
+                    "stat": selected_p.get(drill_stat_key),
+                    "drill": self.selected_drill,
+                },
+                "A",
+            )
+            # #endregion
+
             res = await db.rpc("process_stat_drill", {
                 "p_owner_id": self.owner_id,
                 "p_card_id": self.selected_card_id,
@@ -317,11 +336,15 @@ class StatDrillView(discord.ui.View):
             _agent_debug_log(
                 "development_cog.py:run_drill_callback",
                 "process_stat_drill ok",
-                {"stat": result.get("stat"), "new_ovr": result.get("new_ovr")},
-                "A",
+                {
+                    "stat": result.get("stat"),
+                    "new_ovr": result.get("new_ovr"),
+                    "levels_gained": result.get("levels_gained"),
+                    "coins_spent": result.get("coins_spent"),
+                },
+                "E",
             )
             # #endregion
-            selected_p = next(p for p in self.eligible_players if str(p["id"]) == str(self.selected_card_id))
             stat = str(result.get("stat", "")).upper()
             levels = int(result.get("levels_gained", 0))
             new_ovr = result.get("new_ovr", selected_p["overall"])
@@ -333,9 +356,6 @@ class StatDrillView(discord.ui.View):
                 f"• New OVR: **{new_ovr}**\n"
                 f"• Spent: `15 energy` + `🪙 {coins_spent:,} coins`"
             )
-            if levels == 0:
-                msg += "\n\n*Stat XP banked — keep drilling to level up this stat.*"
-
             await interaction.followup.send(embed=success_embed(msg), ephemeral=True)
             await show_training_menu(interaction, self.owner_id)
 
@@ -937,6 +957,19 @@ class EvolutionsSubView(discord.ui.View):
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
 
+            # #region agent log
+            _agent_debug_log(
+                "development_cog.py:claim_reward_callback",
+                "pre claim state",
+                {
+                    "overall": self.card.get("overall"),
+                    "potential": self.card.get("potential"),
+                    "evo_id": self.active_evo.get("evolution_id"),
+                },
+                "C",
+            )
+            # #endregion
+
             res = await db.rpc("claim_evolution_reward", {
                 "p_owner_id": self.owner_id,
                 "p_evo_id": self.active_evo["id"],
@@ -945,14 +978,30 @@ class EvolutionsSubView(discord.ui.View):
             track = EVOLUTION_TRACKS[self.active_evo["evolution_id"]]
             applied = result.get("reward", track["reward_val"])
             reward_stat = result.get("stat", track["reward_stat"].upper())
+            blocked = result.get("blocked_by_cap", False)
+
+            # #region agent log
+            _agent_debug_log(
+                "development_cog.py:claim_reward_callback",
+                "claim_evolution_reward ok",
+                {"reward": applied, "new_ovr": result.get("new_ovr"), "blocked_by_cap": blocked},
+                "C",
+            )
+            # #endregion
 
             await show_evols_menu(interaction, self.owner_id, preselected_card_id=self.card["id"])
+            cap_note = ""
+            if result.get("blocked_by_cap"):
+                cap_note = "\n*Stat reward skipped — player is already at POT ceiling.*"
+            elif applied == 0:
+                cap_note = "\n*Stat reward skipped — stat is already at maximum.*"
             await interaction.followup.send(
                 embed=success_embed(
                     f"🧬 **Evolution Completed!**\n\n"
                     f"Claimed rewards for **{self.card['name']}**:\n"
                     f"• **+{applied} {reward_stat}**\n"
                     f"• New Overall: **{result.get('new_ovr', self.card['overall'])} OVR**!"
+                    f"{cap_note}"
                 ),
                 ephemeral=True
             )

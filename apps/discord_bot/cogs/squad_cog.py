@@ -1,6 +1,8 @@
 # apps/discord_bot/cogs/squad_cog.py
 from __future__ import annotations
+import json
 import logging
+import time
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -15,6 +17,34 @@ from apps.discord_bot.core.select_helpers import rebuild_select_options
 from apps.discord_bot.middleware.match_lock import assert_not_in_match
 
 logger = logging.getLogger(__name__)
+
+_DEBUG_LOG = "debug-4aa967.log"
+
+
+def _agent_debug_log(location: str, message: str, data: dict, hypothesis_id: str) -> None:
+    # #region agent log
+    try:
+        with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "sessionId": "4aa967",
+                "runId": "swap-confirm",
+                "hypothesisId": hypothesis_id,
+                "timestamp": int(time.time() * 1000),
+                "location": location,
+                "message": message,
+                "data": data,
+            }) + "\n")
+    except OSError:
+        pass
+    # #endregion
+
+
+def _swap_selection_ready(starter_id: str | None, reserve_id: str | None) -> bool:
+    return bool(
+        starter_id and reserve_id
+        and starter_id != "none"
+        and reserve_id != "none"
+    )
 
 async def fetch_squad_data(user_id: int):
     db = await get_client()
@@ -352,12 +382,26 @@ class SquadSwapView(discord.ui.View):
         self.add_item(start_select)
         
         # Confirm Swap Button
+        can_confirm = _swap_selection_ready(self.selected_starter_id, self.selected_reserve_id)
         self.confirm_btn = discord.ui.Button(
             label="Confirm Swap",
             style=discord.ButtonStyle.success,
             emoji="✅",
-            disabled=True
+            disabled=not can_confirm,
         )
+        # #region agent log
+        _agent_debug_log(
+            "squad_cog.py:setup_components",
+            "confirm button state",
+            {
+                "starter_id": self.selected_starter_id,
+                "reserve_id": self.selected_reserve_id,
+                "can_confirm": can_confirm,
+                "disabled": not can_confirm,
+            },
+            "A",
+        )
+        # #endregion
         self.confirm_btn.callback = self.on_confirm
         self.add_item(self.confirm_btn)
         
@@ -397,7 +441,8 @@ class SquadSwapView(discord.ui.View):
 
     async def on_bench_select(self, interaction: discord.Interaction) -> None:
         self.selected_starter_id = interaction.data["values"][0]
-        self.update_confirm_button()
+        if self.selected_starter_id == "none":
+            self.selected_starter_id = None
         self.setup_components()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
@@ -405,12 +450,8 @@ class SquadSwapView(discord.ui.View):
         self.selected_reserve_id = interaction.data["values"][0]
         if self.selected_reserve_id == "none":
             self.selected_reserve_id = None
-        self.update_confirm_button()
         self.setup_components()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
-
-    def update_confirm_button(self) -> None:
-        self.confirm_btn.disabled = not (self.selected_starter_id and self.selected_reserve_id)
 
     async def on_back(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()

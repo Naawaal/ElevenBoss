@@ -17,6 +17,14 @@ from .engine import (
     calculate_true_ovr,
     apply_match_form,
 )
+from .progression_gates import (
+    STAT_KEYS,
+    can_gain_stat_progression,
+    detect_stat_inflation,
+    rebalance_stats_to_ovr,
+    simulate_legacy_stat_drill,
+    stats_from_card,
+)
 from .evolution_tracks import (
     CANCEL_FEE_COINS,
     EVOLUTION_START_COIN_MULTIPLIER,
@@ -43,6 +51,12 @@ __all__ = [
     "calculate_contract_renewal_cost",
     "calculate_true_ovr",
     "apply_match_form",
+    "STAT_KEYS",
+    "can_gain_stat_progression",
+    "detect_stat_inflation",
+    "rebalance_stats_to_ovr",
+    "simulate_legacy_stat_drill",
+    "stats_from_card",
     "generate_player",
     "generate_squad",
     "EVOLUTION_TRACKS",
