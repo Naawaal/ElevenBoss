@@ -19,6 +19,8 @@ import random
 import sys
 import time
 
+from dotenv import load_dotenv
+
 from player_engine import (
     calculate_true_ovr,
     detect_stat_inflation,
@@ -117,6 +119,8 @@ def _fix_card(card: dict, playstyles: list[str], *, apply: bool, db) -> bool:
 
 
 def main() -> int:
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description="Rebalance inflated legacy player stats.")
     parser.add_argument("--apply", action="store_true", help="Write changes (default: dry-run)")
     parser.add_argument("--card-id", help="Fix a single card UUID only")
@@ -125,7 +129,10 @@ def main() -> int:
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY")
     if not url or not key:
-        print("Set SUPABASE_URL and SUPABASE_SERVICE_KEY", file=sys.stderr)
+        print(
+            "Set SUPABASE_URL and SUPABASE_KEY (or SUPABASE_SERVICE_KEY) in .env",
+            file=sys.stderr,
+        )
         return 1
 
     from supabase import create_client
