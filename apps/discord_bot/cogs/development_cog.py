@@ -1,9 +1,6 @@
 # apps/discord_bot/cogs/development_cog.py
 from __future__ import annotations
-import json
 import logging
-import time
-from pathlib import Path
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -16,26 +13,6 @@ from apps.discord_bot.core.view_helpers import disable_view_on_timeout
 from apps.discord_bot.middleware.match_lock import assert_not_in_match
 
 logger = logging.getLogger(__name__)
-
-# #region agent log
-_DEBUG_LOG = Path(__file__).resolve().parents[3] / "debug-e7ea2e.log"
-
-
-def _agent_log(location: str, message: str, data: dict, hypothesis_id: str, run_id: str = "pre-fix") -> None:
-    try:
-        with _DEBUG_LOG.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "sessionId": "e7ea2e",
-                "runId": run_id,
-                "hypothesisId": hypothesis_id,
-                "location": location,
-                "message": message,
-                "data": data,
-                "timestamp": int(time.time() * 1000),
-            }) + "\n")
-    except OSError:
-        pass
-# #endregion
 
 STAT_DRILLS = {
     "pac_sprint": "⚡ Pace Sprint",
@@ -231,20 +208,6 @@ class StatDrillView(discord.ui.View):
         self.add_item(back_btn)
 
         self._update_run_btn()
-        # #region agent log
-        _agent_log(
-            "development_cog.py:_build_items",
-            "items rebuilt",
-            {
-                "selected_card_id": self.selected_card_id,
-                "selected_drill": self.selected_drill,
-                "run_btn_disabled": getattr(getattr(self, "run_btn", None), "disabled", None),
-                "has_run_btn": hasattr(self, "run_btn"),
-            },
-            "A",
-            run_id="post-fix",
-        )
-        # #endregion
 
     async def on_timeout(self) -> None:
         await disable_view_on_timeout(self)
@@ -261,45 +224,14 @@ class StatDrillView(discord.ui.View):
     def _update_run_btn(self) -> None:
         if hasattr(self, "run_btn"):
             self.run_btn.disabled = not (self.selected_card_id and self.selected_drill)
-        # #region agent log
-        _agent_log(
-            "development_cog.py:_update_run_btn",
-            "run btn state updated",
-            {
-                "selected_card_id": self.selected_card_id,
-                "selected_drill": self.selected_drill,
-                "run_btn_disabled": getattr(getattr(self, "run_btn", None), "disabled", None),
-                "has_run_btn": hasattr(self, "run_btn"),
-            },
-            "A",
-        )
-        # #endregion
 
     async def player_select_callback(self, interaction: discord.Interaction) -> None:
         self.selected_card_id = self.player_select.values[0]
-        # #region agent log
-        _agent_log(
-            "development_cog.py:player_select_callback",
-            "player selected",
-            {"selected_card_id": self.selected_card_id, "selected_drill": self.selected_drill},
-            "B",
-        )
-        # #endregion
-        self._update_run_btn()
         self._build_items()
         await _edit_hub_message(interaction, interaction.message.embeds[0], self)
 
     async def drill_select_callback(self, interaction: discord.Interaction) -> None:
         self.selected_drill = self.drill_select.values[0]
-        # #region agent log
-        _agent_log(
-            "development_cog.py:drill_select_callback",
-            "drill selected",
-            {"selected_card_id": self.selected_card_id, "selected_drill": self.selected_drill},
-            "B",
-        )
-        # #endregion
-        self._update_run_btn()
         self._build_items()
         await _edit_hub_message(interaction, interaction.message.embeds[0], self)
 

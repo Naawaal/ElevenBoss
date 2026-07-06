@@ -174,12 +174,6 @@ async def generate_roster_grid(cards: list[dict]) -> discord.File:
     Generates a visual card grid representing player cards on a roster page.
     Lays out up to 8 cards in a 4x2 grid (4 columns, 2 rows).
     """
-    # Canvas configuration
-    width, height = 605, 450
-    img = Image.new("RGBA", (width, height), (18, 22, 28, 255))
-    draw = ImageDraw.Draw(img)
-
-    # File paths
     assets_dir = str(_ASSETS_DIR)
     font_bold_path = os.path.join(assets_dir, "fonts", "Roboto-Bold.ttf")
     font_reg_path = os.path.join(assets_dir, "fonts", "Roboto-Regular.ttf")
@@ -189,6 +183,10 @@ async def generate_roster_grid(cards: list[dict]) -> discord.File:
 
 
 def _render_roster_grid(cards: list[dict], font_bold_path: str, font_reg_path: str) -> discord.File:
+    width, height = 605, 450
+    img = Image.new("RGBA", (width, height), (18, 22, 28, 255))
+    draw = ImageDraw.Draw(img)
+
     # Card layout configurations
     card_w, card_h = 130, 190
     col_gap, row_gap = 15, 20
