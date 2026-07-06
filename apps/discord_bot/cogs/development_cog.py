@@ -1,6 +1,9 @@
 # apps/discord_bot/cogs/development_cog.py
 from __future__ import annotations
+import json
 import logging
+import time
+from pathlib import Path
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -54,6 +57,59 @@ def _api_message(exc: Exception) -> str:
     if isinstance(exc, APIError) and exc.args and isinstance(exc.args[0], dict):
         return exc.args[0].get("message", str(exc))
     return str(exc)
+
+
+# #region agent log
+_DEBUG_LOG = Path(__file__).resolve().parents[3] / "debug-30239a.log"
+
+
+def _debug_evolution_log(location: str, message: str, data: dict, hypothesis_id: str) -> None:
+    try:
+        with _DEBUG_LOG.open("a", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "sessionId": "30239a",
+                        "timestamp": int(time.time() * 1000),
+                        "location": location,
+                        "message": message,
+                        "data": data,
+                        "hypothesisId": hypothesis_id,
+                        "runId": "pre-fix",
+                    }
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+
+
+def _evolution_claim_diagnostics(card: dict, evo: dict) -> dict:
+    track = EVOLUTION_TRACKS.get(evo.get("evolution_id"), {})
+    reward_stat = track.get("reward_stat", "pac")
+    reward_val = track.get("reward_val", 5)
+    current = card.get(reward_stat, 0)
+    rpc_stat_col = {
+        "pace_boost": "pac",
+        "shooting_star": "sho",
+        "def_wall": "def",
+    }.get(evo.get("evolution_id"), "pac")
+    rpc_current = card.get(rpc_stat_col, 0)
+    return {
+        "card_id": str(card.get("id")),
+        "evo_id": str(evo.get("id")),
+        "evolution_id": evo.get("evolution_id"),
+        "reward_stat": reward_stat,
+        "reward_val": reward_val,
+        "current_stat": current,
+        "rpc_stat_col": rpc_stat_col,
+        "rpc_current_stat": rpc_current,
+        "would_exceed_cap_ui": current + reward_val > 99,
+        "would_exceed_cap_rpc": rpc_current + 5 > 99,
+        "all_stats": {s: card.get(s) for s in ("pac", "sho", "pas", "dri", "def", "phy")},
+        "evo_progress": f"{evo.get('current_progress')}/{evo.get('target_goal')}",
+    }
+# #endregion
 
 
 async def _edit_hub_message(interaction: discord.Interaction, embed: discord.Embed, view: discord.ui.View) -> None:
@@ -614,6 +670,16 @@ class EvolutionsSubView(discord.ui.View):
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
 
+            # #region agent log
+            diag = _evolution_claim_diagnostics(self.card, self.active_evo)
+            _debug_evolution_log(
+                "development_cog.py:claim_reward_callback:pre_rpc",
+                "evolution claim attempt",
+                diag,
+                "A",
+            )
+            # #endregion
+
             res = await db.rpc("claim_evolution_reward", {
                 "p_owner_id": self.owner_id,
                 "p_evo_id": self.active_evo["id"],
@@ -633,6 +699,14 @@ class EvolutionsSubView(discord.ui.View):
             await show_evols_menu(interaction, self.owner_id, preselected_card_id=self.card["id"])
 
         except Exception as e:
+            # #region agent log
+            _debug_evolution_log(
+                "development_cog.py:claim_reward_callback:error",
+                "evolution claim failed",
+                {"error": _api_message(e), "owner_id": self.owner_id},
+                "E",
+            )
+            # #endregion
             logger.exception("Failed claiming evolution reward.")
             await interaction.followup.send(embed=error_embed(_api_message(e)), ephemeral=True)
 

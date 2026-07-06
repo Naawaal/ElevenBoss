@@ -178,6 +178,25 @@ class PlayerProfileView(discord.ui.View):
 
             track = EVOLUTION_TRACKS[evo["evolution_id"]]
 
+            card_res = await db.table("player_cards").select(
+                "id, pac, sho, pas, dri, def, phy"
+            ).eq("id", self.card_id).maybe_single().execute()
+            card = card_res.data if card_res else {}
+
+            # #region agent log
+            from apps.discord_bot.cogs.development_cog import (
+                _debug_evolution_log,
+                _evolution_claim_diagnostics,
+            )
+            diag = _evolution_claim_diagnostics(card, evo)
+            _debug_evolution_log(
+                "player_cog.py:claim_evo_callback:pre_rpc",
+                "evolution claim attempt",
+                diag,
+                "A",
+            )
+            # #endregion
+
             res = await db.rpc("claim_evolution_reward", {
                 "p_owner_id": self.owner_id,
                 "p_evo_id": evo["id"],
@@ -200,7 +219,15 @@ class PlayerProfileView(discord.ui.View):
 
         except Exception as e:
             logger.exception("Failed to claim evolution rewards.")
-            from apps.discord_bot.cogs.development_cog import _api_message
+            from apps.discord_bot.cogs.development_cog import _api_message, _debug_evolution_log
+            # #region agent log
+            _debug_evolution_log(
+                "player_cog.py:claim_evo_callback:error",
+                "evolution claim failed",
+                {"error": _api_message(e), "owner_id": self.owner_id, "card_id": self.card_id},
+                "E",
+            )
+            # #endregion
             await interaction.followup.send(embed=error_embed(_api_message(e)), ephemeral=True)
 
 
