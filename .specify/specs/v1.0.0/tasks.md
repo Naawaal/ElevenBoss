@@ -675,3 +675,102 @@ python -m apps.discord_bot.main
 - [ ] All cross-module data is Pydantic `BaseModel`
 - [ ] `from __future__ import annotations` in every `.py` file
 - [ ] No orphaned threads possible: all error paths call `delete_thread_after()`
+
+---
+
+## Task Group 14: Hardening Schema (US-22)
+
+> **Depends on:** Task Groups 1–13 complete. Apply before Group 15.
+
+### T14.1 — Write `supabase/migrations/015_hardening_schema.sql`
+- Create `league_members` table (`guild_id`, `player_id`, `registered_at`).
+- Add `training_energy`, `training_energy_updated_at`, `daily_drill_count`, `daily_drill_reset_at` to `players`.
+- `CREATE UNIQUE INDEX` on `active_evolutions(card_id)`.
+- `CHECK (length(trim(club_name)) >= 1)` on `players`.
+- `CHECK (formation IN (...))` on `squads`.
+- Grant privileges on new table.
+
+### T14.2 — Apply migration and verify
+- Run on local Supabase; confirm `league_members` exists and league registration query succeeds.
+
+---
+
+## Task Group 15: Hardening RPCs (US-22)
+
+### T15.1 — Write `supabase/migrations/016_hardening_rpcs.sql`
+- `recalculate_card_ovr(p_card_id)` — weighted stats + playstyle bonus + potential cap.
+- `compute_agent_offer(p_ovr, p_rarity)` — mirror `economy.engine.generate_agent_offer`.
+- `sync_training_energy(p_club_id)` — returns JSON energy state.
+- `process_stat_drill(p_owner_id, p_card_id, p_drill_id)` — atomic drill.
+- Rewrite `process_agent_sale` — server pricing, lock checks, drop client `p_sale_value` trust.
+- Rewrite `train_with_fodder` — stat bump + `recalculate_card_ovr`, match lock check.
+- `swap_squad_players(p_discord_id, p_slot, p_reserve_card_id)` — GK rule, locks.
+- `set_formation_and_assignments(p_discord_id, p_formation, p_assignments JSONB)`.
+- `allocate_skill_point(p_owner_id, p_card_id, p_stat)` — atomic skill spend.
+- `claim_evolution_reward(p_owner_id, p_evo_id)` — atomic claim with 99 cap.
+- Update `register_new_player` — reject duplicate `discord_id`.
+
+### T15.2 — RPC integration tests
+- `tests/test_hardening_rpcs.py` — agent sale pricing, stat drill guards (mock or local DB).
+
+---
+
+## Task Group 16: Core Middleware & Helpers (US-22)
+
+### T16.1 — `apps/discord_bot/middleware/match_lock.py`
+- `assert_not_in_match(db, discord_id)` raises/returns error message for cogs.
+
+### T16.2 — `apps/discord_bot/core/select_helpers.py`
+- `rebuild_select_options(pool, selected_id, label_fn, …)` with `default=True`.
+
+### T16.3 — `packages/match_engine/match_engine/formation_positions.py`
+- Add `get_slot_role(formation, slot)` using `FORMATION_COORDINATES` key order.
+- Export from `__init__.py`.
+
+### T16.4 — Fix `pitch_generator.py`
+- Relative asset path; optional render semaphore/cache.
+
+### T16.5 — Fix `squad_embeds.get_slot_position` to delegate to `get_slot_role`.
+
+---
+
+## Task Group 17: Cog Hardening (US-22)
+
+### T17.1 — `onboarding_cog.py`
+- Whitespace club name guard; re-check registration before animation; disable Begin Setup after click; `thread.add_user`.
+
+### T17.2 — `squad_cog.py`
+- Use squad RPCs; dropdown rebuild; `on_timeout`; stale swap revalidation.
+
+### T17.3 — `development_cog.py`
+- Stat drill button disable; skill/evolution via RPCs; dropdown rebuild; `on_timeout`; match lock checks.
+
+### T17.4 — `marketplace_cog.py`
+- Remove `p_sale_value` from RPC call; filter `active_training`; match lock on confirm.
+
+### T17.5 — `battle_cog.py`
+- League window check; friendly accept lock re-validation; energy deduct at end; ticker 429 backoff; 11-player league guard.
+
+### T17.6 — `league_cog.py`
+- Log when announcement channel missing.
+
+---
+
+## Task Group 18: Hardening Smoke Test
+
+### T18.1 — Automated
+```bash
+pytest tests/test_hardening_rpcs.py tests/test_fodder_training.py -q
+```
+
+### T18.2 — Manual checklist
+
+| # | Action | Expected |
+|---|--------|----------|
+| 1 | Stat drill while in bot match | Blocked |
+| 2 | Sell XI player via bench swap | Blocked at RPC |
+| 3 | Double-click Confirm registration | Single account |
+| 4 | Squad swap dropdown | Selection stays visible |
+| 5 | Play league fixture past window | Server rejection |
+| 6 | `/development` Run Drill | RPC succeeds |
+| 7 | Pitch image on Linux path | Renders without error |

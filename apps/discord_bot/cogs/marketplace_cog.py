@@ -9,6 +9,7 @@ from economy import GameConfig, generate_agent_offer
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
+from apps.discord_bot.middleware.match_lock import assert_not_in_match
 
 logger = logging.getLogger(__name__)
 
@@ -80,27 +81,29 @@ async def show_sell_menu(interaction: discord.Interaction, owner_id: int):
     assignments_res = await db.table("squad_assignments").select("player_card_id").eq("discord_id", owner_id).execute()
     starting_card_ids = {a["player_card_id"] for a in assignments_res.data}
 
-    # 3. Fetch active training card ids
-    training_res = await db.table("active_training").select("card_id").eq("club_id", owner_id).execute()
-    training_card_ids = {t["card_id"] for t in training_res.data}
-
-    # 4. Fetch active evolution card ids
+    # 3. Fetch active evolution and training card ids
     evo_res = await db.table("active_evolutions").select("card_id").execute()
-    evo_card_ids = {e["card_id"] for e in evo_res.data}
+    evo_card_ids = {e["card_id"] for e in (evo_res.data or [])}
 
-    # 5. Filter eligible players (exclude starting 11, training, and active evolutions locks)
+    training_res = await db.table("active_training").select("card_id").execute()
+    training_card_ids = {
+        t["card_id"] for t in (training_res.data or [])
+        if t.get("card_id")
+    }
+
+    # 4. Filter eligible players (exclude starting 11, evolutions, active training)
     eligible_players = [
-        p for p in roster 
-        if p["id"] not in starting_card_ids 
-        and p["id"] not in training_card_ids 
+        p for p in roster
+        if p["id"] not in starting_card_ids
         and p["id"] not in evo_card_ids
+        and p["id"] not in training_card_ids
     ]
 
     embed = discord.Embed(
         title="🤝 Sell Roster Player",
         description=(
             "Select a player card from your roster below to receive a purchase valuation from transfer agents.\n\n"
-            "*(Note: Players in starting 11, training, or active evolutions cannot be sold.)*"
+            "*(Note: Players in starting 11 or active evolutions cannot be sold.)*"
         ),
         color=0x00FF87
     )
@@ -202,18 +205,22 @@ class SellPlayerSubView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         try:
             db = await get_client()
+            lock_msg = await assert_not_in_match(db, self.owner_id)
+            if lock_msg:
+                await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
+                return
 
             res = await db.rpc("process_agent_sale", {
                 "p_club_id": self.owner_id,
                 "p_card_id": self.selected_card["id"],
-                "p_sale_value": self.offer
             }).execute()
 
-            if res.data:
+            sale_value = res.data if res.data is not None else 0
+            if sale_value:
                 await interaction.followup.send(
                     embed=success_embed(
                         f"🤝 **Agent Sale Complete!**\n\n"
-                        f"Sold **{self.selected_card['name']}** to the transfer agent for **🪙 {self.offer:,} coins**."
+                        f"Sold **{self.selected_card['name']}** to the transfer agent for **🪙 {sale_value:,} coins**."
                     ),
                     ephemeral=True
                 )

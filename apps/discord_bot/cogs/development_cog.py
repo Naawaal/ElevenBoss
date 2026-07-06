@@ -1,24 +1,26 @@
 # apps/discord_bot/cogs/development_cog.py
 from __future__ import annotations
 import logging
-import datetime
 import discord
 from discord import app_commands
 from discord.ext import commands
-
-from economy import GameConfig, compute_new_overall
-from training import calculate_xp_gain
-from player_engine import calculate_level, calculate_contract_renewal_cost
+from postgrest.exceptions import APIError
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
+from apps.discord_bot.core.select_helpers import rebuild_select_options
+from apps.discord_bot.core.view_helpers import disable_view_on_timeout
+from apps.discord_bot.middleware.match_lock import assert_not_in_match
 
 logger = logging.getLogger(__name__)
 
-DRILL_DISPLAY_NAMES = {
-    "cardio": "🏃‍♂️ Cardio Drill",
-    "tactics": "🧠 Tactical Drill",
-    "match_prep": "📋 Match Prep Drill"
+STAT_DRILLS = {
+    "pac_sprint": "⚡ Pace Sprint",
+    "sho_finishing": "🎯 Finishing Drill",
+    "pas_distribution": "🧠 Distribution Drill",
+    "dri_dribble": "👟 Dribbling Drill",
+    "def_tackling": "🛡️ Tackling Drill",
+    "phy_strength": "💪 Strength Drill",
 }
 
 EVOLUTION_TRACKS = {
@@ -48,26 +50,18 @@ EVOLUTION_TRACKS = {
     }
 }
 
-def get_xp_progress(total_xp: int) -> tuple[int, int, int]:
-    """Returns (current_level, current_xp_in_level, xp_needed_for_next_level)."""
-    lvl = 1
-    accumulated_xp = 0
-    while True:
-        needed = int(100 * (1.12 ** (lvl - 1)))
-        if total_xp >= accumulated_xp + needed:
-            accumulated_xp += needed
-            lvl += 1
-        else:
-            break
-    current_xp = total_xp - accumulated_xp
-    needed = int(100 * (1.12 ** (lvl - 1)))
-    return lvl, current_xp, needed
+def _api_message(exc: Exception) -> str:
+    if isinstance(exc, APIError) and exc.args and isinstance(exc.args[0], dict):
+        return exc.args[0].get("message", str(exc))
+    return str(exc)
 
-def make_xp_bar(current: int, needed: int) -> str:
-    total_bars = 10
-    filled = min(total_bars, int((current / needed) * total_bars))
-    empty = total_bars - filled
-    return f"`[{'█' * filled}{'░' * empty}]` ({current}/{needed} XP)"
+
+async def _edit_hub_message(interaction: discord.Interaction, embed: discord.Embed, view: discord.ui.View) -> None:
+    if interaction.response.is_done():
+        await interaction.edit_original_response(embed=embed, view=view)
+    else:
+        await interaction.response.edit_message(embed=embed, view=view)
+
 
 # --- Navigation / Switch helpers ---
 async def show_hub(interaction: discord.Interaction, owner_id: int):
@@ -77,7 +71,7 @@ async def show_hub(interaction: discord.Interaction, owner_id: int):
     
     embed = discord.Embed(
         title="🏋️‍♂️ Development Center",
-        description=f"Welcome to **{player['club_name']}** development center. Select a sub-menu to train cards, evolve playstyles, or allocate stat points.",
+        description=f"Welcome to **{player['club_name']}** development center. Train stats, fuse duplicate cards, evolve playstyles, or allocate skill points.",
         color=0x00FF87
     )
     view = DevelopmentHubView(owner_id)
@@ -99,103 +93,341 @@ class DevelopmentHubView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(style=discord.ButtonStyle.primary, label="🏋️ Training Drills", custom_id="hub_drills")
-    async def training_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="🏋️ Training Drills", custom_id="hub_drills", row=0)
+    async def training_btn(self, interaction: discord.Interaction, _button: discord.ui.Button):
         await show_training_menu(interaction, self.owner_id)
 
-    @discord.ui.button(style=discord.ButtonStyle.primary, label="🧬 Evolutions", custom_id="hub_evos")
-    async def evolutions_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="🧬 Evolutions", custom_id="hub_evos", row=0)
+    async def evolutions_btn(self, interaction: discord.Interaction, _button: discord.ui.Button):
         await show_evols_menu(interaction, self.owner_id)
 
-    @discord.ui.button(style=discord.ButtonStyle.primary, label="⭐ Allocate Skills", custom_id="hub_skills")
-    async def skills_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="⭐ Allocate Skills", custom_id="hub_skills", row=1)
+    async def skills_btn(self, interaction: discord.Interaction, _button: discord.ui.Button):
         await show_skills_menu(interaction, self.owner_id)
 
+    @discord.ui.button(style=discord.ButtonStyle.danger, label="🔥 Card Fusion", custom_id="hub_fusion", row=1)
+    async def fusion_btn(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        await show_card_fusion_menu(interaction, self.owner_id)
 
-# --- 1. TRAINING SUB VIEW SYSTEM ---
+    async def on_timeout(self) -> None:
+        await disable_view_on_timeout(self)
 
-async def show_training_menu(interaction: discord.Interaction, owner_id: int):
+
+# --- 1. STAT DRILL TRAINING ---
+
+async def show_training_menu(interaction: discord.Interaction, owner_id: int) -> None:
     db = await get_client()
-    player_res = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
-    player = player_res.data if player_res else None
-    max_slots = player.get("training_slots_max", 2)
+    energy_res = await db.rpc("sync_training_energy", {"p_club_id": owner_id}).execute()
+    energy = energy_res.data or {}
 
-    drills_res = await db.table("active_training").select("*, player_cards(*)").eq("club_id", owner_id).execute()
-    drills = drills_res.data or []
-
-    roster_res = await db.table("player_cards").select("*").eq("owner_id", owner_id).execute()
+    roster_res = await db.table("player_cards").select("*").eq("owner_id", owner_id).order("overall", desc=True).execute()
     roster = roster_res.data or []
 
-    training_card_ids = {d["card_id"] for d in drills}
-    eligible_players = [p for p in roster if p["id"] not in training_card_ids]
+    evo_res = await db.table("active_evolutions").select("card_id").execute()
+    evo_ids = {e["card_id"] for e in (evo_res.data or [])}
+    eligible_players = [p for p in roster if p["id"] not in evo_ids]
+
+    training_energy = energy.get("training_energy", 0)
+    daily_count = energy.get("daily_drill_count", 0)
+    daily_limit = energy.get("daily_drill_limit", 20)
 
     embed = discord.Embed(
-        title="🏋️ Training Hub",
-        description=f"Slots configuration: **{len(drills)}/{max_slots}** active.",
-        color=0x00FF87
+        title="🏋️ Stat Training Drills",
+        description=(
+            "Spend **Training Energy** and coins to boost a player's core stats.\n\n"
+            f"⚡ **Training Energy**: `{training_energy}/100` *(+25/hour)*\n"
+            f"📅 **Daily Drills**: `{daily_count}/{daily_limit}`\n"
+            f"💪 **Cost per drill**: `15 energy` + `5 × player OVR` coins"
+        ),
+        color=0x00FF87,
     )
+    if not eligible_players:
+        embed.add_field(
+            name="No Eligible Players",
+            value="All roster cards are locked in an active evolution track.",
+            inline=False,
+        )
 
-    now = datetime.datetime.now(datetime.timezone.utc)
-    for idx in range(max_slots):
-        if idx < len(drills):
-            d = drills[idx]
-            card_data = d.get("player_cards") or {}
-            card_name = card_data.get("name", "Unknown Player")
-            drill_name = DRILL_DISPLAY_NAMES.get(d["drill_type"], d["drill_type"].capitalize())
-            end_time = datetime.datetime.fromisoformat(d["end_time"].replace("Z", "+00:00"))
-            
-            if end_time <= now:
-                status_str = "🟢 **Completed!** (Claim reward below)"
-            else:
-                end_unix = int(end_time.timestamp())
-                status_str = f"⏳ **Training...** (Ends <t:{end_unix}:R>)"
-                
-            embed.add_field(
-                name=f"Slot {idx + 1}: {card_name}",
-                value=f"• Drill: **{drill_name}**\n• Status: {status_str}",
-                inline=False
-            )
-        else:
-            embed.add_field(
-                name=f"Slot {idx + 1}: Empty",
-                value="• *Assign a player to a drill to start training.*",
-                inline=False
-            )
-
-    view = TrainingSubView(owner_id, max_slots, drills, eligible_players)
-    if interaction.response.is_done():
-        await interaction.edit_original_response(embed=embed, view=view)
-    else:
-        await interaction.response.edit_message(embed=embed, view=view)
+    await _edit_hub_message(interaction, embed, StatDrillView(owner_id, eligible_players[:25]))
 
 
-class TrainingSubView(discord.ui.View):
-    def __init__(self, owner_id: int, max_slots: int, active_drills: list[dict], eligible_players: list[dict]) -> None:
+class StatDrillView(discord.ui.View):
+    def __init__(self, owner_id: int, eligible_players: list[dict]) -> None:
         super().__init__(timeout=900)
         self.owner_id = owner_id
+        self.selected_card_id: str | None = None
+        self.selected_drill: str | None = None
         self.eligible_players = eligible_players
-        self.max_slots = max_slots
-        self.active_drills = active_drills
+        self._build_items()
 
-        now = datetime.datetime.now(datetime.timezone.utc)
+    def _build_items(self) -> None:
+        self.clear_items()
+        if self.eligible_players:
+            player_options = rebuild_select_options(
+                self.eligible_players,
+                self.selected_card_id,
+                label_fn=lambda p: p["name"],
+                description_fn=lambda p: f"{p['overall']} OVR | Lvl {p['level']} | {p['position']}",
+            )
+            self.player_select = discord.ui.Select(
+                placeholder="Select a player to train...",
+                min_values=1,
+                max_values=1,
+                options=player_options,
+                row=0,
+            )
+            self.player_select.callback = self.player_select_callback
+            self.add_item(self.player_select)
 
-        # Claim buttons
-        for d in active_drills:
-            end_time = datetime.datetime.fromisoformat(d["end_time"].replace("Z", "+00:00"))
-            if end_time <= now:
-                card_data = d.get("player_cards") or {}
-                card_name = card_data.get("name", "Unknown Player")
-                claim_btn = ClaimDrillButton(d["id"], d["card_id"], card_name, d["drill_type"], owner_id)
-                self.add_item(claim_btn)
+            drill_options = [
+                discord.SelectOption(
+                    label=name,
+                    value=drill_id,
+                    default=(self.selected_drill == drill_id),
+                )
+                for drill_id, name in STAT_DRILLS.items()
+            ]
+            self.drill_select = discord.ui.Select(
+                placeholder="Select stat drill...",
+                min_values=1,
+                max_values=1,
+                options=drill_options,
+                row=1,
+            )
+            self.drill_select.callback = self.drill_select_callback
+            self.add_item(self.drill_select)
 
-        # Start drill button
-        if len(active_drills) < max_slots:
-            start_btn = discord.ui.Button(style=discord.ButtonStyle.primary, label="Start Drill", custom_id="tr_start_drill")
-            start_btn.callback = self.start_drill_callback
-            self.add_item(start_btn)
+            self.run_btn = discord.ui.Button(
+                style=discord.ButtonStyle.success, label="Run Drill", disabled=True, row=2
+            )
+            self.run_btn.callback = self.run_drill_callback
+            self.add_item(self.run_btn)
 
-        # Back button
-        back_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Back to Hub", custom_id="tr_back_hub")
+        back_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Back to Hub", row=2)
+        back_btn.callback = self.back_callback
+        self.add_item(back_btn)
+
+    async def on_timeout(self) -> None:
+        await disable_view_on_timeout(self)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This belongs to another manager.", ephemeral=True)
+            return False
+        return True
+
+    async def back_callback(self, interaction: discord.Interaction) -> None:
+        await show_hub(interaction, self.owner_id)
+
+    def _update_run_btn(self) -> None:
+        if hasattr(self, "run_btn"):
+            self.run_btn.disabled = not (self.selected_card_id and self.selected_drill)
+
+    async def player_select_callback(self, interaction: discord.Interaction) -> None:
+        self.selected_card_id = self.player_select.values[0]
+        self._update_run_btn()
+        self._build_items()
+        await _edit_hub_message(interaction, interaction.message.embeds[0], self)
+
+    async def drill_select_callback(self, interaction: discord.Interaction) -> None:
+        self.selected_drill = self.drill_select.values[0]
+        self._update_run_btn()
+        self._build_items()
+        await _edit_hub_message(interaction, interaction.message.embeds[0], self)
+
+    async def run_drill_callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        try:
+            db = await get_client()
+            lock_msg = await assert_not_in_match(db, self.owner_id)
+            if lock_msg:
+                await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
+                return
+
+            res = await db.rpc("process_stat_drill", {
+                "p_owner_id": self.owner_id,
+                "p_card_id": self.selected_card_id,
+                "p_drill_id": self.selected_drill,
+            }).execute()
+            result = res.data or {}
+            selected_p = next(p for p in self.eligible_players if str(p["id"]) == str(self.selected_card_id))
+            stat = str(result.get("stat", "")).upper()
+            levels = int(result.get("levels_gained", 0))
+            new_ovr = result.get("new_ovr", selected_p["overall"])
+            coins_spent = result.get("coins_spent", 0)
+
+            msg = (
+                f"**{selected_p['name']}** completed **{STAT_DRILLS.get(self.selected_drill, self.selected_drill)}**.\n"
+                f"• Stat trained: `+{levels} {stat}`\n"
+                f"• New OVR: **{new_ovr}**\n"
+                f"• Spent: `15 energy` + `🪙 {coins_spent:,} coins`"
+            )
+            if levels == 0:
+                msg += "\n\n*Stat XP banked — keep drilling to level up this stat.*"
+
+            await interaction.followup.send(embed=success_embed(msg), ephemeral=True)
+            await show_training_menu(interaction, self.owner_id)
+
+        except Exception as exc:
+            logger.exception("Failed running stat drill.")
+            await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
+
+
+# --- 2. CARD FUSION (sacrifice one card to level up another) ---
+
+async def _fetch_card_locks(owner_id: int) -> tuple[set[str], set[str]]:
+    """Returns (starting_11_ids, active_evolution_ids)."""
+    db = await get_client()
+    assignments_res = await db.table("squad_assignments").select("player_card_id").eq("discord_id", owner_id).execute()
+    starting_ids = {str(a["player_card_id"]) for a in (assignments_res.data or [])}
+    evo_res = await db.table("active_evolutions").select("card_id").execute()
+    evo_ids = {str(e["card_id"]) for e in (evo_res.data or [])}
+    return starting_ids, evo_ids
+
+
+async def show_card_fusion_menu(interaction: discord.Interaction, owner_id: int) -> None:
+    db = await get_client()
+    cards_res = await db.table("player_cards").select("*").eq("owner_id", owner_id).order("overall", desc=True).execute()
+    cards = cards_res.data or []
+
+    if len(cards) < 2:
+        embed = error_embed("You need at least 2 player cards to fuse (one to upgrade and one to sacrifice).")
+        await _edit_hub_message(interaction, embed, CardFusionView(owner_id, [], []))
+        return
+
+    starting_ids, evo_ids = await _fetch_card_locks(owner_id)
+    target_pool = [c for c in cards if str(c["id"]) not in evo_ids][:25]
+    sacrifice_pool = [
+        c for c in cards
+        if str(c["id"]) not in starting_ids and str(c["id"]) not in evo_ids
+    ][:25]
+
+    if not target_pool or not sacrifice_pool:
+        msg = "No eligible cards for fusion."
+        if not target_pool:
+            msg = "No eligible upgrade targets. Players in an active evolution cannot be upgraded."
+        elif not sacrifice_pool:
+            msg = "No eligible sacrifice cards. Starting XI and evolution-locked players cannot be fused."
+        embed = error_embed(msg)
+        await _edit_hub_message(interaction, embed, CardFusionView(owner_id, target_pool, sacrifice_pool))
+        return
+
+    embed = discord.Embed(
+        title="🔥 Card Fusion",
+        description=(
+            "Sacrifice a **bench card** to feed XP into a **keeper**. The sacrificed card is **permanently deleted**.\n\n"
+            "*Sacrifice: not in starting XI or active evolution. "
+            "Keeper: not in active evolution.*"
+        ),
+        color=0xFF6B35,
+    )
+    embed.set_footer(text="Showing your top 25 eligible cards per role.")
+    await _edit_hub_message(interaction, embed, CardFusionView(owner_id, target_pool, sacrifice_pool))
+
+
+class FusionKeeperSelect(discord.ui.Select):
+    def __init__(self) -> None:
+        super().__init__(
+            placeholder="Select keeper to upgrade...",
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        self.view.keeper_id = self.values[0]
+        self.view._rebuild_options()
+        await interaction.response.edit_message(view=self.view)
+
+
+class FusionSacrificeSelect(discord.ui.Select):
+    def __init__(self) -> None:
+        super().__init__(
+            placeholder="Select card to sacrifice...",
+            min_values=1,
+            max_values=1,
+            row=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        self.view.sacrifice_id = self.values[0]
+        self.view._rebuild_options()
+        await interaction.response.edit_message(view=self.view)
+
+
+class FusionConfirmButton(discord.ui.Button):
+    def __init__(self) -> None:
+        super().__init__(
+            style=discord.ButtonStyle.danger,
+            label="Confirm Fusion",
+            disabled=True,
+            row=2,
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not self.view.keeper_id or not self.view.sacrifice_id:
+            return
+
+        for child in self.view.children:
+            child.disabled = True
+        await interaction.response.edit_message(view=self.view)
+
+        try:
+            db = await get_client()
+            lock_msg = await assert_not_in_match(db, interaction.user.id)
+            if lock_msg:
+                await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
+                return
+
+            await db.rpc("train_with_fodder", {
+                "p_owner_id": interaction.user.id,
+                "p_target_id": self.view.keeper_id,
+                "p_fodder_id": self.view.sacrifice_id,
+            }).execute()
+
+            target_res = await db.table("player_cards").select("*").eq("id", self.view.keeper_id).maybe_single().execute()
+            keeper = target_res.data
+            if not keeper:
+                raise ValueError("Could not find the keeper card after fusion.")
+
+            new_level = keeper["level"]
+            progress = f"📈 **Level**: {new_level}\n⭐ **OVR**: {keeper['overall']}"
+
+            embed = discord.Embed(
+                title="🔥 Fusion Complete!",
+                description=f"**{keeper['name']}** absorbed the sacrificed card.",
+                color=0x00FF87,
+            )
+            embed.add_field(name="Progress", value=progress, inline=False)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+        except Exception as exc:
+            logger.exception("Card fusion failed.")
+            for child in self.view.children:
+                child.disabled = False
+            await interaction.edit_original_response(view=self.view)
+            await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
+
+
+class CardFusionView(discord.ui.View):
+    def __init__(self, owner_id: int, keeper_pool: list[dict], sacrifice_pool: list[dict]) -> None:
+        super().__init__(timeout=900)
+        self.owner_id = owner_id
+        self.keeper_pool = keeper_pool
+        self.sacrifice_pool = sacrifice_pool
+        self.keeper_id: str | None = None
+        self.sacrifice_id: str | None = None
+
+        if keeper_pool and sacrifice_pool:
+            self.keeper_select = FusionKeeperSelect()
+            self.sacrifice_select = FusionSacrificeSelect()
+            self.confirm_btn = FusionConfirmButton()
+            self.add_item(self.keeper_select)
+            self.add_item(self.sacrifice_select)
+            self.add_item(self.confirm_btn)
+            self._rebuild_options()
+
+        back_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Back to Hub", row=3)
         back_btn.callback = self.back_callback
         self.add_item(back_btn)
 
@@ -205,234 +437,43 @@ class TrainingSubView(discord.ui.View):
             return False
         return True
 
-    async def back_callback(self, interaction: discord.Interaction):
+    async def back_callback(self, interaction: discord.Interaction) -> None:
         await show_hub(interaction, self.owner_id)
 
-    async def start_drill_callback(self, interaction: discord.Interaction):
-        if not self.eligible_players:
-            await interaction.response.send_message(
-                embed=error_embed("You have no eligible players. All roster cards are already training!"),
-                ephemeral=True
-            )
-            return
+    def _rebuild_options(self) -> None:
+        self.keeper_select.options.clear()
+        self.sacrifice_select.options.clear()
 
-        # Show selection dropdowns in-place
-        embed = discord.Embed(
-            title="🏋️‍♂️ Select Drill Details",
-            description="Choose a player card and the training drill type from the dropdown lists:",
-            color=0x00FF87
-        )
-        view = StartDrillFormView(self.owner_id, self.eligible_players)
-        if interaction.response.is_done():
-            await interaction.edit_original_response(embed=embed, view=view)
-        else:
-            await interaction.response.edit_message(embed=embed, view=view)
-
-
-class ClaimDrillButton(discord.ui.Button):
-    def __init__(self, training_id: str, card_id: str, card_name: str, drill: str, owner_id: int) -> None:
-        super().__init__(style=discord.ButtonStyle.success, label=f"Claim {card_name}")
-        self.training_id = training_id
-        self.card_id = card_id
-        self.card_name = card_name
-        self.drill = drill
-        self.owner_id = owner_id
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True)
-        try:
-            db = await get_client()
-
-            card_res = await db.table("player_cards").select("*").eq("id", self.card_id).maybe_single().execute()
-            card = card_res.data if card_res else None
-            if not card:
-                await interaction.followup.send(embed=error_embed("Player card not found."), ephemeral=True)
-                return
-
-            config = GameConfig()
-            curr_lvl = card.get("level", 1)
-            xp_gained = calculate_xp_gain(self.drill, curr_lvl, config)
-
-            curr_xp = card.get("xp", 0)
-            new_xp = curr_xp + xp_gained
-            new_level = curr_lvl
-            
-            # Level up progression loop
-            leveled_up = False
-            points_earned = 0
-            while True:
-                needed = int(100 * (1.12 ** (new_level - 1)))
-                if new_xp >= needed:
-                    new_xp -= needed
-                    new_level += 1
-                    points_earned += 3
-                    leveled_up = True
-                else:
-                    break
-
-            if leveled_up:
-                new_ovr = compute_new_overall(new_level, card["base_rating"], card["rarity"])
-                new_pts = card.get("skill_points", 0) + points_earned
-                await db.table("player_cards").update({
-                    "xp": new_xp,
-                    "level": new_level,
-                    "overall": new_ovr,
-                    "skill_points": new_pts
-                }).eq("id", self.card_id).execute()
-            else:
-                await db.table("player_cards").update({
-                    "xp": new_xp
-                }).eq("id", self.card_id).execute()
-
-            await db.table("active_training").delete().eq("id", self.training_id).execute()
-
-            # Refresh view
-            await interaction.followup.send(
-                embed=success_embed(
-                    f"🏆 **Training Completed!**\n\n"
-                    f"**{self.card_name}** completed the **{DRILL_DISPLAY_NAMES.get(self.drill, self.drill)}**.\n"
-                    f"• XP Gained: `+{xp_gained} XP`\n"
-                    f"• Skill Points Earned: `+{points_earned if leveled_up else 0}`"
-                    + (f"\n🎉 **LEVEL UP!** Now Level **{new_level}**!" if leveled_up else "")
-                ),
-                ephemeral=True
-            )
-            # Re-render training hub
-            await show_training_menu(interaction, self.owner_id)
-
-        except Exception as e:
-            logger.exception("Failed claiming training reward.")
-            await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
-
-
-class StartDrillFormView(discord.ui.View):
-    def __init__(self, owner_id: int, eligible_players: list[dict]) -> None:
-        super().__init__(timeout=900)
-        self.owner_id = owner_id
-        self.selected_card_id = None
-        self.selected_drill = None
-        self.eligible_players = eligible_players
-
-        # Player Select
-        player_options = []
-        for p in eligible_players[:25]:
-            player_options.append(
+        for p in self.keeper_pool:
+            if str(p["id"]) == str(self.sacrifice_id):
+                continue
+            self.keeper_select.options.append(
                 discord.SelectOption(
-                    label=p["name"],
-                    description=f"{p['overall']} OVR | Lvl {p['level']} | {p['position']}",
-                    value=p["id"]
+                    label=f"{p['name']} ({p['overall']} OVR)",
+                    value=str(p["id"]),
+                    description=f"Lvl {p['level']} - {p['position']}",
+                    default=(str(p["id"]) == str(self.keeper_id)),
                 )
             )
-        self.player_select = discord.ui.Select(
-            placeholder="Select a player to train...",
-            min_values=1,
-            max_values=1,
-            options=player_options,
-            row=0
-        )
-        self.player_select.callback = self.player_select_callback
-        self.add_item(self.player_select)
 
-        # Drill Select
-        config = GameConfig()
-        drill_options = []
-        for d, cost in config.drill_costs.items():
-            duration = config.drill_durations.get(d, 1.0)
-            xp_reward = config.drill_xp.get(d, 0)
-            name = DRILL_DISPLAY_NAMES.get(d, d.capitalize())
-            drill_options.append(
+        for p in self.sacrifice_pool:
+            if str(p["id"]) == str(self.keeper_id):
+                continue
+            self.sacrifice_select.options.append(
                 discord.SelectOption(
-                    label=name,
-                    description=f"Cost: 🪙 {cost} | Duration: {duration}h | +{xp_reward} Base XP",
-                    value=d
+                    label=f"{p['name']} ({p['overall']} OVR)",
+                    value=str(p["id"]),
+                    description=f"Lvl {p['level']} - {p['position']}",
+                    default=(str(p["id"]) == str(self.sacrifice_id)),
                 )
             )
-        self.drill_select = discord.ui.Select(
-            placeholder="Select drill type...",
-            min_values=1,
-            max_values=1,
-            options=drill_options,
-            row=1
-        )
-        self.drill_select.callback = self.drill_select_callback
-        self.add_item(self.drill_select)
 
-        # Confirm Button
-        self.confirm_btn = discord.ui.Button(style=discord.ButtonStyle.success, label="Start Training", disabled=True, row=2)
-        self.confirm_btn.callback = self.confirm_callback
-        self.add_item(self.confirm_btn)
-
-        # Cancel Button
-        cancel_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="Cancel", row=2)
-        cancel_btn.callback = self.cancel_callback
-        self.add_item(cancel_btn)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("This belongs to another manager.", ephemeral=True)
-            return False
-        return True
-
-    async def player_select_callback(self, interaction: discord.Interaction):
-        self.selected_card_id = self.player_select.values[0]
-        self.update_confirm_btn()
-        if interaction.response.is_done():
-            await interaction.edit_original_response(view=self)
-        else:
-            await interaction.response.edit_message(view=self)
-
-    async def drill_select_callback(self, interaction: discord.Interaction):
-        self.selected_drill = self.drill_select.values[0]
-        self.update_confirm_btn()
-        if interaction.response.is_done():
-            await interaction.edit_original_response(view=self)
-        else:
-            await interaction.response.edit_message(view=self)
-
-    def update_confirm_btn(self):
-        self.confirm_btn.disabled = not (self.selected_card_id and self.selected_drill)
-
-    async def cancel_callback(self, interaction: discord.Interaction):
-        await show_training_menu(interaction, self.owner_id)
-
-    async def confirm_callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        try:
-            db = await get_client()
-            config = GameConfig()
-            cost = config.drill_costs.get(self.selected_drill, 50)
-            duration = config.drill_durations.get(self.selected_drill, 1.0)
-
-            res = await db.rpc("process_training_start", {
-                "p_club_id": self.owner_id,
-                "p_card_id": self.selected_card_id,
-                "p_drill": self.selected_drill,
-                "p_cost": cost,
-                "p_duration_hours": duration
-            }).execute()
-
-            if res.data:
-                selected_p = next(p for p in self.eligible_players if p["id"] == self.selected_card_id)
-                await interaction.followup.send(
-                    embed=success_embed(
-                        f"🏋️‍♂️ **Training Drill Started!**\n\n"
-                        f"Sent **{selected_p['name']}** to **{DRILL_DISPLAY_NAMES.get(self.selected_drill, self.selected_drill)}**.\n"
-                        f"• Cost: `🪙 {cost} coins`"
-                    ),
-                    ephemeral=True
-                )
-            else:
-                await interaction.followup.send(embed=error_embed("Failed to start training session. Check coins availability."), ephemeral=True)
-
-            # Re-render training hub
-            await show_training_menu(interaction, self.owner_id)
-
-        except Exception as e:
-            logger.exception("Failed starting training.")
-            await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
+        self.keeper_select.disabled = len(self.keeper_select.options) == 0
+        self.sacrifice_select.disabled = len(self.sacrifice_select.options) == 0
+        self.confirm_btn.disabled = not (self.keeper_id and self.sacrifice_id)
 
 
-# --- 2. EVOLUTIONS SUB VIEW SYSTEM ---
+# --- 3. EVOLUTIONS SUB VIEW SYSTEM ---
 
 async def show_evols_menu(interaction: discord.Interaction, owner_id: int, preselected_card_id: str | None = None):
     db = await get_client()
@@ -568,46 +609,24 @@ class EvolutionsSubView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         try:
             db = await get_client()
+            lock_msg = await assert_not_in_match(db, self.owner_id)
+            if lock_msg:
+                await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
+                return
+
+            res = await db.rpc("claim_evolution_reward", {
+                "p_owner_id": self.owner_id,
+                "p_evo_id": self.active_evo["id"],
+            }).execute()
+            result = res.data or {}
             track = EVOLUTION_TRACKS[self.active_evo["evolution_id"]]
-
-            # Update core attributes
-            stat_col = track["reward_stat"] # pac, sho, or def
-            if stat_col == "def":
-                stat_col = "def" # database column name is def
-            
-            new_stat_val = self.card[stat_col] + track["reward_val"]
-            
-            stats = {
-                "pac": self.card.get("pac", 50),
-                "sho": self.card.get("sho", 50),
-                "pas": self.card.get("pas", 50),
-                "dri": self.card.get("dri", 50),
-                "def": self.card.get("def", 50),
-                "phy": self.card.get("phy", 50)
-            }
-            stats[stat_col] = new_stat_val
-            
-            ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", self.card["id"]).execute()
-            playstyles = [p["playstyle_key"] for p in ps_res.data] if ps_res.data else []
-            
-            from player_engine import calculate_true_ovr
-            new_overall = calculate_true_ovr(self.card["position"], stats, playstyles, self.card.get("potential", 85))
-
-            # Update DB
-            await db.table("player_cards").update({
-                stat_col: new_stat_val,
-                "overall": new_overall
-            }).eq("id", self.card["id"]).execute()
-
-            # Delete evolution record
-            await db.table("active_evolutions").delete().eq("id", self.active_evo["id"]).execute()
 
             await interaction.followup.send(
                 embed=success_embed(
                     f"🧬 **Evolution Completed!**\n\n"
                     f"Claimed rewards for **{self.card['name']}**:\n"
                     f"• **+{track['reward_val']} {track['reward_stat'].upper()}**\n"
-                    f"• New Overall: **{new_overall} OVR**!"
+                    f"• New Overall: **{result.get('new_ovr', self.card['overall'])} OVR**!"
                 ),
                 ephemeral=True
             )
@@ -615,7 +634,7 @@ class EvolutionsSubView(discord.ui.View):
 
         except Exception as e:
             logger.exception("Failed claiming evolution reward.")
-            await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
+            await interaction.followup.send(embed=error_embed(_api_message(e)), ephemeral=True)
 
 
 # --- 3. SKILL ALLOCATION SUB VIEW SYSTEM ---
@@ -714,45 +733,22 @@ class SkillPointButton(discord.ui.Button):
         await interaction.response.defer()
         try:
             db = await get_client()
-
-            card_res = await db.table("player_cards").select("*").eq("id", self.card_id).maybe_single().execute()
-            card = card_res.data if card_res else None
-            if not card or card.get("skill_points", 0) <= 0:
+            lock_msg = await assert_not_in_match(db, self.owner_id)
+            if lock_msg:
+                await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
 
-            new_val = card[self.col] + 1
-            if new_val > 99:
-                return
+            await db.rpc("allocate_skill_point", {
+                "p_owner_id": self.owner_id,
+                "p_card_id": self.card_id,
+                "p_stat": self.col,
+            }).execute()
 
-            # Recalculate true OVR based on updated stats
-            stats = {
-                "pac": card.get("pac", 50),
-                "sho": card.get("sho", 50),
-                "pas": card.get("pas", 50),
-                "dri": card.get("dri", 50),
-                "def": card.get("def", 50),
-                "phy": card.get("phy", 50)
-            }
-            stats[self.col] = new_val
-            
-            ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", self.card_id).execute()
-            playstyles = [p["playstyle_key"] for p in ps_res.data] if ps_res.data else []
-            
-            from player_engine import calculate_true_ovr
-            new_ovr = calculate_true_ovr(card["position"], stats, playstyles, card.get("potential", 85))
-
-            # Update DB
-            await db.table("player_cards").update({
-                self.col: new_val,
-                "skill_points": card["skill_points"] - 1,
-                "overall": new_ovr
-            }).eq("id", self.card_id).execute()
-
-            # Refresh view in-place
             await show_skills_menu(interaction, self.owner_id, preselected_card_id=self.card_id)
 
-        except Exception as e:
+        except Exception as exc:
             logger.exception("Failed to allocate skill point.")
+            await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
 
 
 # --- COG INTERFACE ---
@@ -761,7 +757,7 @@ class DevelopmentCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="development", description="Unified Development Center: Manage training drills, evolutions, and allocate skill points.")
+    @app_commands.command(name="development", description="Development Center: stat drills, card fusion, evolutions, and skill points.")
     @app_commands.guild_only()
     @app_commands.check(ensure_registered)
     async def development(self, interaction: discord.Interaction) -> None:
@@ -779,7 +775,7 @@ class DevelopmentCog(commands.Cog):
 
             embed = discord.Embed(
                 title="🏋️‍♂️ Development Center",
-                description=f"Welcome to **{player['club_name']}** development center. Select a sub-menu to train cards, evolve playstyles, or allocate stat points.",
+                description=f"Welcome to **{player['club_name']}** development center. Train stats, fuse duplicate cards, evolve playstyles, or allocate skill points.",
                 color=0x00FF87
             )
             view = DevelopmentHubView(interaction.user.id)

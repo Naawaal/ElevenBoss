@@ -8,7 +8,7 @@
     {
       "tags": ["generic"],
       "urgency": "routine",
-      "text": "Kickoff! The crowd roars as the match begins with {team} in possession."
+      "text": "**Kickoff!** The crowd roars as the match begins with {team} in possession."
     },
     {
       "tags": ["generic"],
@@ -77,37 +77,37 @@
     {
       "tags": ["generic"],
       "urgency": "cliffhanger",
-      "text": "GOAL! {actor} curls it beautifully into the top corner for {team}!"
+      "text": "**GOAL!** {actor} curls it beautifully into the top corner for {team}!"
     },
     {
       "tags": ["generic"],
       "urgency": "cliffhanger",
-      "text": "GOAL! A thunderous strike from {actor}! The net ripples for {team}!"
+      "text": "**GOAL!** A thunderous strike from {actor}! The net ripples for {team}!"
     },
     {
       "tags": ["generic"],
       "urgency": "cliffhanger",
-      "text": "GOAL! Clinical finish from {actor}, who makes no mistake for {team}!"
+      "text": "**GOAL!** Clinical finish from {actor}, who makes no mistake for {team}!"
     },
     {
       "tags": ["generic"],
       "urgency": "cliffhanger",
-      "text": "GOAL! {actor} slots it home with composure! {team} celebrates!"
+      "text": "**GOAL!** {actor} slots it home with composure! {team} celebrates!"
     },
     {
       "tags": ["generic"],
       "urgency": "cliffhanger",
-      "text": "GOAL! A pinpoint header from {actor}! {team} take the lead!"
+      "text": "**GOAL!** A pinpoint header from {actor}! {team} take the lead!"
     },
     {
       "tags": ["late"],
       "urgency": "cliffhanger",
-      "text": "UNBELIEVABLE! {actor} scores a crucial late goal for {team}!"
+      "text": "**UNBELIEVABLE!** {actor} scores a crucial late goal for {team}!"
     },
     {
       "tags": ["late"],
       "urgency": "cliffhanger",
-      "text": "DRAMA! {actor} fires home in the dying minutes! {team} go wild!"
+      "text": "**DRAMA!** {actor} fires home in the dying minutes! {team} go wild!"
     },
     {
       "tags": ["high_momentum"],
@@ -117,24 +117,24 @@
     {
       "tags": ["high_momentum"],
       "urgency": "cliffhanger",
-      "text": "Inevitable! {team} have been knocking on the door and {actor} smashes it open!"
+      "text": "**Inevitable!** {team} have been knocking on the door and {actor} smashes it open!"
     },
     {
       "tags": ["tied"],
       "urgency": "cliffhanger",
-      "text": "THE DEADLOCK IS BROKEN! {actor} finds the breakthrough for {team}!"
+      "text": "**THE DEADLOCK IS BROKEN!** {actor} finds the breakthrough for {team}!"
     },
     {
       "tags": ["low_momentum"],
       "urgency": "cliffhanger",
-      "text": "Against ALL odds! {actor} scores a stunner against the run of play for {team}!"
+      "text": "**Against ALL odds!** {actor} scores a stunner against the run of play for {team}!"
     }
   ],
   "SAVE": [
     {
       "tags": ["generic"],
       "urgency": "cliffhanger",
-      "text": "What a save! {actor} pulls off a spectacular stop to keep it out!"
+      "text": "**What a save!** {actor} pulls off a spectacular stop to keep it out!"
     },
     {
       "tags": ["generic"],
@@ -149,7 +149,7 @@
     {
       "tags": ["generic"],
       "urgency": "cliffhanger",
-      "text": "DENIED! {actor} springs to the right and claws it away! Corner!"
+      "text": "**DENIED!** {actor} springs to the right and claws it away! Corner!"
     },
     {
       "tags": ["generic"],
@@ -164,7 +164,7 @@
     {
       "tags": ["late"],
       "urgency": "cliffhanger",
-      "text": "CRUCIAL SAVE! {actor} preserves the lead with a heroic late stop!"
+      "text": "**CRUCIAL SAVE!** {actor} preserves the lead with a heroic late stop!"
     },
     {
       "tags": ["high_momentum"],
@@ -201,29 +201,29 @@
     {
       "tags": ["tied"],
       "urgency": "cliffhanger",
-      "text": "A massive chance wasted! {actor} blazes over with the goal at their mercy!"
+      "text": "**A massive chance wasted!** {actor} blazes over with the goal at their mercy!"
     },
     {
       "tags": ["late"],
       "urgency": "cliffhanger",
-      "text": "So close! {actor}'s late shot strikes the crossbar and bounces away!"
+      "text": "**So close!** {actor}'s late shot strikes the crossbar and bounces away!"
     },
     {
       "tags": ["late"],
       "urgency": "cliffhanger",
-      "text": "Agonising! {actor} fires wide when it looked easier to score!"
+      "text": "**Agonising!** {actor} fires wide when it looked easier to score!"
     },
     {
       "tags": ["high_momentum"],
       "urgency": "build_up",
-      "text": "Still pushing! {actor}'s shot goes just wide — {team} won't stop!"
+      "text": "**Still pushing!** {actor}'s shot goes just wide — {team} won't stop!"
     }
   ],
   "FOUL": [
     {
       "tags": ["generic"],
       "urgency": "routine",
-      "text": "Foul! {actor} slides in aggressively and gets a firm talking to by the ref."
+      "text": "**Foul!** {actor} slides in aggressively and gets a firm talking to by the ref."
     },
     {
       "tags": ["generic"],
@@ -238,7 +238,7 @@
     {
       "tags": ["late"],
       "urgency": "build_up",
-      "text": "Tension is rising! {actor} commits a tactical foul to break the play."
+      "text": "**Tension is rising!** {actor} commits a tactical foul to break the play."
     },
     {
       "tags": ["high_momentum"],
@@ -250,12 +250,12 @@
     {
       "tags": ["generic"],
       "urgency": "routine",
-      "text": "Yellow Card! {actor} goes into the book after a reckless challenge."
+      "text": "**Yellow Card!** {actor} goes into the book after a reckless challenge."
     },
     {
       "tags": ["generic"],
       "urgency": "routine",
-      "text": "Booking! The referee pulls out a yellow card for {actor}."
+      "text": "**Booking!** The referee pulls out a yellow card for {actor}."
     },
     {
       "tags": ["generic"],
@@ -265,14 +265,14 @@
     {
       "tags": ["late"],
       "urgency": "build_up",
-      "text": "Late booking! {actor} picks up a yellow card at a critical stage of the match."
+      "text": "**Late booking!** {actor} picks up a yellow card at a critical stage of the match."
     }
   ],
   "INJURY": [
     {
       "tags": ["generic"],
       "urgency": "routine",
-      "text": "Injury concern! {actor} goes down clutching their leg and needs medical attention."
+      "text": "**Injury concern!** {actor} goes down clutching their leg and needs medical attention."
     },
     {
       "tags": ["generic"],
@@ -299,17 +299,17 @@
     {
       "tags": ["tied"],
       "urgency": "routine",
-      "text": "Half-time! The teams go into the break completely level."
+      "text": "**Half-time!** The teams go into the break completely level."
     },
     {
       "tags": ["home_leading"],
       "urgency": "routine",
-      "text": "Half-time! The home side holds a slim advantage at the break."
+      "text": "**Half-time!** The home side holds a slim advantage at the break."
     },
     {
       "tags": ["away_leading"],
       "urgency": "routine",
-      "text": "Half-time! The away team leads as the first half comes to a close."
+      "text": "**Half-time!** The away team leads as the first half comes to a close."
     }
   ],
   "FULL_TIME": [
@@ -321,17 +321,17 @@
     {
       "tags": ["tied"],
       "urgency": "routine",
-      "text": "Full time! A hard-fought draw between both sides."
+      "text": "**Full time!** A hard-fought draw between both sides."
     },
     {
       "tags": ["home_leading"],
       "urgency": "routine",
-      "text": "Full time! The home side takes all three points today!"
+      "text": "**Full time!** The home side takes all three points today!"
     },
     {
       "tags": ["away_leading"],
       "urgency": "routine",
-      "text": "Full time! A superb away performance seals the victory!"
+      "text": "**Full time!** A superb away performance seals the victory!"
     }
   ]
 }

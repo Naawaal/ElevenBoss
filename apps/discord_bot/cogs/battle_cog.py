@@ -22,8 +22,32 @@ from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.core.locks import get_guild_thread_lock
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+
+async def safe_edit_message(message: discord.Message, **kwargs) -> None:
+    """Edit with basic 429 backoff for match tickers."""
+    for attempt in range(3):
+        try:
+            await message.edit(**kwargs)
+            return
+        except discord.HTTPException as e:
+            if e.status == 429 and attempt < 2:
+                await asyncio.sleep(float(getattr(e, "retry_after", 2) or 2))
+            else:
+                raise
+
+
+def _fixture_in_window(fixture: dict) -> bool:
+    now = datetime.now(timezone.utc)
+    try:
+        ws = datetime.fromisoformat(str(fixture["window_start"]).replace("Z", "+00:00"))
+        we = datetime.fromisoformat(str(fixture["window_end"]).replace("Z", "+00:00"))
+    except (TypeError, ValueError, KeyError):
+        return True
+    return ws <= now <= we
 
 DIVISION_OPPONENT_RATINGS = {
     "Grassroots": 55.0,
@@ -216,7 +240,7 @@ class StandardMatchHandler(IMatchOutputHandler):
         embed.add_field(name="📈 Momentum", value=get_momentum_bar(state.momentum), inline=False)
         embed.add_field(name="Commentary Ticker", value="\n".join(recent_ticker), inline=False)
 
-        await self.ticker_msg.edit(embed=embed, view=touchline_view)
+        await safe_edit_message(self.ticker_msg, embed=embed, view=touchline_view)
 
     async def finalize_match(self, result: MatchResult, state: MatchState, home_name: str, away_name: str, motm: str, active_earned: int, active_pts: int, user_id: int, home_team_id: int, away_team_id: int, **kwargs) -> None:
         target = self.thread if self.thread else self.ticker_msg.channel
@@ -310,7 +334,7 @@ class LeagueMatchHandler(IMatchOutputHandler):
         embed.add_field(name="📈 Momentum", value=get_momentum_bar(state.momentum), inline=False)
         embed.add_field(name="Live Commentary", value="\n".join(recent_ticker), inline=False)
 
-        await self.ticker_msg.edit(embed=embed, view=touchline_view)
+        await safe_edit_message(self.ticker_msg, embed=embed, view=touchline_view)
 
     async def finalize_match(self, result: MatchResult, state: MatchState, home_name: str, away_name: str, motm: str, active_earned: int, active_pts: int, user_id: int, home_team_id: int, away_team_id: int, **kwargs) -> None:
         if self.ticker_msg:
@@ -321,7 +345,7 @@ class LeagueMatchHandler(IMatchOutputHandler):
                 )
                 finished_embed.add_field(name="Scoreboard", value=f"🏁 **{home_name}** `{state.home_score} - {state.away_score}` **{away_name}**", inline=False)
                 finished_embed.add_field(name="📈 Final Momentum", value=get_momentum_bar(state.momentum), inline=False)
-                await self.ticker_msg.edit(embed=finished_embed, view=None)
+                await safe_edit_message(self.ticker_msg, embed=finished_embed, view=None)
             except Exception:
                 pass
 
@@ -515,12 +539,8 @@ async def run_league_match_simulation(
     away_p = fixture["away"]
     fixture_id = fixture["id"]
     
-    if active_player_id:
-        active_p_res = await db.table("players").select("*").eq("discord_id", active_player_id).maybe_single().execute()
-        active_p = active_p_res.data if active_p_res else None
-        if active_p:
-            await db.table("players").update({"energy": active_p["energy"] - 10}).eq("discord_id", active_player_id).execute()
-
+    # ponytail: energy deducted after successful sim (see end of function)
+    
     # Load squads & ratings
     home_squad = []
     home_rating = 60.0
@@ -639,7 +659,13 @@ async def run_league_match_simulation(
         for child in touchline_view.children:
             child.disabled = True
 
-    from datetime import datetime, timezone
+    if active_player_id:
+        ap_res = await db.table("players").select("energy").eq("discord_id", active_player_id).maybe_single().execute()
+        if ap_res and ap_res.data and ap_res.data["energy"] >= 10:
+            await db.table("players").update({
+                "energy": ap_res.data["energy"] - 10
+            }).eq("discord_id", active_player_id).execute()
+
     await db.table("league_fixtures").update({
         "home_score": state.home_score,
         "away_score": state.away_score,
@@ -1130,6 +1156,13 @@ class BattleCog(commands.Cog):
             if f["is_played"]:
                 await interaction.followup.send(embed=error_embed("This fixture has already been played."), ephemeral=True)
                 return
+
+            if not _fixture_in_window(f):
+                await interaction.followup.send(
+                    embed=error_embed("This fixture is outside its play window."),
+                    ephemeral=True,
+                )
+                return
                 
             # Verify user is home or away team manager
             if user_id not in [f["home_team_id"], f["away_team_id"]]:
@@ -1274,6 +1307,13 @@ class BattleCog(commands.Cog):
     ) -> None:
         db = await get_client()
         
+        locks_res = await db.table("match_locks").select("discord_id").in_("discord_id", [challenger.id, opponent.id]).execute()
+        if locks_res.data:
+            await invitation_msg.channel.send(
+                embed=error_embed("One or both managers are already in another match."),
+            )
+            return
+
         # 1. Spawning Thread
         thread = None
         try:

@@ -892,6 +892,12 @@ async def send_league_announcement(guild: discord.Guild, channel_id: int, embed:
     channel = guild.get_channel(channel_id)
     if channel:
         await channel.send(content=content if content else None, embed=embed)
+    else:
+        logger.warning(
+            "League announcement channel %s not found in guild %s — message skipped.",
+            channel_id,
+            guild.id,
+        )
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(LeagueCog(bot))

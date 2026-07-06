@@ -178,37 +178,13 @@ class PlayerProfileView(discord.ui.View):
 
             track = EVOLUTION_TRACKS[evo["evolution_id"]]
 
-            card_res = await db.table("player_cards").select("*").eq("id", self.card_id).maybe_single().execute()
-            card = card_res.data if card_res else None
+            res = await db.rpc("claim_evolution_reward", {
+                "p_owner_id": self.owner_id,
+                "p_evo_id": evo["id"],
+            }).execute()
+            result = res.data or {}
+            new_overall = result.get("new_ovr", 0)
 
-            new_stat_val = card[track["reward_stat"]] + track["reward_val"]
-            
-            stats = {
-                "pac": card.get("pac", 50),
-                "sho": card.get("sho", 50),
-                "pas": card.get("pas", 50),
-                "dri": card.get("dri", 50),
-                "def": card.get("def", 50),
-                "phy": card.get("phy", 50)
-            }
-            stats[track["reward_stat"]] = new_stat_val
-            
-            ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", self.card_id).execute()
-            playstyles = [p["playstyle_key"] for p in ps_res.data] if ps_res.data else []
-            
-            from player_engine import calculate_true_ovr
-            new_overall = calculate_true_ovr(card["position"], stats, playstyles, card.get("potential", 85))
-
-            # Update DB
-            await db.table("player_cards").update({
-                track["reward_stat"]: new_stat_val,
-                "overall": new_overall
-            }).eq("id", self.card_id).execute()
-
-            # Delete evolution record
-            await db.table("active_evolutions").delete().eq("id", evo["id"]).execute()
-
-            # Disable button
             self.evo_btn.disabled = True
             await interaction.edit_original_response(view=self)
 
@@ -217,14 +193,15 @@ class PlayerProfileView(discord.ui.View):
                     f"🧬 **Evolution Completed!**\n\n"
                     f"**{self.card_name}** achieved the evolution goals!\n"
                     f"• Reward: `+{track['reward_val']} {track['reward_stat'].upper()}`\n"
-                    f"• Overall Rating: `{card['overall']} ➔ {new_overall} OVR`"
+                    f"• Overall Rating: **{new_overall} OVR**"
                 ),
                 ephemeral=True
             )
 
         except Exception as e:
             logger.exception("Failed to claim evolution rewards.")
-            await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
+            from apps.discord_bot.cogs.development_cog import _api_message
+            await interaction.followup.send(embed=error_embed(_api_message(e)), ephemeral=True)
 
 
 class PlayerCog(commands.Cog):

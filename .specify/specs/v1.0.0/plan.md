@@ -548,6 +548,9 @@ CREATE TABLE public.player_xp_log (
 ### A. Core Commentary Data Layer
 * **`commentary_bank.json`**: Static JSON file storing commentary templates categorized by events (`KICKOFF`, `CHANCE`, `GOAL`, `FOUL`, `MISS`, `FULL_TIME`). Contains metadata fields for `tags` and `urgency`.
 * **`CommentaryEngine`**: Python class loaded at runtime to filter lines using active context tags, resolving placeholder formatting.
+  * **`bold_vars(variables: dict) -> dict`**: Helper utility to wrap string values in Markdown double-asterisks (`**`), stripping existing `**` beforehand to prevent double-bolding (`****`). Leaves non-string values (e.g. integers) untouched.
+  * **`render_commentary(template: str, variables: dict) -> str`**: Hydrates templates by first passing variables through `bold_vars`, then using `.format()`.
+  * The `get_commentary()` method in `CommentaryEngine` delegates formatting to `render_commentary()`.
 
 ### B. Live Simulator State Machine (`v2_simulator.py`)
 * **`MatchState`**: tracks home/away ratings, current score, minute, momentum (-100 to 100), tactics modifier, and a list of context tags.
@@ -827,6 +830,97 @@ Challenger: /battle friendly [Opponent]
      - **Draw**: `global_lp = global_lp + 5`, `coins = coins + (win_coins / 3)`, `league_points = league_points + 1`
      - **Loss**: `global_lp = max(0, global_lp - 10)`, `coins = coins + 15`, `league_points = league_points + 0`
 
+---
+
+## 21. Squad Pitch Graphic Generation Technical Plan
+
+### A. Pitch Generator Module (`apps/discord_bot/core/pitch_generator.py`)
+- **Rendering**: PIL (Pillow) image library.
+- **Inputs**: `formation_name: str`, `players: list[dict | None]`.
+- **Outputs**: `discord.File` containing the bytes of the PNG squad graphic.
+- **Drawing Detail**:
+  1. Opens the base image from `assets/pitch.png`. If it does not exist, draws a fallback green field with lines.
+  2. For each slot, determines relative coordinate `(x_pct, y_pct)` from the formation configuration.
+  3. Maps to absolute pixel positions.
+  4. Draws a dark semi-transparent rectangle box.
+  5. Computes rating color (Gold: 80+, Silver: 70-79, Bronze/White: <70).
+  6. Draws OVR and Player Name using `Roboto-Bold.ttf` and `Roboto-Regular.ttf`.
+  7. Serializes to `io.BytesIO` and returns `discord.File(fp=bytes_io, filename="squad_pitch.png")`.
+
+### B. Squad Cog Integration (`apps/discord_bot/cogs/squad_cog.py`)
+- Update `build_hub_embed()` to omit the text-based Starting XI list, and set the embed's image URL to `attachment://squad_pitch.png`.
+- In `SquadCog.squad`, generate the pitch file and send it as the `file` argument.
+- In `SquadHubView`, `SquadFormationView`, and `SquadSwapView`, whenever returning back to the Hub or confirming a formation/swap, regenerate the pitch graphic, and edit the message passing the new file in the `attachments=[new_pitch_file]` parameter to update the image component.
+
+---
+
+## 22. Roster Grid Graphic Generation Technical Plan
+
+### A. Roster Grid Generator Module (`apps/discord_bot/core/pitch_generator.py`)
+* Add `async def generate_roster_grid(cards: list[dict]) -> discord.File:`
+* Dimensions: 605x450 pixels.
+* Canvas background: Slate dark `(18, 22, 28, 255)`.
+* Card Layout: 4 columns, 2 rows.
+* Margins & Spacing:
+  * Horizontal spacing: 15 pixels.
+  * Vertical spacing: 20 pixels.
+  * Left/Right margin: 20 pixels.
+  * Top/Bottom margin: 25 pixels.
+  * Card size: 130x190 pixels.
+* Drawing logic for each card:
+  1. Rounded rectangle with fill `(28, 34, 46, 255)`.
+  2. Border outline (2px) matching card rarity:
+     * Legendary: `(255, 215, 0, 255)` (Gold)
+     * Epic: `(163, 73, 164, 255)` (Purple)
+     * Rare: `(0, 162, 232, 255)` (Blue)
+     * Common: `(192, 192, 192, 255)` (Silver/Gray)
+  3. Draw rating + position (e.g., `85 ST`) at top centered horizontally using `Roboto-Bold.ttf`. Text color matches rarity color-coding.
+  4. Draw player name centered horizontally and vertically using `Roboto-Regular.ttf` (white, truncated to 12 chars).
+  5. Draw level (e.g., `Lvl 5`) and card ID (e.g., `#12`) at the bottom using `Roboto-Regular.ttf` (subtle gray colors).
+* Output: Serialized via `io.BytesIO` as PNG and returned as `discord.File(fp=output, filename="roster_grid.png")`.
+
+### B. UI & Cog Integration (`apps/discord_bot/cogs/squad_cog.py` & `squad_embeds.py`)
+* **`roster_embed()`**: Remove the `add_field` calls for player details. Keep title and pagination metadata in the description, and call `embed.set_image(url="attachment://roster_grid.png")`.
+* **`SquadHubView.on_full_roster`**: Before launching `SquadRosterView`, slice the first 8 cards, call `await generate_roster_grid(sliced_cards)`, and send it via `interaction.edit_original_response(embed=roster_view.get_embed(), view=roster_view, attachments=[roster_file])`.
+* **`SquadRosterView.on_prev` / `on_next`**: Defer, update page, slice page cards, generate new roster grid image, and call `await interaction.edit_original_response(embed=self.get_embed(), view=self, attachments=[new_roster_file])`.
+
+---
+
+## 23. Pre-Launch Hardening Architecture
+
+### A. Trust Boundary Policy
+* All coin/stat/roster mutations go through Supabase RPCs with `SELECT … FOR UPDATE` on affected rows.
+* Client-supplied prices (`p_sale_value`) are **never** trusted.
+* `match_locks` is checked in every roster-mutation RPC and in cog middleware (`assert_not_in_match`).
+
+### B. RPC Inventory (Post-Hardening)
+
+| RPC | Purpose |
+|-----|---------|
+| `sync_training_energy` | Regen training energy (+25/hr), reset daily drill counter |
+| `process_stat_drill` | Atomic stat drill with costs and OVR recalc |
+| `process_agent_sale` | Server-priced sale with full lock checks |
+| `recalculate_card_ovr` | Shared weighted OVR from stats + playstyles + potential |
+| `swap_squad_players` | Atomic bench swap with GK slot rule |
+| `set_formation_and_assignments` | Atomic formation + XI replace |
+| `allocate_skill_point` | Atomic skill spend + recalc |
+| `claim_evolution_reward` | Atomic evolution claim + stat cap |
+| `register_new_player` | Idempotent guard on `discord_id` |
+
+### C. UI Patterns
+* **Dropdown rebuild**: `apps/discord_bot/core/select_helpers.py` — set `default=True` on selected option after every select callback.
+* **View timeouts**: all hub views implement `on_timeout` disabling children.
+* **Pitch assets**: `Path(__file__).resolve().parents[3] / "assets"` — no hardcoded OS paths.
+
+### D. Migrations
+* `015_hardening_schema.sql` — `league_members`, training energy columns, constraints
+* `016_hardening_rpcs.sql` — RPC rewrites and new functions
+
+### E. Design Decisions (v1.0.0)
+* AC-07 async training slots: **deprecated** in favor of AC-10 stat drills (spec note only).
+* GK required in slot 1: **enforced**.
+* League matches require 11 assigned players: **enforced**.
+* Season-end coin payouts: **deferred** to v1.1.
 
 
 

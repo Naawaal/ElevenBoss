@@ -38,6 +38,10 @@ class ThreadManager:
             auto_archive_duration=60,
             reason=f"ElevenBoss onboarding wizard for {interaction.user.name}",
         )
+        try:
+            await thread.add_user(interaction.user)
+        except discord.HTTPException:
+            logger.warning("Could not add user %s to onboarding thread %s", interaction.user.id, thread.id)
         return thread
 
     async def delete_thread_after(

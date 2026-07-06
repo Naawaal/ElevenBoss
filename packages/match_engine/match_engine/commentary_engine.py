@@ -15,6 +15,19 @@ import json
 import random
 
 
+def bold_vars(variables: dict) -> dict:
+    """Wrap string values in markdown bold syntax, avoiding double-bolding."""
+    return {
+        k: f"**{v.replace('**', '')}**" if isinstance(v, str) else v
+        for k, v in variables.items()
+    }
+
+
+def render_commentary(template: str, variables: dict) -> str:
+    """Format the commentary template after bolding all string variables."""
+    return template.format(**bold_vars(variables))
+
+
 class CommentaryEngine:
     def __init__(self) -> None:
         dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -69,7 +82,7 @@ class CommentaryEngine:
         else:
             selected = random.choice(matching)
 
-        formatted_text = selected["text"].format(**variables)
+        formatted_text = render_commentary(selected["text"], variables)
         return {
             "text": formatted_text,
             "urgency": selected["urgency"],

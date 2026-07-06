@@ -9,6 +9,10 @@ from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.embeds.squad_embeds import get_slot_position, roster_embed
+from apps.discord_bot.core.pitch_generator import generate_squad_pitch, generate_roster_grid
+from apps.discord_bot.core.view_helpers import disable_view_on_timeout
+from apps.discord_bot.core.select_helpers import rebuild_select_options
+from apps.discord_bot.middleware.match_lock import assert_not_in_match
 
 logger = logging.getLogger(__name__)
 
@@ -39,58 +43,40 @@ async def fetch_squad_data(user_id: int):
     
     return club_name, formation, assignments, reserves_count, is_locked
 
+def get_players_list_for_pitch(formation: str, assignments: dict[int, dict]) -> list[dict]:
+    players_list = []
+    for slot in range(1, 12):
+        card = assignments.get(slot)
+        if card:
+            players_list.append({
+                "name": card["name"],
+                "overall": card["overall"],
+                "position": card["position"],
+                "rarity": card.get("rarity", "Common")
+            })
+        else:
+            req_pos = get_slot_position(formation, slot)
+            players_list.append({
+                "name": "Empty Slot",
+                "overall": 0,
+                "position": req_pos,
+                "rarity": "Common"
+            })
+    return players_list
+
 def build_hub_embed(club_name: str, formation: str, assignments: dict[int, dict], reserves_count: int, is_locked: bool) -> discord.Embed:
     embed = discord.Embed(
         title=f"📋 {club_name} Squad Management",
         color=0x00FF87
     )
     
-    # Visual formation representation using emojis
-    parts = formation.split("-")
-    formation_lines = ["🧤 GK"]
-    if len(parts) == 3:
-        num_def = int(parts[0])
-        num_mid = int(parts[1])
-        num_att = int(parts[2])
-        formation_lines.append(" ".join(["🛡️ DEF"] * num_def))
-        formation_lines.append(" ".join(["🎯 MID"] * num_mid))
-        formation_lines.append(" ".join(["⚔️ ATT"] * num_att))
-    elif len(parts) == 4:  # 4-2-3-1 etc.
-        num_def = int(parts[0])
-        num_dm = int(parts[1])
-        num_am = int(parts[2])
-        num_att = int(parts[3])
-        formation_lines.append(" ".join(["🛡️ DEF"] * num_def))
-        formation_lines.append(" ".join(["🎯 MID"] * (num_dm + num_am)))
-        formation_lines.append(" ".join(["⚔️ ATT"] * num_att))
-    else:
-        # Fallback
-        formation_lines.append("🛡️ DEF 🛡️ DEF 🛡️ DEF 🛡️ DEF")
-        formation_lines.append("🎯 MID 🎯 MID 🎯 MID 🎯 MID")
-        formation_lines.append("⚔️ ATT ⚔️ ATT")
-        
-    visual_formation = "\n".join(formation_lines)
-    embed.add_field(name="Tactical Formation", value=f"`{formation}`\n{visual_formation}", inline=False)
-    
-    # Starting XI List
-    starting_xi_lines = []
-    for slot in range(1, 12):
-        player = assignments.get(slot)
-        req_pos = get_slot_position(formation, slot)
-        pos_emoji = "🧤" if req_pos == "GK" else "🛡️" if req_pos == "DEF" else "🎯" if req_pos == "MID" else "⚔️"
-        if player:
-            starting_xi_lines.append(f"{slot}. {pos_emoji} **{player['name']}** ({player['position']} - {player['overall']} OVR)")
-        else:
-            starting_xi_lines.append(f"{slot}. ❌ *[EMPTY]* (Requires {req_pos})")
-            
-    embed.add_field(name="Starting XI", value="\n".join(starting_xi_lines), inline=False)
-    
-    # Reserves
-    embed.add_field(name="Reserves", value=f"👥 {reserves_count} Reserves Available", inline=False)
+    embed.add_field(name="Tactical Formation", value=f"`{formation}`", inline=True)
+    embed.add_field(name="Reserves", value=f"👥 {reserves_count} Reserves Available", inline=True)
     
     if is_locked:
         embed.description = "🔒 **Squad is locked. A match is currently in progress.**"
         
+    embed.set_image(url="attachment://squad_pitch.png")
     return embed
 
 
@@ -123,6 +109,9 @@ class SquadHubView(discord.ui.View):
         self.add_item(full_roster_btn)
         self.add_item(tactics_btn)
 
+    async def on_timeout(self) -> None:
+        await disable_view_on_timeout(self)
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("This menu belongs to another player.", ephemeral=True)
@@ -132,7 +121,7 @@ class SquadHubView(discord.ui.View):
     async def on_change_formation(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         formation_view = SquadFormationView(self.user_id, self)
-        await interaction.edit_original_response(embed=formation_view.get_embed(), view=formation_view)
+        await interaction.edit_original_response(embed=formation_view.get_embed(), view=formation_view, attachments=[])
 
     async def on_swap_players(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
@@ -152,7 +141,7 @@ class SquadHubView(discord.ui.View):
             starters = [self.assignments[slot] for slot in range(1, 12) if slot in self.assignments]
             
             swap_view = SquadSwapView(self.user_id, self, starters, reserves)
-            await interaction.edit_original_response(embed=swap_view.get_embed(), view=swap_view)
+            await interaction.edit_original_response(embed=swap_view.get_embed(), view=swap_view, attachments=[])
         except Exception as e:
             logger.exception("Failed to prepare swap view.")
             await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
@@ -166,7 +155,10 @@ class SquadHubView(discord.ui.View):
             all_cards = cards_res.data or []
             
             roster_view = SquadRosterView(self.user_id, self, all_cards)
-            await interaction.edit_original_response(embed=roster_view.get_embed(), view=roster_view)
+            page_cards = all_cards[:8]
+            roster_file = await generate_roster_grid(page_cards)
+            
+            await interaction.edit_original_response(embed=roster_view.get_embed(), view=roster_view, attachments=[roster_file])
         except Exception as e:
             logger.exception("Failed to prepare roster view.")
             await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
@@ -199,6 +191,9 @@ class SquadFormationView(discord.ui.View):
             return False
         return True
 
+    async def on_timeout(self) -> None:
+        await disable_view_on_timeout(self)
+
     def get_embed(self) -> discord.Embed:
         return discord.Embed(
             title="🔄 Change Squad Formation",
@@ -209,13 +204,16 @@ class SquadFormationView(discord.ui.View):
     async def on_back(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         club_name, formation, assignments, reserves_count, is_locked = await fetch_squad_data(self.user_id)
+        players_list = get_players_list_for_pitch(formation, assignments)
+        pitch_file = await generate_squad_pitch(formation, players_list)
+        
         self.hub_view.club_name = club_name
         self.hub_view.formation = formation
         self.hub_view.assignments = assignments
         self.hub_view.reserves_count = reserves_count
         self.hub_view.is_locked = is_locked
         self.hub_view.setup_buttons()
-        await interaction.edit_original_response(embed=build_hub_embed(club_name, formation, assignments, reserves_count, is_locked), view=self.hub_view)
+        await interaction.edit_original_response(embed=build_hub_embed(club_name, formation, assignments, reserves_count, is_locked), attachments=[pitch_file], view=self.hub_view)
 
     async def on_select_formation(self, interaction: discord.Interaction) -> None:
         chosen_formation = self.select.values[0]
@@ -236,9 +234,12 @@ class SquadFormationView(discord.ui.View):
             for slot in range(1, 12):
                 positions_needed.append((slot, get_slot_position(chosen_formation, slot)))
                 
-            # First pass: assign natural positions
+            # First pass: assign natural positions (slot 1 always GK)
             for slot, pos in positions_needed:
-                matching_players = [c for c in all_cards if c["position"] == pos and c["id"] not in used_ids]
+                if slot == 1:
+                    matching_players = [c for c in all_cards if c["position"] == "GK" and c["id"] not in used_ids]
+                else:
+                    matching_players = [c for c in all_cards if c["position"] == pos and c["id"] not in used_ids]
                 if matching_players:
                     matching_players.sort(key=lambda x: x["overall"], reverse=True)
                     best_player = matching_players[0]
@@ -248,6 +249,13 @@ class SquadFormationView(discord.ui.View):
             # Second pass: fill empty slots with highest overall unused players (out-of-position fallback)
             for slot, pos in positions_needed:
                 if slot not in assigned_cards:
+                    if slot == 1:
+                        gk_pool = [c for c in all_cards if c["position"] == "GK" and c["id"] not in used_ids]
+                        if gk_pool:
+                            gk_pool.sort(key=lambda x: x["overall"], reverse=True)
+                            assigned_cards[slot] = gk_pool[0]
+                            used_ids.add(gk_pool[0]["id"])
+                        continue
                     unused_players = [c for c in all_cards if c["id"] not in used_ids]
                     if unused_players:
                         unused_players.sort(key=lambda x: x["overall"], reverse=True)
@@ -255,27 +263,18 @@ class SquadFormationView(discord.ui.View):
                         assigned_cards[slot] = best_fallback
                         used_ids.add(best_fallback["id"])
             
-            # Perform DB operations atomically
-            # Update squads table
-            await db.table("squads").upsert({"discord_id": self.user_id, "formation": chosen_formation}).execute()
-            
-            # Wipe squad assignments
-            await db.table("squad_assignments").delete().eq("discord_id", self.user_id).execute()
-            
-            # Insert new assignments
-            new_assignments = []
-            for slot, card in assigned_cards.items():
-                new_assignments.append({
-                    "discord_id": self.user_id,
-                    "position_slot": slot,
-                    "player_card_id": card["id"]
-                })
-            
-            if new_assignments:
-                await db.table("squad_assignments").insert(new_assignments).execute()
+            payload = [{"slot": slot, "card_id": str(card["id"])} for slot, card in assigned_cards.items()]
+            await db.rpc("set_formation_and_assignments", {
+                "p_discord_id": self.user_id,
+                "p_formation": chosen_formation,
+                "p_assignments": payload,
+            }).execute()
                 
             # Return to main Hub with success message
             club_name, formation, assignments, reserves_count, is_locked = await fetch_squad_data(self.user_id)
+            players_list = get_players_list_for_pitch(formation, assignments)
+            pitch_file = await generate_squad_pitch(formation, players_list)
+            
             self.hub_view.club_name = club_name
             self.hub_view.formation = formation
             self.hub_view.assignments = assignments
@@ -287,7 +286,7 @@ class SquadFormationView(discord.ui.View):
             embed = build_hub_embed(club_name, formation, assignments, reserves_count, is_locked)
             embed.description = f"✅ {success_msg}"
             
-            await interaction.edit_original_response(embed=embed, view=self.hub_view)
+            await interaction.edit_original_response(embed=embed, attachments=[pitch_file], view=self.hub_view)
             
         except Exception as e:
             logger.exception("Failed to change formation and auto-assign.")
@@ -311,52 +310,43 @@ class SquadSwapView(discord.ui.View):
 
     def setup_components(self) -> None:
         self.clear_items()
-        
-        # Starter Dropdown
-        starter_options = []
         card_to_slot = {card["id"]: slot for slot, card in self.hub_view.assignments.items()}
-        
-        for card in self.starters:
-            slot = card_to_slot.get(card["id"], "?")
-            starter_options.append(
-                discord.SelectOption(
-                    label=f"Slot {slot}: {card['name']}",
-                    description=f"{card['position']} | {card['overall']} OVR",
-                    value=card["id"]
-                )
-            )
-            
+
+        bench_opts = rebuild_select_options(
+            self.starters,
+            self.selected_starter_id,
+            label_fn=lambda c: f"Slot {card_to_slot.get(c['id'], '?')}: {c['name']}",
+            description_fn=lambda c: f"{c['position']} | {c['overall']} OVR",
+        )
+        if not bench_opts:
+            bench_opts = [discord.SelectOption(label="No starters available", value="none")]
         bench_select = discord.ui.Select(
             placeholder="Select Player to Bench...",
-            options=starter_options,
+            options=bench_opts,
             min_values=1,
             max_values=1,
-            custom_id="bench_select"
+            custom_id="bench_select",
+            disabled=not self.starters,
         )
         bench_select.callback = self.on_bench_select
         self.add_item(bench_select)
-        
-        # Reserve Dropdown
-        reserve_options = []
-        if not self.reserves:
-            reserve_options.append(discord.SelectOption(label="No reserves available", value="none"))
+
+        if self.reserves:
+            reserve_opts = rebuild_select_options(
+                self.reserves,
+                self.selected_reserve_id,
+                label_fn=lambda c: c["name"],
+                description_fn=lambda c: f"{c['position']} | {c['overall']} OVR",
+            )
         else:
-            for card in self.reserves:
-                reserve_options.append(
-                    discord.SelectOption(
-                        label=card["name"],
-                        description=f"{card['position']} | {card['overall']} OVR",
-                        value=card["id"]
-                    )
-                )
-                
+            reserve_opts = [discord.SelectOption(label="No reserves available", value="none")]
         start_select = discord.ui.Select(
             placeholder="Select Player to Start...",
-            options=reserve_options,
+            options=reserve_opts,
             min_values=1,
             max_values=1,
             custom_id="start_select",
-            disabled=(len(self.reserves) == 0)
+            disabled=(len(self.reserves) == 0),
         )
         start_select.callback = self.on_start_select
         self.add_item(start_select)
@@ -386,6 +376,9 @@ class SquadSwapView(discord.ui.View):
             return False
         return True
 
+    async def on_timeout(self) -> None:
+        await disable_view_on_timeout(self)
+
     def get_embed(self) -> discord.Embed:
         embed = discord.Embed(
             title="🔁 Swap Players",
@@ -405,6 +398,7 @@ class SquadSwapView(discord.ui.View):
     async def on_bench_select(self, interaction: discord.Interaction) -> None:
         self.selected_starter_id = interaction.data["values"][0]
         self.update_confirm_button()
+        self.setup_components()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
     async def on_start_select(self, interaction: discord.Interaction) -> None:
@@ -412,6 +406,7 @@ class SquadSwapView(discord.ui.View):
         if self.selected_reserve_id == "none":
             self.selected_reserve_id = None
         self.update_confirm_button()
+        self.setup_components()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
     def update_confirm_button(self) -> None:
@@ -420,36 +415,47 @@ class SquadSwapView(discord.ui.View):
     async def on_back(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         club_name, formation, assignments, reserves_count, is_locked = await fetch_squad_data(self.user_id)
+        players_list = get_players_list_for_pitch(formation, assignments)
+        pitch_file = await generate_squad_pitch(formation, players_list)
+        
         self.hub_view.club_name = club_name
         self.hub_view.formation = formation
         self.hub_view.assignments = assignments
         self.hub_view.reserves_count = reserves_count
         self.hub_view.is_locked = is_locked
         self.hub_view.setup_buttons()
-        await interaction.edit_original_response(embed=build_hub_embed(club_name, formation, assignments, reserves_count, is_locked), view=self.hub_view)
+        await interaction.edit_original_response(embed=build_hub_embed(club_name, formation, assignments, reserves_count, is_locked), attachments=[pitch_file], view=self.hub_view)
 
     async def on_confirm(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         
         try:
             db = await get_client()
-            
+            lock_msg = await assert_not_in_match(db, self.user_id)
+            if lock_msg:
+                await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
+                return
+
             card_to_slot = {card["id"]: slot for slot, card in self.hub_view.assignments.items()}
             slot = card_to_slot.get(self.selected_starter_id)
-            
             if not slot:
                 raise ValueError("Could not find the squad slot of the selected starter.")
-                
-            # Perform swap atomically
-            await db.table("squad_assignments").delete().eq("discord_id", self.user_id).eq("position_slot", slot).execute()
-            await db.table("squad_assignments").insert({
-                "discord_id": self.user_id,
-                "position_slot": slot,
-                "player_card_id": self.selected_reserve_id
+
+            reserve_res = await db.table("player_cards").select("id").eq("id", self.selected_reserve_id).eq("owner_id", self.user_id).maybe_single().execute()
+            if not reserve_res or not reserve_res.data:
+                raise ValueError("Reserve player no longer available.")
+
+            await db.rpc("swap_squad_players", {
+                "p_discord_id": self.user_id,
+                "p_slot": slot,
+                "p_reserve_card_id": self.selected_reserve_id,
             }).execute()
             
             # Refresh hub and transition
             club_name, formation, assignments, reserves_count, is_locked = await fetch_squad_data(self.user_id)
+            players_list = get_players_list_for_pitch(formation, assignments)
+            pitch_file = await generate_squad_pitch(formation, players_list)
+            
             self.hub_view.club_name = club_name
             self.hub_view.formation = formation
             self.hub_view.assignments = assignments
@@ -466,7 +472,7 @@ class SquadSwapView(discord.ui.View):
             embed = build_hub_embed(club_name, formation, assignments, reserves_count, is_locked)
             embed.description = f"✅ {success_msg}"
             
-            await interaction.edit_original_response(embed=embed, view=self.hub_view)
+            await interaction.edit_original_response(embed=embed, attachments=[pitch_file], view=self.hub_view)
             
         except Exception as e:
             logger.exception("Failed to swap players.")
@@ -527,24 +533,39 @@ class SquadRosterView(discord.ui.View):
         await interaction.response.defer()
         self.current_page -= 1
         self.setup_buttons()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
+        
+        start = self.current_page * self.per_page
+        end = start + self.per_page
+        page_cards = self.cards[start:end]
+        roster_file = await generate_roster_grid(page_cards)
+        
+        await interaction.edit_original_response(embed=self.get_embed(), view=self, attachments=[roster_file])
 
     async def on_next(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         self.current_page += 1
         self.setup_buttons()
-        await interaction.edit_original_response(embed=self.get_embed(), view=self)
+        
+        start = self.current_page * self.per_page
+        end = start + self.per_page
+        page_cards = self.cards[start:end]
+        roster_file = await generate_roster_grid(page_cards)
+        
+        await interaction.edit_original_response(embed=self.get_embed(), view=self, attachments=[roster_file])
 
     async def on_back(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         club_name, formation, assignments, reserves_count, is_locked = await fetch_squad_data(self.user_id)
+        players_list = get_players_list_for_pitch(formation, assignments)
+        pitch_file = await generate_squad_pitch(formation, players_list)
+        
         self.hub_view.club_name = club_name
         self.hub_view.formation = formation
         self.hub_view.assignments = assignments
         self.hub_view.reserves_count = reserves_count
         self.hub_view.is_locked = is_locked
         self.hub_view.setup_buttons()
-        await interaction.edit_original_response(embed=build_hub_embed(club_name, formation, assignments, reserves_count, is_locked), view=self.hub_view)
+        await interaction.edit_original_response(embed=build_hub_embed(club_name, formation, assignments, reserves_count, is_locked), attachments=[pitch_file], view=self.hub_view)
 
 
 class SquadCog(commands.Cog):
@@ -561,10 +582,13 @@ class SquadCog(commands.Cog):
         try:
             club_name, formation, assignments, reserves_count, is_locked = await fetch_squad_data(interaction.user.id)
             
+            players_list = get_players_list_for_pitch(formation, assignments)
+            pitch_file = await generate_squad_pitch(formation, players_list)
+            
             view = SquadHubView(interaction.user.id, club_name, formation, assignments, reserves_count, is_locked)
             embed = build_hub_embed(club_name, formation, assignments, reserves_count, is_locked)
             
-            msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            msg = await interaction.followup.send(embed=embed, file=pitch_file, view=view, ephemeral=True)
             view.message = msg
         except Exception as e:
             logger.exception("Failed to load squad hub.")

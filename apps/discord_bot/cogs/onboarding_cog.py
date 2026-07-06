@@ -55,6 +55,15 @@ class ClubSetupModal(discord.ui.Modal, title="Set Up Your Club"):
         self.submitted_manager = self.manager_name.value.strip()
         await interaction.response.defer()
 
+
+def _valid_club_details(club: str, manager: str) -> str | None:
+    if not club:
+        return "Club name cannot be empty or whitespace only."
+    if not manager:
+        return "Manager name cannot be empty or whitespace only."
+    return None
+
+
 class WelcomeView(discord.ui.View):
     def __init__(self, owner_id: int, thread_manager: ThreadManager, db: Client, user: discord.Member | discord.User) -> None:
         super().__init__(timeout=3600)  # 60-minute view timeout
@@ -63,6 +72,7 @@ class WelcomeView(discord.ui.View):
         self.db = db
         self.user = user
         self.message: discord.Message | None = None
+        self._setup_started = False
 
     async def on_timeout(self) -> None:
         for item in self.children:
@@ -81,23 +91,39 @@ class WelcomeView(discord.ui.View):
                 "This setup wizard belongs to another player.", ephemeral=True
             )
             return
+        if self._setup_started:
+            await interaction.response.send_message("Setup already in progress.", ephemeral=True)
+            return
+        self._setup_started = True
 
         modal = ClubSetupModal()
         await interaction.response.send_modal(modal)
         await modal.wait()
 
-        # Present confirmation view
+        err = _valid_club_details(modal.submitted_club, modal.submitted_manager)
+        if err:
+            self._setup_started = False
+            await interaction.followup.send(embed=error_embed(err), ephemeral=True)
+            return
+
+        if self.message:
+            button.disabled = True
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
         view = ConfirmationView(
             owner_id=self.owner_id,
             thread_manager=self.thread_manager,
             club_name=modal.submitted_club,
             manager_name=modal.submitted_manager,
             db=self.db,
-            user=self.user
+            user=self.user,
         )
         confirm_msg = await interaction.followup.send(
             embed=club_confirmation_embed(modal.submitted_club, modal.submitted_manager),
-            view=view
+            view=view,
         )
         view.message = confirm_msg
         self.stop()
@@ -145,6 +171,19 @@ class ConfirmationView(discord.ui.View):
                 item.disabled = True
         await interaction.response.edit_message(view=self)
 
+        existing = await self.db.table("players").select("discord_id").eq("discord_id", self.owner_id).maybe_single().execute()
+        if existing and existing.data:
+            await interaction.followup.send(
+                embed=error_embed("You're already registered! This setup room will close shortly."),
+                ephemeral=True,
+            )
+            return
+
+        err = _valid_club_details(self.club_name, self.manager_name)
+        if err:
+            await interaction.followup.send(embed=error_embed(err), ephemeral=True)
+            return
+
         # Run animation
         await _run_recruitment_animation(
             message=self.message,
@@ -170,7 +209,11 @@ class ConfirmationView(discord.ui.View):
         await interaction.response.send_modal(modal)
         await modal.wait()
 
-        # Update details and refresh confirmation
+        err = _valid_club_details(modal.submitted_club, modal.submitted_manager)
+        if err:
+            await interaction.followup.send(embed=error_embed(err), ephemeral=True)
+            return
+
         self.club_name = modal.submitted_club
         self.manager_name = modal.submitted_manager
 
@@ -244,12 +287,13 @@ async def _run_recruitment_animation(
 
     except Exception as e:
         logger.exception("Onboarding failed due to an error.")
+        msg = str(e)
+        if "ALREADY_REGISTERED" in msg:
+            user_msg = "You're already registered as a manager. This setup room will close shortly."
+        else:
+            user_msg = f"Setup failed: {msg}\n\nThis setup room will close in 15 seconds to prevent orphaned threads."
         try:
-            err_msg = await thread.send(
-                embed=error_embed(
-                    f"Setup failed: {str(e)}\n\nThis setup room will close in 15 seconds to prevent orphaned threads."
-                )
-            )
+            err_msg = await thread.send(embed=error_embed(user_msg))
             await thread_manager.delete_thread_after(thread, delay_seconds=15, countdown_message=err_msg)
         except Exception:
             pass

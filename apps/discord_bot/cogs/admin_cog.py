@@ -340,45 +340,84 @@ class RoleSearchModal(discord.ui.Modal, title="Configure Role"):
         await show_announcements_menu(interaction, self.guild_id, self.owner_id)
 
 class ChannelSelectView(BaseAdminView):
-    def __init__(self, owner_id: int, guild_id: int, guild: discord.Guild | None) -> None:
+    def __init__(self, owner_id: int, guild_id: int, guild: discord.Guild | None, page: int = 0) -> None:
         super().__init__(owner_id)
         self.guild_id = guild_id
+        self.page = page
 
-        options = []
+        eligible_channels = []
         if guild:
             for channel in guild.text_channels:
                 permissions = channel.permissions_for(guild.me)
                 if permissions.view_channel and permissions.send_messages:
-                    options.append(
-                        discord.SelectOption(
-                            label=f"#{channel.name}",
-                            value=str(channel.id),
-                            description=f"ID: {channel.id}"
-                        )
-                    )
-                if len(options) >= 25:
-                    break
+                    eligible_channels.append(channel)
+
+        total_channels = len(eligible_channels)
+        start = page * 25
+        end = start + 25
+        page_channels = eligible_channels[start:end]
+
+        options = []
+        for channel in page_channels:
+            options.append(
+                discord.SelectOption(
+                    label=f"#{channel.name}",
+                    value=str(channel.id),
+                    description=f"ID: {channel.id}"
+                )
+            )
 
         if not options:
             options.append(
                 discord.SelectOption(
-                    label="No eligible channels found",
+                    label="No eligible channels found" if page == 0 else "No more channels on this page",
                     value="none",
-                    description="Make sure the bot has permissions in text channels."
+                    description="Make sure the bot has permissions in text channels." if page == 0 else "Go back to the previous page."
                 )
             )
 
-        select = discord.ui.Select(placeholder="Select Announcement Channel...", options=options)
+        total_pages = (total_channels - 1) // 25 + 1 if total_channels > 0 else 1
+        select = discord.ui.Select(
+            placeholder=f"Select Announcement Channel (Page {page + 1}/{total_pages})...",
+            options=options
+        )
         select.callback = self.channel_select_callback
         self.add_item(select)
 
-        search_btn = discord.ui.Button(style=discord.ButtonStyle.primary, label="🔍 Enter Name/ID")
+        # Pagination navigation
+        if page > 0:
+            prev_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Prev Page", row=1)
+            prev_btn.callback = self.prev_page_callback
+            self.add_item(prev_btn)
+
+        if end < total_channels:
+            next_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="Next Page ➡️", row=1)
+            next_btn.callback = self.next_page_callback
+            self.add_item(next_btn)
+
+        search_btn = discord.ui.Button(style=discord.ButtonStyle.primary, label="🔍 Enter Name/ID", row=1)
         search_btn.callback = self.search_callback
         self.add_item(search_btn)
 
-        cancel_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Cancel")
+        cancel_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Cancel", row=1)
         cancel_btn.callback = self.cancel_callback
         self.add_item(cancel_btn)
+
+    async def prev_page_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        guild = interaction.client.get_guild(self.guild_id)
+        view = ChannelSelectView(self.owner_id, self.guild_id, guild, page=self.page - 1)
+        embed = discord.Embed(title="📢 Configure Channel", description="Choose the text channel for announcements:", color=0x00FF87)
+        msg = await interaction.edit_original_response(embed=embed, view=view)
+        view.message = msg
+
+    async def next_page_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        guild = interaction.client.get_guild(self.guild_id)
+        view = ChannelSelectView(self.owner_id, self.guild_id, guild, page=self.page + 1)
+        embed = discord.Embed(title="📢 Configure Channel", description="Choose the text channel for announcements:", color=0x00FF87)
+        msg = await interaction.edit_original_response(embed=embed, view=view)
+        view.message = msg
 
     async def search_callback(self, interaction: discord.Interaction):
         modal = ChannelSearchModal(self.owner_id, self.guild_id, self)
@@ -413,42 +452,82 @@ class ChannelSelectView(BaseAdminView):
         await show_announcements_menu(interaction, self.guild_id, self.owner_id)
 
 class RoleSelectView(BaseAdminView):
-    def __init__(self, owner_id: int, guild_id: int, guild: discord.Guild | None) -> None:
+    def __init__(self, owner_id: int, guild_id: int, guild: discord.Guild | None, page: int = 0) -> None:
         super().__init__(owner_id)
         self.guild_id = guild_id
+        self.page = page
 
-        options = []
+        roles = []
         if guild:
             roles = [r for r in guild.roles if not r.is_default()]
-            for role in roles[:25]:
-                options.append(
-                    discord.SelectOption(
-                        label=role.name,
-                        value=str(role.id),
-                        description=f"ID: {role.id}"
-                    )
+            roles.reverse()  # Show highest-positioned roles first
+
+        total_roles = len(roles)
+        start = page * 25
+        end = start + 25
+        page_roles = roles[start:end]
+
+        options = []
+        for role in page_roles:
+            options.append(
+                discord.SelectOption(
+                    label=role.name,
+                    value=str(role.id),
+                    description=f"ID: {role.id}"
                 )
+            )
 
         if not options:
             options.append(
                 discord.SelectOption(
-                    label="No roles found",
+                    label="No roles found" if page == 0 else "No more roles on this page",
                     value="none",
-                    description="Create a role in the server first."
+                    description="Create a role in the server first." if page == 0 else "Go back to the previous page."
                 )
             )
 
-        select = discord.ui.Select(placeholder="Select Announcement Role...", options=options)
+        total_pages = (total_roles - 1) // 25 + 1 if total_roles > 0 else 1
+        select = discord.ui.Select(
+            placeholder=f"Select Announcement Role (Page {page + 1}/{total_pages})...",
+            options=options
+        )
         select.callback = self.role_select_callback
         self.add_item(select)
 
-        search_btn = discord.ui.Button(style=discord.ButtonStyle.primary, label="🔍 Enter Name/ID")
+        # Pagination navigation
+        if page > 0:
+            prev_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Prev Page", row=1)
+            prev_btn.callback = self.prev_page_callback
+            self.add_item(prev_btn)
+
+        if end < total_roles:
+            next_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="Next Page ➡️", row=1)
+            next_btn.callback = self.next_page_callback
+            self.add_item(next_btn)
+
+        search_btn = discord.ui.Button(style=discord.ButtonStyle.primary, label="🔍 Enter Name/ID", row=1)
         search_btn.callback = self.search_callback
         self.add_item(search_btn)
 
-        cancel_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Cancel")
+        cancel_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Cancel", row=1)
         cancel_btn.callback = self.cancel_callback
         self.add_item(cancel_btn)
+
+    async def prev_page_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        guild = interaction.client.get_guild(self.guild_id)
+        view = RoleSelectView(self.owner_id, self.guild_id, guild, page=self.page - 1)
+        embed = discord.Embed(title="📢 Configure Role", description="Choose the target role for announcement mentions:", color=0x00FF87)
+        msg = await interaction.edit_original_response(embed=embed, view=view)
+        view.message = msg
+
+    async def next_page_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        guild = interaction.client.get_guild(self.guild_id)
+        view = RoleSelectView(self.owner_id, self.guild_id, guild, page=self.page + 1)
+        embed = discord.Embed(title="📢 Configure Role", description="Choose the target role for announcement mentions:", color=0x00FF87)
+        msg = await interaction.edit_original_response(embed=embed, view=view)
+        view.message = msg
 
     async def search_callback(self, interaction: discord.Interaction):
         modal = RoleSearchModal(self.owner_id, self.guild_id, self)

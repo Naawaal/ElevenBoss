@@ -340,6 +340,8 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-09b:** Interactive Touchline buttons (`[ Attack ]`, `[ Defend ]`, `[ Balanced ]`) allow managers to alter match math (momentum and ratings weight) mid-game.
 - **AC-09c:** The match simulator maintains a `MatchState` object containing scores, minute, momentum, and dynamic context tags (e.g. `tied`, `late`, `high_momentum`).
 - **AC-09d:** Commentary lines are dynamically generated using a JSON bank (`commentary_bank.json`) which filters and matches context tags, supporting placeholders for team/player actors.
+  - **Commentary Markdown Formatting:** Commentary rendering shifts to "Data-Side Formatting". The engine will wrap dynamic variables (e.g. `{actor}`, `{team}`) in Markdown double-asterisks (`**`) during dictionary injection, rather than using regex or post-processing on the final output. If the value is a string, any existing `**` formatting is stripped beforehand to prevent double-bolding (`****`). Non-string values are left untouched.
+  - **Template Bold Policy:** Dramatic exclamations (e.g. `**GOAL!**`, `**WHAT A SAVE!**`) must be hardcoded directly into the templates in `commentary_bank.json` with markdown bold syntax, while variables/placeholders remain plain.
 - **AC-09e:** Discord ticker updates are paced dynamically using the commentary line's `urgency` value (e.g. longer pauses for high-drama cliffhangers).
 - **AC-09f:** Data transaction safety is preserved: Supabase writes (energy cost, rewards, XP logs, evolutions progress) are strictly executed only after the full match stream terminates.
 
@@ -354,7 +356,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 > **So that** I don't have to remember and execute multiple different commands to train, allocate skills, or evolve my players.
 
 **Acceptance Criteria:**
-- **AC-10a:** Slash command `/development` is introduced, opening the central `DevelopmentHubView` containing three button pathways: `[🏋️ Training Drills]`, `[🧬 Evolutions]`, and `[⭐ Allocate Skills]`.
+- **AC-10a:** Slash command `/development` is introduced, opening the central `DevelopmentHubView` containing four button pathways: `[🏋️ Training Drills]`, `[🧬 Evolutions]`, `[⭐ Allocate Skills]`, and `[🔥 Card Fusion]` (sacrifice a bench card to level up a keeper via `train_with_fodder`).
 - **AC-10b:** State-swapping UI: Clicking any button updates/edits the existing dashboard message without spawning a new one or requiring the user to type other commands.
 - **AC-10c:** A back-navigation button `[⬅️ Back to Hub]` is present on all sub-menu screens to allow returns to the main dashboard.
 - **AC-10d:** Quick-action buttons on `/player-profile` (`[Start Evolution]` and `[Level Up]`) correctly route the user by opening the pre-filtered sub-menu of the `/development` flow for that specific card.
@@ -556,5 +558,104 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **Draw**: +5 LP, `win_coins / 3` (integer division) awarded.
 - **Loss**: -10 LP (clamped to 0 minimum), `15` coins consolation.
 
+---
+
+## 20. Squad Pitch Graphic Generation (Pillow Visuals)
+
+### US-20: Dynamic Football Pitch Squad Visualization
+> **As a** registered manager,
+> **I want to** see a beautifully rendered football pitch showing my squad's active tactical formation and starting XI,
+> **So that** I have a visually immersive view of my lineup and team.
+
+**Acceptance Criteria:**
+- **GIVEN** a user runs `/squad` or updates their squad formation/lineup,
+- **THEN** the bot must generate a vertical pitch image on the fly using Pillow (PIL) containing:
+  - Alternating dark/light green grass bands or a custom pitch background.
+  - Rectangular player boxes positioned at the formation's relative coordinates.
+  - Player OVR rating (bold font) and Name (regular font) centered in each box.
+  - Positional color-coding for OVR ratings (e.g. gold for 80+, silver for 70-79).
+- **AND** the image must be sent directly as a `discord.File` without writing to disk.
+- **AND** the image must update dynamically when editing/swapping players or changing formations in the `/squad` menu.
+
+---
+
+## 21. Roster Grid Graphic Generation (Pillow Visuals)
+
+### US-21: Dynamic Roster Graphical Grid Visualization
+> **As a** registered manager,
+> **I want to** see my player collection roster displayed as a visually stunning grid of cards,
+> **So that** my player collection feels premium and immersive.
+
+**Acceptance Criteria:**
+- **GIVEN** a user opens the Full Roster menu via `/squad` or navigates the roster pages,
+- **THEN** the bot must generate a 4x2 grid of cards showing up to 8 players on the current page using Pillow (PIL).
+- **AND** each card in the grid must be styled with:
+  - A premium dark slate background.
+  - A 2px colored border representing its rarity (Gold: Legendary, Purple: Epic, Blue: Rare, Silver/Gray: Common).
+  - The player's overall rating (OVR) and position (bold font) color-coded by rarity.
+  - The player's name (regular font) centered.
+  - The player's level (Lvl) and card ID (subtle gray font) at the bottom.
+- **AND** the image must be sent directly as a `discord.File` without writing to disk.
+- **AND** the image must update dynamically on pagination (Prev/Next buttons).
+
+---
+
+## 22. Pre-Launch Hardening (Audit Remediation)
+
+### US-22: Security, Integrity & UX Hardening
+
+> **As a** platform operator,
+> **I want** all economy, roster, and match flows enforced at the database layer with consistent UI behavior,
+> **So that** v1.0.0 launches without exploits, data corruption, or silent failures.
+
+**Acceptance Criteria:**
+
+#### AC-22a: Stat Drill RPCs
+- **GIVEN** a manager opens Stat Training in `/development`,
+- **THEN** `sync_training_energy` and `process_stat_drill` RPCs exist and atomically enforce energy, coins, daily limits, match locks, and stat/OVR caps.
+
+#### AC-22b: Server-Side Agent Sale Pricing
+- **GIVEN** a manager confirms an agent sale,
+- **THEN** `process_agent_sale` recomputes the offer from live card `overall` and `rarity` (client value ignored) and rejects XI, training, evolution, and match-locked cards.
+
+#### AC-22c: Match Lock on Roster Mutations
+- **GIVEN** a manager has a row in `match_locks`,
+- **THEN** squad swaps, formation changes, training, fusion, skill allocation, evolution claims, and sales are blocked until the match ends.
+
+#### AC-22d: Atomic Squad RPCs
+- **GIVEN** a formation change or bench swap,
+- **THEN** a single RPC performs the mutation with row locks and revalidates ownership; partial XI states cannot persist.
+
+#### AC-22e: Registration Idempotency
+- **GIVEN** duplicate confirm or concurrent `/register` attempts,
+- **THEN** at most one player account is created; whitespace-only club names are rejected.
+
+#### AC-22f: League Window Enforcement
+- **GIVEN** a fixture outside its `window_start`/`window_end`,
+- **THEN** `execute_league_match` rejects play server-side regardless of stale UI.
+
+#### AC-22g: Unified OVR Recalculation
+- **GIVEN** any progression path (drill, fusion, skill, evolution),
+- **THEN** `overall` is derived from weighted stats, playstyles, and `potential` via `recalculate_card_ovr`.
+
+#### AC-22h: Dropdown Selection Persistence
+- **GIVEN** a multi-select hub view,
+- **THEN** after `edit_message`, selected options remain visible (`default=True` rebuild pattern).
+
+#### AC-22i: View Timeouts
+- **GIVEN** any hub sub-view exceeds its timeout,
+- **THEN** components are disabled via `on_timeout`.
+
+#### AC-22j: GK Slot Rule
+- **GIVEN** slot 1 in the starting XI,
+- **THEN** only a `position = 'GK'` card may occupy it after swaps or formation auto-assign.
+
+#### AC-22k: `league_members` Schema
+- **GIVEN** a fresh database migration run,
+- **THEN** `league_members` table exists and league registration succeeds.
+
+#### AC-22l: Deploy-Safe Assets
+- **GIVEN** the bot runs on Linux (Render),
+- **THEN** pitch/roster image generation resolves asset paths relative to the repo root, not a hardcoded Windows path.
 
 
