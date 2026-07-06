@@ -17,7 +17,7 @@ from .engine import (
     calculate_true_ovr,
     apply_match_form,
 )
-from .procedural_generator import generate_player, generate_squad
+from .evolution_tracks import CANCEL_FEE_COINS, EVOLUTION_TRACKS, VALID_TRACK_IDS, track_goal
 
 __all__ = [
     "GameConfig",
@@ -34,4 +34,8 @@ __all__ = [
     "apply_match_form",
     "generate_player",
     "generate_squad",
+    "EVOLUTION_TRACKS",
+    "VALID_TRACK_IDS",
+    "CANCEL_FEE_COINS",
+    "track_goal",
 ]

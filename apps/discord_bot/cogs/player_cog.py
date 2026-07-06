@@ -6,30 +6,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from player_engine import GameConfig, calculate_contract_renewal_cost, format_potential_display
-from apps.discord_bot.db.client import get_client
-from apps.discord_bot.middleware.guard import ensure_registered
-from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
-
-logger = logging.getLogger(__name__)
-
-EVOLUTION_TRACKS = {
-    "pace_boost": {
-        "name": "⚡ Pace Masterclass",
-        "reward_stat": "pac",
-        "reward_val": 5
-    },
-    "shooting_star": {
-        "name": "🎯 Shooting Star",
-        "reward_stat": "sho",
-        "reward_val": 5
-    },
-    "def_wall": {
-        "name": "🧱 Defensive Wall",
-        "reward_stat": "def",
-        "reward_val": 5
-    }
-}
+from player_engine import GameConfig, calculate_contract_renewal_cost, format_potential_display, EVOLUTION_TRACKS
+from apps.discord_bot.cogs.development_cog import make_match_progress_bar, _evo_played, _evo_required, _is_active_evo
 
 async def player_id_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
     try:
@@ -170,32 +148,13 @@ class PlayerProfileView(discord.ui.View):
         try:
             db = await get_client()
 
-            evo_res = await db.table("active_evolutions").select("*").eq("card_id", self.card_id).maybe_single().execute()
+            evo_res = await db.table("active_evolutions").select("*").eq("card_id", self.card_id).eq("status", "active").maybe_single().execute()
             evo = evo_res.data if evo_res else None
-            if not evo or evo["current_progress"] < evo["target_goal"]:
+            if not evo or _evo_played(evo) < _evo_required(evo):
                 await interaction.followup.send(embed=error_embed("Evolution is not complete yet."), ephemeral=True)
                 return
 
             track = EVOLUTION_TRACKS[evo["evolution_id"]]
-
-            card_res = await db.table("player_cards").select(
-                "id, pac, sho, pas, dri, def, phy"
-            ).eq("id", self.card_id).maybe_single().execute()
-            card = card_res.data if card_res else {}
-
-            # #region agent log
-            from apps.discord_bot.cogs.development_cog import (
-                _debug_evolution_log,
-                _evolution_claim_diagnostics,
-            )
-            diag = _evolution_claim_diagnostics(card, evo)
-            _debug_evolution_log(
-                "player_cog.py:claim_evo_callback:pre_rpc",
-                "evolution claim attempt",
-                diag,
-                "A",
-            )
-            # #endregion
 
             res = await db.rpc("claim_evolution_reward", {
                 "p_owner_id": self.owner_id,
@@ -205,15 +164,6 @@ class PlayerProfileView(discord.ui.View):
             new_overall = result.get("new_ovr", 0)
             applied = result.get("reward", track["reward_val"])
             reward_stat = result.get("stat", track["reward_stat"].upper())
-
-            # #region agent log
-            _debug_evolution_log(
-                "player_cog.py:claim_evo_callback:post_rpc",
-                "evolution claim succeeded",
-                {"result": result, "applied_reward": applied},
-                "A",
-            )
-            # #endregion
 
             self.evo_btn.disabled = True
             await interaction.edit_original_response(view=self)
@@ -230,15 +180,7 @@ class PlayerProfileView(discord.ui.View):
 
         except Exception as e:
             logger.exception("Failed to claim evolution rewards.")
-            from apps.discord_bot.cogs.development_cog import _api_message, _debug_evolution_log
-            # #region agent log
-            _debug_evolution_log(
-                "player_cog.py:claim_evo_callback:error",
-                "evolution claim failed",
-                {"error": _api_message(e), "owner_id": self.owner_id, "card_id": self.card_id},
-                "E",
-            )
-            # #endregion
+            from apps.discord_bot.cogs.development_cog import _api_message
             await interaction.followup.send(embed=error_embed(_api_message(e)), ephemeral=True)
 
 
@@ -273,11 +215,11 @@ class PlayerCog(commands.Cog):
             playstyles_str = ", ".join(playstyles) if playstyles else "None"
 
             # 3. Fetch active evolution track
-            evo_res = await db.table("active_evolutions").select("*").eq("card_id", player_id).maybe_single().execute()
+            evo_res = await db.table("active_evolutions").select("*").eq("card_id", player_id).eq("status", "active").maybe_single().execute()
             evo = evo_res.data if evo_res else None
-            
-            has_evo = evo is not None
-            can_claim = has_evo and evo["current_progress"] >= evo["target_goal"]
+
+            has_evo = _is_active_evo(evo)
+            can_claim = has_evo and _evo_played(evo) >= _evo_required(evo)
 
             # XP progress bar
             level, curr_xp, needed_xp = get_xp_progress(card.get("xp", 0))
@@ -332,8 +274,14 @@ class PlayerCog(commands.Cog):
 
             if has_evo:
                 track = EVOLUTION_TRACKS.get(evo["evolution_id"], {"name": "Unknown Evolution"})
-                progress_str = f"📈 **Evolution Track**: {track['name']} ({evo['current_progress']}/{evo['target_goal']} matches)"
-                embed.add_field(name="🧬 Ongoing Evolution Track", value=progress_str, inline=False)
+                played = _evo_played(evo)
+                required = _evo_required(evo)
+                progress_str = (
+                    f"### 🧬 {track['name']}\n"
+                    f"{make_match_progress_bar(played, required)}\n"
+                    f"*Play matches with this player in your starting XI to progress.*"
+                )
+                embed.add_field(name="Evolution In Progress", value=progress_str, inline=False)
 
             view = PlayerProfileView(player_id, interaction.user.id, card["name"], has_evo, can_claim, renewal_cost, card)
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)

@@ -1471,7 +1471,7 @@ class BattleCog(commands.Cog):
                 assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", discord_id).execute()
                 assignments = assignments_res.data or []
                 active_cards = [a["player_cards"] for a in assignments if a.get("player_cards")]
-                
+
                 match_cards = []
                 for c in active_cards:
                     ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", c["id"]).execute()
@@ -1484,10 +1484,10 @@ class BattleCog(commands.Cog):
                             morale=c.get("morale", 80), playstyles=playstyles
                         )
                     )
-                return match_cards
-            
-            c_cards = await get_squad_cards(challenger.id)
-            o_cards = await get_squad_cards(opponent.id)
+                return match_cards, [c["id"] for c in active_cards]
+
+            c_cards, c_card_ids = await get_squad_cards(challenger.id)
+            o_cards, o_card_ids = await get_squad_cards(opponent.id)
             
             if len(c_cards) != 11 or len(o_cards) != 11:
                 error_msg = ""
@@ -1633,6 +1633,10 @@ class BattleCog(commands.Cog):
                 "away_score": state.away_score,
                 "box_score": box_score,
                 "key_events": key_events_list
+            }).execute()
+
+            await db.rpc("tick_evolution_match_progress", {
+                "p_card_ids": c_card_ids + o_card_ids,
             }).execute()
 
             # Edit thread name

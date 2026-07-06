@@ -924,6 +924,12 @@ Challenger: /battle friendly [Opponent]
 * **Boot**: `on_ready` → `recover_interrupted_matches()` replaces blind `match_locks` wipe.
 * **No mid-match checkpoints** in v1 (performance); true commentary resume deferred.
 
+### G. Evolution Lifecycle (v1)
+* **`active_evolutions`** extended with `status` (`active`/`completed`/`cancelled`), `matches_played`, `owner_id`, history retained on claim.
+* **RPCs**: `start_player_evolution`, `cancel_player_evolution` (100 coin fee), `tick_evolution_match_progress`; claim marks `completed` instead of delete.
+* **UI**: Club Evolution Command Center in `/development` → Evolutions; progress bars on profile.
+* **Friendly matches** now tick evolution progress via `tick_evolution_match_progress`.
+
 ### E. Design Decisions (v1.0.0)
 * AC-07 async training slots: **deprecated** in favor of AC-10 stat drills (spec note only).
 * GK required in slot 1: **enforced**.
