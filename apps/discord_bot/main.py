@@ -52,14 +52,7 @@ class ElevenBossBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Failed to load extension {cog}: {e}", exc_info=True)
 
-        # Clear any stale match locks on startup
-        try:
-            from apps.discord_bot.db.client import get_client
-            db = await get_client()
-            await db.table("match_locks").delete().neq("discord_id", 0).execute()
-            logger.info("Cleared stale match locks from database on startup.")
-        except Exception as e:
-            logger.error(f"Failed to clear stale match locks on startup: {e}", exc_info=True)
+        # Match recovery runs in on_ready once Discord is connected.
 
         # Register and start scheduler jobs
         # 1. Passive energy regen (every 5 minutes)
@@ -182,6 +175,12 @@ class ElevenBossBot(commands.Bot):
                 pass
             # #endregion
             logger.error(f"Failed to sync command tree: {e}", exc_info=True)
+
+        try:
+            from apps.discord_bot.core.match_recovery import recover_interrupted_matches
+            await recover_interrupted_matches(self)
+        except Exception as e:
+            logger.error(f"Match recovery failed on startup: {e}", exc_info=True)
 
 def main() -> None:
     token = os.environ.get("DISCORD_TOKEN")

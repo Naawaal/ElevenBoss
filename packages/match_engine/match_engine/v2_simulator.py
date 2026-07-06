@@ -269,6 +269,7 @@ async def stream_match(
     away_squad: list,
     home_name: str,
     away_name: str,
+    rng: random.Random | None = None,
 ) -> AsyncGenerator[dict, None]:
     """
     Async generator that drives the Markov-chain match simulation.
@@ -277,7 +278,8 @@ async def stream_match(
         minute, type, score_update, actor, team  (+optional assister)
     """
     # Thread-safe RNG — never touches global random state
-    rng = random.Random()
+    if rng is None:
+        rng = random.Random()
 
     # Build team state wrappers
     home = MatchTeamState(home_name, home_squad, state.home_rating)
@@ -586,3 +588,19 @@ async def stream_match(
         "actor": "The referee",
         "team": home_name,
     }
+
+
+async def collect_match_events(
+    state: MatchState,
+    home_squad: list,
+    away_squad: list,
+    home_name: str,
+    away_name: str,
+    sim_seed: int,
+) -> tuple[MatchState, list[dict]]:
+    """Run stream_match to completion without Discord delays (recovery / fast-forward)."""
+    rng = random.Random(sim_seed)
+    events: list[dict] = []
+    async for ev in stream_match(state, home_squad, away_squad, home_name, away_name, rng=rng):
+        events.append(ev)
+    return state, events

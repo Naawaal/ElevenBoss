@@ -16,7 +16,20 @@ from match_engine import (
     CommentaryEngine,
     MatchState,
     stream_match,
+    collect_match_events,
     MatchResult
+)
+from apps.discord_bot.core.match_runs import (
+    abandon_run,
+    build_league_snapshot,
+    complete_run,
+    create_ephemeral_run,
+    create_league_run,
+    generate_sim_seed,
+    get_active_fixture_run,
+    league_history_exists,
+    mark_completing,
+    squads_from_snapshot,
 )
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
@@ -533,138 +546,257 @@ async def run_league_match_simulation(
     guild: discord.Guild,
     fixture: dict,
     active_player_id: int | None,
-    handler: IMatchOutputHandler
+    handler: IMatchOutputHandler,
+    *,
+    sim_seed: int | None = None,
+    run_id: str | None = None,
+    recovery: bool = False,
+    silent: bool = False,
 ) -> None:
     home_p = fixture["home"]
     away_p = fixture["away"]
     fixture_id = fixture["id"]
-    
-    # ponytail: energy deducted after successful sim (see end of function)
-    
-    # Load squads & ratings
-    home_squad = []
+
+    if fixture.get("is_played") and not recovery:
+        logger.info("Fixture %s already played; skipping simulation.", fixture_id)
+        return
+
+    home_squad: list[MatchPlayerCard] = []
     home_rating = 60.0
-    home_cards = []
-    if home_p["is_ai"]:
-        home_rating = float(home_p.get("ai_rating") or 60.0)
-        home_squad = [
-            MatchPlayerCard(name="Opponent Striker", position="FWD", overall=int(home_rating)),
-            MatchPlayerCard(name="Opponent Midfielder", position="MID", overall=int(home_rating)),
-            MatchPlayerCard(name="Opponent Defender", position="DEF", overall=int(home_rating)),
-        ]
-    else:
-        assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", fixture["home_team_id"]).execute()
-        assignments = assignments_res.data or []
-        home_cards = [a["player_cards"] for a in assignments if a.get("player_cards")]
-        for c in home_cards:
-            ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", c["id"]).execute()
-            playstyles = [p["playstyle_key"] for p in ps_res.data] if ps_res.data else []
-            home_squad.append(
-                MatchPlayerCard(
-                    name=c["name"], position=c["position"], overall=c["overall"],
-                    pac=c.get("pac", 50), sho=c.get("sho", 50), pas=c.get("pas", 50),
-                    dri=c.get("dri", 50), def_stat=c.get("def", 50), phy=c.get("phy", 50),
-                    morale=c.get("morale", 80), playstyles=playstyles
-                )
-            )
-        if len(home_squad) > 0:
-            home_rating = sum(p.overall for p in home_squad) / len(home_squad)
-        
-    away_squad = []
+    home_cards: list[dict] = []
+    away_squad: list[MatchPlayerCard] = []
     away_rating = 60.0
-    away_cards = []
-    if away_p["is_ai"]:
-        away_rating = float(away_p.get("ai_rating") or 60.0)
-        away_squad = [
-            MatchPlayerCard(name="Opponent Striker", position="FWD", overall=int(away_rating)),
-            MatchPlayerCard(name="Opponent Midfielder", position="MID", overall=int(away_rating)),
-            MatchPlayerCard(name="Opponent Defender", position="DEF", overall=int(away_rating)),
-        ]
+    away_cards: list[dict] = []
+
+    if recovery and run_id:
+        run_res = await db.table("match_runs").select("squad_snapshot").eq("id", run_id).maybe_single().execute()
+        snapshot = (run_res.data or {}).get("squad_snapshot") or {}
+        home_squad, away_squad = squads_from_snapshot(snapshot)
+        home_rating = float(snapshot.get("home_rating", 60.0))
+        away_rating = float(snapshot.get("away_rating", 60.0))
+        home_name = snapshot.get("home_name", home_p["club_name"])
+        away_name = snapshot.get("away_name", away_p["club_name"])
+        home_cards = [{"id": cid} for cid in snapshot.get("home_card_ids", [])]
+        away_cards = [{"id": cid} for cid in snapshot.get("away_card_ids", [])]
     else:
-        assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", fixture["away_team_id"]).execute()
-        assignments = assignments_res.data or []
-        away_cards = [a["player_cards"] for a in assignments if a.get("player_cards")]
-        for c in away_cards:
-            ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", c["id"]).execute()
-            playstyles = [p["playstyle_key"] for p in ps_res.data] if ps_res.data else []
-            away_squad.append(
-                MatchPlayerCard(
-                    name=c["name"], position=c["position"], overall=c["overall"],
-                    pac=c.get("pac", 50), sho=c.get("sho", 50), pas=c.get("pas", 50),
-                    dri=c.get("dri", 50), def_stat=c.get("def", 50), phy=c.get("phy", 50),
-                    morale=c.get("morale", 80), playstyles=playstyles
+        if home_p["is_ai"]:
+            home_rating = float(home_p.get("ai_rating") or 60.0)
+            home_squad = [
+                MatchPlayerCard(name="Opponent Striker", position="FWD", overall=int(home_rating)),
+                MatchPlayerCard(name="Opponent Midfielder", position="MID", overall=int(home_rating)),
+                MatchPlayerCard(name="Opponent Defender", position="DEF", overall=int(home_rating)),
+            ]
+        else:
+            assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", fixture["home_team_id"]).execute()
+            assignments = assignments_res.data or []
+            home_cards = [a["player_cards"] for a in assignments if a.get("player_cards")]
+            for c in home_cards:
+                ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", c["id"]).execute()
+                playstyles = [p["playstyle_key"] for p in ps_res.data] if ps_res.data else []
+                home_squad.append(
+                    MatchPlayerCard(
+                        name=c["name"], position=c["position"], overall=c["overall"],
+                        pac=c.get("pac", 50), sho=c.get("sho", 50), pas=c.get("pas", 50),
+                        dri=c.get("dri", 50), def_stat=c.get("def", 50), phy=c.get("phy", 50),
+                        morale=c.get("morale", 80), playstyles=playstyles
+                    )
                 )
-            )
-        if len(away_squad) > 0:
-            away_rating = sum(p.overall for p in away_squad) / len(away_squad)
+            if home_squad:
+                home_rating = sum(p.overall for p in home_squad) / len(home_squad)
+
+        if away_p["is_ai"]:
+            away_rating = float(away_p.get("ai_rating") or 60.0)
+            away_squad = [
+                MatchPlayerCard(name="Opponent Striker", position="FWD", overall=int(away_rating)),
+                MatchPlayerCard(name="Opponent Midfielder", position="MID", overall=int(away_rating)),
+                MatchPlayerCard(name="Opponent Defender", position="DEF", overall=int(away_rating)),
+            ]
+        else:
+            assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", fixture["away_team_id"]).execute()
+            assignments = assignments_res.data or []
+            away_cards = [a["player_cards"] for a in assignments if a.get("player_cards")]
+            for c in away_cards:
+                ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", c["id"]).execute()
+                playstyles = [p["playstyle_key"] for p in ps_res.data] if ps_res.data else []
+                away_squad.append(
+                    MatchPlayerCard(
+                        name=c["name"], position=c["position"], overall=c["overall"],
+                        pac=c.get("pac", 50), sho=c.get("sho", 50), pas=c.get("pas", 50),
+                        dri=c.get("dri", 50), def_stat=c.get("def", 50), phy=c.get("phy", 50),
+                        morale=c.get("morale", 80), playstyles=playstyles
+                    )
+                )
+            if away_squad:
+                away_rating = sum(p.overall for p in away_squad) / len(away_squad)
+
+        home_name = home_p["club_name"] + (" (AI)" if home_p["is_ai"] else "")
+        away_name = away_p["club_name"] + (" (AI)" if away_p["is_ai"] else "")
+
+    sim_seed = sim_seed if sim_seed is not None else generate_sim_seed()
+    match_rng = random.Random(sim_seed)
+
+    if not recovery and not run_id:
+        existing = await get_active_fixture_run(db, fixture_id)
+        if existing:
+            raise RuntimeError("This fixture is already being played.")
+
+        thread_id = getattr(getattr(handler, "output_thread", None), "id", None)
+        run_row = await create_league_run(
+            db,
+            fixture_id=fixture_id,
+            active_discord_id=active_player_id,
+            sim_seed=sim_seed,
+            squad_snapshot=build_league_snapshot(
+                fixture=fixture,
+                home_name=home_name,
+                away_name=away_name,
+                home_rating=home_rating,
+                away_rating=away_rating,
+                home_squad=home_squad,
+                away_squad=away_squad,
+                home_cards=home_cards,
+                away_cards=away_cards,
+            ),
+            guild_id=guild.id if guild else None,
+            thread_id=thread_id,
+            home_discord_id=int(fixture["home_team_id"]),
+            away_discord_id=int(fixture["away_team_id"]),
+        )
+        run_id = run_row.get("id", run_id)
 
     state = MatchState(home_rating=home_rating, away_rating=away_rating)
     commentary_engine = CommentaryEngine()
-    
-    home_name = home_p["club_name"] + (" (AI)" if home_p["is_ai"] else "")
-    away_name = away_p["club_name"] + (" (AI)" if away_p["is_ai"] else "")
-
     target = await handler.initialize(None, home_name, away_name, fixture["matchday"])
-    
+
     touchline_user_id = active_player_id if active_player_id else 0
-    touchline_view = TouchlineView(state, touchline_user_id) if touchline_user_id else None
-    
-    await handler.start_match(target, home_name, away_name, touchline_view)
+    touchline_view = TouchlineView(state, touchline_user_id) if touchline_user_id and not silent else None
+
+    if not silent:
+        await handler.start_match(target, home_name, away_name, touchline_view)
 
     ticker_history: list[str] = []
     key_events_list: list[dict] = []
-    async for ev in stream_match(state, home_squad, away_squad, home_name, away_name):
+
+    async def _consume_event(ev: dict) -> None:
         variables = {"actor": ev["actor"], "team": ev["team"]}
         comm = commentary_engine.get_commentary(ev["type"], state.context_tags, variables)
         text = comm["text"]
         urgency = comm["urgency"]
-        
         emoji_map = {
             "KICKOFF": "🟢", "HALF_TIME": "⏸️", "GOAL": "⚽", "MISS": "❌",
             "CHANCE": "🎯", "FOUL": "💥", "YELLOW_CARD": "🟨",
             "INJURY": "🩹", "FULL_TIME": "🏁"
         }
         emo = emoji_map.get(ev["type"], "⏱️")
-        
         ticker_history.append(f"{emo} **{ev['minute']}'** - {text}")
-        recent_ticker = ticker_history[-5:]
-        
-        # Accumulate key events
         if ev["type"] in ["KICKOFF", "HALF_TIME", "GOAL", "YELLOW_CARD", "INJURY", "FULL_TIME"]:
             event_entry = {
                 "minute": ev["minute"],
                 "type": ev["type"],
                 "actor": ev["actor"],
                 "team": ev["team"],
-                "text": text
+                "text": text,
             }
             if "assister" in ev:
                 event_entry["assister"] = ev["assister"]
             key_events_list.append(event_entry)
-            
-        await handler.update_ticker(ev, state, recent_ticker, touchline_view)
-        
-        if ev["type"] in ["FULL_TIME", "HALF_TIME"]:
-            sleep_time = 2.0
-        elif urgency == "cliffhanger":
-            sleep_time = 2.0
-        elif urgency == "build_up":
-            sleep_time = 1.5
-        else:
-            sleep_time = 1.0
-            
-        await asyncio.sleep(sleep_time)
+        if not silent:
+            await handler.update_ticker(ev, state, ticker_history[-5:], touchline_view)
+            if ev["type"] in ["FULL_TIME", "HALF_TIME"]:
+                sleep_time = 2.0
+            elif urgency == "cliffhanger":
+                sleep_time = 2.0
+            elif urgency == "build_up":
+                sleep_time = 1.5
+            else:
+                sleep_time = 1.0
+            await asyncio.sleep(sleep_time)
+
+    if silent:
+        state, events = await collect_match_events(
+            state, home_squad, away_squad, home_name, away_name, sim_seed
+        )
+        for ev in events:
+            variables = {"actor": ev["actor"], "team": ev["team"]}
+            comm = commentary_engine.get_commentary(ev["type"], state.context_tags, variables)
+            if ev["type"] in ["KICKOFF", "HALF_TIME", "GOAL", "YELLOW_CARD", "INJURY", "FULL_TIME"]:
+                entry = {
+                    "minute": ev["minute"],
+                    "type": ev["type"],
+                    "actor": ev["actor"],
+                    "team": ev["team"],
+                    "text": comm["text"],
+                }
+                if "assister" in ev:
+                    entry["assister"] = ev["assister"]
+                key_events_list.append(entry)
+    else:
+        async for ev in stream_match(
+            state, home_squad, away_squad, home_name, away_name, rng=match_rng
+        ):
+            await _consume_event(ev)
 
     if touchline_view:
         for child in touchline_view.children:
             child.disabled = True
 
-    if active_player_id:
+    if run_id:
+        await mark_completing(db, run_id)
+
+    if active_player_id and not recovery:
         ap_res = await db.table("players").select("energy").eq("discord_id", active_player_id).maybe_single().execute()
         if ap_res and ap_res.data and ap_res.data["energy"] >= 10:
             await db.table("players").update({
                 "energy": ap_res.data["energy"] - 10
             }).eq("discord_id", active_player_id).execute()
+
+    home_result_str = "win" if state.home_score > state.away_score else ("draw" if state.home_score == state.away_score else "loss")
+    home_coins = 150 if home_result_str == "win" else (50 if home_result_str == "draw" else 0)
+    home_pts = 3 if home_result_str == "win" else (1 if home_result_str == "draw" else 0)
+
+    if not home_p["is_ai"]:
+        if not await league_history_exists(db, fixture["home_team_id"], fixture_id):
+            await db.table("players").update({
+                "coins": home_p["coins"] + home_coins,
+                "league_points": home_p["league_points"] + home_pts,
+                "goal_difference": home_p["goal_difference"] + (state.home_score - state.away_score),
+                "matches_played": home_p["matches_played"] + 1,
+                "wins": home_p["wins"] + (1 if home_result_str == "win" else 0),
+                "draws": home_p["draws"] + (1 if home_result_str == "draw" else 0),
+                "losses": home_p["losses"] + (1 if home_result_str == "loss" else 0)
+            }).eq("discord_id", fixture["home_team_id"]).execute()
+            await db.table("match_history").insert({
+                "player_id": fixture["home_team_id"], "result": home_result_str, "my_rating": home_rating,
+                "opponent_rating": away_rating, "goals_for": state.home_score, "goals_against": state.away_score,
+                "coins_earned": home_coins, "points_earned": home_pts, "fixture_id": fixture_id,
+            }).execute()
+            c_ids = [c["id"] for c in home_cards]
+            if c_ids:
+                await db.rpc("process_match_result", {"p_result": home_result_str, "p_card_ids": c_ids, "p_xp_amount": 15}).execute()
+
+    away_result_str = "win" if state.away_score > state.home_score else ("draw" if state.home_score == state.away_score else "loss")
+    away_coins = 150 if away_result_str == "win" else (50 if away_result_str == "draw" else 0)
+    away_pts = 3 if away_result_str == "win" else (1 if away_result_str == "draw" else 0)
+
+    if not away_p["is_ai"]:
+        if not await league_history_exists(db, fixture["away_team_id"], fixture_id):
+            await db.table("players").update({
+                "coins": away_p["coins"] + away_coins,
+                "league_points": away_p["league_points"] + away_pts,
+                "goal_difference": away_p["goal_difference"] + (state.away_score - state.home_score),
+                "matches_played": away_p["matches_played"] + 1,
+                "wins": away_p["wins"] + (1 if away_result_str == "win" else 0),
+                "draws": away_p["draws"] + (1 if away_result_str == "draw" else 0),
+                "losses": away_p["losses"] + (1 if away_result_str == "loss" else 0)
+            }).eq("discord_id", fixture["away_team_id"]).execute()
+            await db.table("match_history").insert({
+                "player_id": fixture["away_team_id"], "result": away_result_str, "my_rating": away_rating,
+                "opponent_rating": home_rating, "goals_for": state.away_score, "goals_against": state.home_score,
+                "coins_earned": away_coins, "points_earned": away_pts, "fixture_id": fixture_id,
+            }).execute()
+            c_ids = [c["id"] for c in away_cards]
+            if c_ids:
+                await db.rpc("process_match_result", {"p_result": away_result_str, "p_card_ids": c_ids, "p_xp_amount": 15}).execute()
 
     await db.table("league_fixtures").update({
         "home_score": state.home_score,
@@ -673,52 +805,9 @@ async def run_league_match_simulation(
         "played_at": datetime.now(timezone.utc).isoformat()
     }).eq("id", fixture_id).execute()
 
-    home_result_str = "win" if state.home_score > state.away_score else ("draw" if state.home_score == state.away_score else "loss")
-    home_coins = 150 if home_result_str == "win" else (50 if home_result_str == "draw" else 0)
-    home_pts = 3 if home_result_str == "win" else (1 if home_result_str == "draw" else 0)
-    
-    if not home_p["is_ai"]:
-        await db.table("players").update({
-            "coins": home_p["coins"] + home_coins,
-            "league_points": home_p["league_points"] + home_pts,
-            "goal_difference": home_p["goal_difference"] + (state.home_score - state.away_score),
-            "matches_played": home_p["matches_played"] + 1,
-            "wins": home_p["wins"] + (1 if home_result_str == "win" else 0),
-            "draws": home_p["draws"] + (1 if home_result_str == "draw" else 0),
-            "losses": home_p["losses"] + (1 if home_result_str == "loss" else 0)
-        }).eq("discord_id", fixture["home_team_id"]).execute()
-        await db.table("match_history").insert({
-            "player_id": fixture["home_team_id"], "result": home_result_str, "my_rating": home_rating,
-            "opponent_rating": away_rating, "goals_for": state.home_score, "goals_against": state.away_score,
-            "coins_earned": home_coins, "points_earned": home_pts
-        }).execute()
-        c_ids = [c["id"] for c in home_cards]
-        await db.rpc("process_match_result", {"p_result": home_result_str, "p_card_ids": c_ids, "p_xp_amount": 15}).execute()
-        
-    away_result_str = "win" if state.away_score > state.home_score else ("draw" if state.home_score == state.away_score else "loss")
-    away_coins = 150 if away_result_str == "win" else (50 if away_result_str == "draw" else 0)
-    away_pts = 3 if away_result_str == "win" else (1 if away_result_str == "draw" else 0)
-    
-    if not away_p["is_ai"]:
-        await db.table("players").update({
-            "coins": away_p["coins"] + away_coins,
-            "league_points": away_p["league_points"] + away_pts,
-            "goal_difference": away_p["goal_difference"] + (state.away_score - state.home_score),
-            "matches_played": away_p["matches_played"] + 1,
-            "wins": away_p["wins"] + (1 if away_result_str == "win" else 0),
-            "draws": away_p["draws"] + (1 if away_result_str == "draw" else 0),
-            "losses": away_p["losses"] + (1 if away_result_str == "loss" else 0)
-        }).eq("discord_id", fixture["away_team_id"]).execute()
-        await db.table("match_history").insert({
-            "player_id": fixture["away_team_id"], "result": away_result_str, "my_rating": away_rating,
-            "opponent_rating": home_rating, "goals_for": state.away_score, "goals_against": state.home_score,
-            "coins_earned": away_coins, "points_earned": away_pts
-        }).execute()
-        c_ids = [c["id"] for c in away_cards]
-        await db.rpc("process_match_result", {"p_result": away_result_str, "p_card_ids": c_ids, "p_xp_amount": 15}).execute()
-
+    stats_rng = random.Random(sim_seed ^ 0xABCDEF)
     all_human_cards = home_squad if not home_p["is_ai"] else (away_squad if not away_p["is_ai"] else [])
-    motm = random.choice(all_human_cards).name if all_human_cards else "AI Match MVP"
+    motm = stats_rng.choice(all_human_cards).name if all_human_cards else "AI Match MVP"
 
     match_res = MatchResult(
         result="win" if state.home_score != state.away_score else "draw",
@@ -728,8 +817,8 @@ async def run_league_match_simulation(
         opponent_rating=away_rating,
         possession_home=state.home_score * 3 + 45,
         possession_away=100 - (state.home_score * 3 + 45),
-        shots_home=state.home_score + random.randint(3, 8),
-        shots_away=state.away_score + random.randint(3, 8),
+        shots_home=state.home_score + stats_rng.randint(3, 8),
+        shots_away=state.away_score + stats_rng.randint(3, 8),
         motm=motm,
         coins_earned=home_coins if active_player_id == fixture["home_team_id"] else away_coins,
         points_earned=home_pts if active_player_id == fixture["home_team_id"] else away_pts,
@@ -738,7 +827,7 @@ async def run_league_match_simulation(
 
     active_earned = home_coins if active_player_id == fixture["home_team_id"] else away_coins
     active_pts = home_pts if active_player_id == fixture["home_team_id"] else away_pts
-    
+
     await handler.finalize_match(
         result=match_res,
         state=state,
@@ -751,6 +840,9 @@ async def run_league_match_simulation(
         home_team_id=fixture["home_team_id"],
         away_team_id=fixture["away_team_id"]
     )
+
+    if run_id:
+        await complete_run(db, run_id, home_score=state.home_score, away_score=state.away_score)
 
 class ArenaHubView(discord.ui.View):
     def __init__(self, cog: BattleCog, owner_id: int) -> None:
@@ -860,6 +952,7 @@ class BattleCog(commands.Cog):
         view.message = challenge_msg
     async def execute_bot_battle(self, interaction: discord.Interaction) -> None:
         lock_acquired = False
+        bot_run_id: str | None = None
         try:
             db = await get_client()
 
@@ -968,6 +1061,19 @@ class BattleCog(commands.Cog):
             # Initialize target channel
             target = await handler.initialize(interaction, player["club_name"], opp_name)
 
+            sim_seed = generate_sim_seed()
+            run_row = await create_ephemeral_run(
+                db,
+                run_type="bot",
+                active_discord_id=interaction.user.id,
+                home_discord_id=interaction.user.id,
+                away_discord_id=None,
+                sim_seed=sim_seed,
+                guild_id=interaction.guild_id,
+                thread_id=getattr(handler.thread, "id", None),
+            )
+            bot_run_id = run_row.get("id")
+
             touchline_view = TouchlineView(state, interaction.user.id)
             await handler.start_match(target, player["club_name"], opp_name, touchline_view)
 
@@ -977,10 +1083,13 @@ class BattleCog(commands.Cog):
                 MatchPlayerCard(name="Opponent Defender", position="DEF", overall=int(opp_rating)),
             ]
 
+            match_rng = random.Random(sim_seed)
             # Commentary Streaming Loop
             ticker_history: list[str] = []
-            
-            async for ev in stream_match(state, match_cards, opp_squad, player["club_name"], opp_name):
+
+            async for ev in stream_match(
+                state, match_cards, opp_squad, player["club_name"], opp_name, rng=match_rng
+            ):
                 variables = {
                     "actor": ev["actor"],
                     "team": ev["team"]
@@ -1118,8 +1227,12 @@ class BattleCog(commands.Cog):
                 home_team_id=interaction.user.id,
                 away_team_id=0
             )
+            if bot_run_id:
+                await complete_run(db, bot_run_id, home_score=state.home_score, away_score=state.away_score)
         except Exception as e:
             logger.exception("Failed to simulate match.")
+            if bot_run_id:
+                await abandon_run(db, bot_run_id)
             if interaction.response.is_done():
                 await interaction.channel.send(embed=error_embed(f"An error occurred: {str(e)}"))
             else:
@@ -1155,6 +1268,14 @@ class BattleCog(commands.Cog):
                 
             if f["is_played"]:
                 await interaction.followup.send(embed=error_embed("This fixture has already been played."), ephemeral=True)
+                return
+
+            active_run = await get_active_fixture_run(db, fixture_id)
+            if active_run:
+                await interaction.followup.send(
+                    embed=error_embed("This fixture is already being played. Try again shortly."),
+                    ephemeral=True,
+                )
                 return
 
             if not _fixture_in_window(f):
@@ -1306,6 +1427,7 @@ class BattleCog(commands.Cog):
         invitation_msg: discord.Message
     ) -> None:
         db = await get_client()
+        friendly_run_id: str | None = None
         
         locks_res = await db.table("match_locks").select("discord_id").in_("discord_id", [challenger.id, opponent.id]).execute()
         if locks_res.data:
@@ -1393,11 +1515,27 @@ class BattleCog(commands.Cog):
             
             ticker_msg = await thread.send(embed=init_embed)
 
+            sim_seed = generate_sim_seed()
+            run_row = await create_ephemeral_run(
+                db,
+                run_type="friendly",
+                active_discord_id=challenger.id,
+                home_discord_id=challenger.id,
+                away_discord_id=opponent.id,
+                sim_seed=sim_seed,
+                guild_id=invitation_msg.guild.id if invitation_msg.guild else None,
+                thread_id=thread.id,
+            )
+            friendly_run_id = run_row.get("id")
+            match_rng = random.Random(sim_seed)
+
             # Ticker Streaming Loop
             ticker_history: list[str] = []
             key_events_list: list[dict] = []
-            
-            async for ev in stream_match(state, c_cards, o_cards, c_player["club_name"], o_player["club_name"]):
+
+            async for ev in stream_match(
+                state, c_cards, o_cards, c_player["club_name"], o_player["club_name"], rng=match_rng
+            ):
                 variables = {
                     "actor": ev["actor"],
                     "team": ev["team"]
@@ -1515,8 +1653,13 @@ class BattleCog(commands.Cog):
 
             asyncio.create_task(archive_friendly_thread(thread, 120.0))
 
+            if friendly_run_id:
+                await complete_run(db, friendly_run_id, home_score=state.home_score, away_score=state.away_score)
+
         except Exception as e:
             logger.exception("Error during friendly match execution.")
+            if friendly_run_id:
+                await abandon_run(db, friendly_run_id)
             await thread.send(embed=error_embed(f"An error occurred during friendly match execution: {str(e)}"))
         finally:
             # Release Locks

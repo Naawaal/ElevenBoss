@@ -915,6 +915,14 @@ Challenger: /battle friendly [Opponent]
 ### D. Migrations
 * `015_hardening_schema.sql` — `league_members`, training energy columns, constraints
 * `016_hardening_rpcs.sql` — RPC rewrites and new functions
+* `019_match_runs.sql` — durable `match_runs` table, fixture-level active-run lock, `match_history.fixture_id` idempotency
+
+### F. Match Restart Recovery (v1)
+* **`match_runs`** row created at kickoff (one DB write): `sim_seed`, frozen `squad_snapshot`, Discord thread IDs.
+* **League**: interrupted runs fast-forward via seeded `collect_match_events`; rewards applied before `is_played`; unique active run per fixture.
+* **Bot / Friendly**: interrupted runs abandoned on boot; thread notice + DM; no rewards (energy not spent at kickoff).
+* **Boot**: `on_ready` → `recover_interrupted_matches()` replaces blind `match_locks` wipe.
+* **No mid-match checkpoints** in v1 (performance); true commentary resume deferred.
 
 ### E. Design Decisions (v1.0.0)
 * AC-07 async training slots: **deprecated** in favor of AC-10 stat drills (spec note only).

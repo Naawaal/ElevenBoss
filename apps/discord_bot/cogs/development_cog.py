@@ -686,12 +686,23 @@ class EvolutionsSubView(discord.ui.View):
             }).execute()
             result = res.data or {}
             track = EVOLUTION_TRACKS[self.active_evo["evolution_id"]]
+            applied = result.get("reward", track["reward_val"])
+            reward_stat = result.get("stat", track["reward_stat"].upper())
+
+            # #region agent log
+            _debug_evolution_log(
+                "development_cog.py:claim_reward_callback:post_rpc",
+                "evolution claim succeeded",
+                {"result": result, "applied_reward": applied},
+                "A",
+            )
+            # #endregion
 
             await interaction.followup.send(
                 embed=success_embed(
                     f"🧬 **Evolution Completed!**\n\n"
                     f"Claimed rewards for **{self.card['name']}**:\n"
-                    f"• **+{track['reward_val']} {track['reward_stat'].upper()}**\n"
+                    f"• **+{applied} {reward_stat}**\n"
                     f"• New Overall: **{result.get('new_ovr', self.card['overall'])} OVR**!"
                 ),
                 ephemeral=True

@@ -203,6 +203,17 @@ class PlayerProfileView(discord.ui.View):
             }).execute()
             result = res.data or {}
             new_overall = result.get("new_ovr", 0)
+            applied = result.get("reward", track["reward_val"])
+            reward_stat = result.get("stat", track["reward_stat"].upper())
+
+            # #region agent log
+            _debug_evolution_log(
+                "player_cog.py:claim_evo_callback:post_rpc",
+                "evolution claim succeeded",
+                {"result": result, "applied_reward": applied},
+                "A",
+            )
+            # #endregion
 
             self.evo_btn.disabled = True
             await interaction.edit_original_response(view=self)
@@ -211,7 +222,7 @@ class PlayerProfileView(discord.ui.View):
                 embed=success_embed(
                     f"🧬 **Evolution Completed!**\n\n"
                     f"**{self.card_name}** achieved the evolution goals!\n"
-                    f"• Reward: `+{track['reward_val']} {track['reward_stat'].upper()}`\n"
+                    f"• Reward: `+{applied} {reward_stat}`\n"
                     f"• Overall Rating: **{new_overall} OVR**"
                 ),
                 ephemeral=True

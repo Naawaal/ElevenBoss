@@ -210,6 +210,7 @@ async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> in
     logger.info(f"[Trace] [auto_sim_expired_fixtures] Released lock for guild {guild_id}.")
 
     from apps.discord_bot.cogs.battle_cog import run_league_match_simulation, LeagueMatchHandler
+    from apps.discord_bot.core.match_runs import get_active_fixture_run
 
     simulated_count = 0
     for f in fixtures:
@@ -218,6 +219,9 @@ async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> in
             continue
         window_end = datetime.fromisoformat(window_end_val.replace("Z", "+00:00"))
         if now > window_end:
+            if await get_active_fixture_run(db, f["id"]):
+                logger.info("Skipping auto-sim for fixture %s — active match run", f["id"])
+                continue
             try:
                 handler = LeagueMatchHandler(thread, fixture_id=f["id"], season_id=f["season_id"])
                 await run_league_match_simulation(
