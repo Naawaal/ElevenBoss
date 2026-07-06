@@ -1,0 +1,13 @@
+{
+  "extraPaths": [
+    "packages/player_engine",
+    "packages/gacha",
+    "packages/match_engine",
+    "packages/economy",
+    "packages/leagues",
+    "packages/training",
+    "packages/energy",
+    "apps/discord_bot"
+  ],
+  "pythonVersion": "3.11"
+}

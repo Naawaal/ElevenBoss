@@ -265,6 +265,7 @@ async def _run_recruitment_animation(
                 "def":         p.def_stat,
                 "phy":         p.phy,
                 "potential":   p.potential,
+                "base_potential": p.potential,
                 "age":         p.age,
             }
             for p in all_players

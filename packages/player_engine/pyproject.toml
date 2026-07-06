@@ -9,3 +9,10 @@ dependencies = [
     "pydantic>=2.0.0",
     "economy"
 ]
+
+[tool.setuptools]
+packages = ["player_engine"]
+py-modules = ["player_generator", "ratings", "bot_club_generator"]
+
+[tool.setuptools.package-dir]
+player_engine = "player_engine"

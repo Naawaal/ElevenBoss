@@ -72,6 +72,7 @@ class GachaCog(commands.Cog):
                     "def": p.def_stat,
                     "phy": p.phy,
                     "potential": p.potential,
+                    "base_potential": p.potential,
                     "age": p.age
                 }
                 for p in pack.players

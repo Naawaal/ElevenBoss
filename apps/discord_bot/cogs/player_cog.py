@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from player_engine import GameConfig, calculate_contract_renewal_cost
+from player_engine import GameConfig, calculate_contract_renewal_cost, format_potential_display
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
@@ -260,11 +260,18 @@ class PlayerCog(commands.Cog):
 
             embed = discord.Embed(
                 title=f"📋 Roster Profile: {card['name']}",
-                description=f"Level **{level}** {card['rarity']} Player Card (OVR **{card['overall']}**)",
+                description=(
+                    f"Level **{level}** {card['rarity']} Player Card (OVR **{card['overall']}**)\n"
+                    f"*Potential (POT) is the maximum OVR this player can reach through training.*"
+                ),
                 color=0x00FF87
             )
             embed.add_field(name="📋 Role Style", value=card.get("role", "Balanced"), inline=True)
-            embed.add_field(name="🎂 Age / Potential", value=f"👴 {card.get('age', 25)} yrs / 📊 {card.get('potential', 85)} POT", inline=True)
+            embed.add_field(
+                name="🎂 Age / Potential",
+                value=format_potential_display(card.get("potential"), card.get("age", 25)),
+                inline=True,
+            )
             embed.add_field(name="😊 Morale Rating", value=f"Morale **{card.get('morale', 80)}/100**", inline=True)
             embed.add_field(name="📈 Level & Experience Progression", value=xp_bar, inline=False)
             

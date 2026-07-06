@@ -18,7 +18,7 @@ def _load_names() -> dict[str, list[str]]:
     with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-from player_engine import calculate_true_ovr
+from player_engine import calculate_true_ovr, generate_potential
 
 # Weights matching POSITION_WEIGHTS in player_engine
 _WEIGHTS = {
@@ -34,24 +34,20 @@ def _make_player(position: str, rarity: str, names: dict[str, list[str]]) -> Gac
     
     first_name = random.choice(names["first"])
     last_name = random.choice(names["last"])
-    
+
     # Generate age
     age_roll = random.random()
     if age_roll < 0.40:
-        age = random.randint(18, 21)
-        potential_gap = random.randint(8, 20)
+        age = random.randint(16, 21)
     elif age_roll < 0.80:
         age = random.randint(22, 27)
-        potential_gap = random.randint(3, 12)
     elif age_roll < 0.95:
         age = random.randint(28, 32)
-        potential_gap = random.randint(1, 5)
     else:
         age = random.randint(33, 36)
-        potential_gap = random.randint(0, 2)
-        
-    potential = min(99, target + potential_gap)
-    
+
+    potential = generate_potential(target, age, rarity, position)
+
     # Roll 6 stats using position weights to create realistic distributions
     weights = _WEIGHTS.get(position, _WEIGHTS["MID"])
     stats = {}

@@ -21,7 +21,7 @@ class GachaPlayer(BaseModel):
     dri: int = Field(50, ge=0, le=99)
     def_stat: int = Field(50, alias="def", ge=0, le=99)
     phy: int = Field(50, ge=0, le=99)
-    potential: int = Field(85, ge=1, le=99)
+    potential: int = Field(..., ge=1, le=99)
     age: int = Field(25, ge=15, le=45)
 
     class Config:

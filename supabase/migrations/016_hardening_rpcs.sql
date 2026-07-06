@@ -639,6 +639,7 @@ DECLARE
     v_card_record RECORD;
     v_card_id UUID;
     v_slot INT := 1;
+    v_pot INT;
 BEGIN
     IF length(trim(p_club_name)) < 1 THEN
         RAISE EXCEPTION 'Club name cannot be empty';
@@ -663,18 +664,29 @@ BEGIN
 
     FOR v_card_record IN SELECT * FROM jsonb_to_recordset(p_cards) AS x(
         name TEXT, position TEXT, rarity TEXT, base_rating INT, overall INT,
-        pac INT, sho INT, pas INT, dri INT, "def" INT, phy INT, potential INT, age INT
+        pac INT, sho INT, pas INT, dri INT, "def" INT, phy INT,
+        potential INT, base_potential INT, age INT
     ) LOOP
+        v_pot := COALESCE(v_card_record.potential, v_card_record.base_potential);
+        IF v_pot IS NULL THEN
+            RAISE EXCEPTION 'Card % missing potential', v_card_record.name;
+        END IF;
+        IF v_pot < v_card_record.overall THEN
+            v_pot := v_card_record.overall;
+        END IF;
+
         INSERT INTO player_cards (
             owner_id, name, position, rarity, base_rating, level, overall,
-            pac, sho, pas, dri, "def", phy, potential, age
+            pac, sho, pas, dri, "def", phy, potential, base_potential, age
         ) VALUES (
             p_discord_id, v_card_record.name, v_card_record.position, v_card_record.rarity,
             v_card_record.base_rating, 1, v_card_record.overall,
             COALESCE(v_card_record.pac, 50), COALESCE(v_card_record.sho, 50),
             COALESCE(v_card_record.pas, 50), COALESCE(v_card_record.dri, 50),
             COALESCE(v_card_record.def, 50), COALESCE(v_card_record.phy, 50),
-            COALESCE(v_card_record.potential, 85), COALESCE(v_card_record.age, 25)
+            v_pot,
+            COALESCE(v_card_record.base_potential, v_pot),
+            COALESCE(v_card_record.age, 25)
         ) RETURNING id INTO v_card_id;
 
         INSERT INTO squad_assignments (discord_id, player_card_id, position_slot)
