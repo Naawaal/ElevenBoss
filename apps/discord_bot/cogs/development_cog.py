@@ -1,7 +1,5 @@
 # apps/discord_bot/cogs/development_cog.py
 from __future__ import annotations
-import json
-import time
 import logging
 import discord
 from discord import app_commands
@@ -11,7 +9,7 @@ from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.core.select_helpers import rebuild_select_options
-from apps.discord_bot.core.view_helpers import disable_view_on_timeout
+from apps.discord_bot.core.view_helpers import disable_view_on_timeout, set_view_controls_disabled
 from player_engine import (
     CANCEL_FEE_COINS,
     EVOLUTION_START_ENERGY,
@@ -101,25 +99,6 @@ def _api_message(exc: Exception) -> str:
     return str(exc)
 
 
-# #region agent log
-def _agent_debug_log(location: str, message: str, data: dict, hypothesis_id: str, run_id: str = "pre-fix") -> None:
-    try:
-        payload = {
-            "sessionId": "54e47f",
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-        }
-        with open("debug-54e47f.log", "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload) + "\n")
-    except OSError:
-        pass
-# #endregion
-
-
 async def _edit_hub_message(interaction: discord.Interaction, embed: discord.Embed, view: discord.ui.View) -> None:
     if not interaction.response.is_done():
         await interaction.response.edit_message(embed=embed, view=view)
@@ -191,8 +170,10 @@ class DevelopmentHubView(discord.ui.View):
 
     async def _claim_rewards_btn(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
+        set_view_controls_disabled(self, disabled=True)
         try:
             if await unclaimed_reward_count(self.owner_id) <= 0:
+                set_view_controls_disabled(self, disabled=False)
                 await interaction.followup.send(
                     embed=error_embed("No unclaimed level rewards found."),
                     ephemeral=True,
@@ -200,6 +181,7 @@ class DevelopmentHubView(discord.ui.View):
                 return
             claimed, total = await claim_level_rewards(self.owner_id)
             if claimed <= 0:
+                set_view_controls_disabled(self, disabled=False)
                 await interaction.followup.send(
                     embed=error_embed("No rewards could be claimed."),
                     ephemeral=True,
@@ -215,6 +197,7 @@ class DevelopmentHubView(discord.ui.View):
             await show_hub(interaction, self.owner_id)
         except Exception as exc:
             logger.exception("Failed claiming level rewards from development hub.")
+            set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(embed=error_embed(str(exc)), ephemeral=True)
 
     @discord.ui.button(style=discord.ButtonStyle.primary, label="🏋️ Training Drills", custom_id="hub_drills", row=0)
@@ -392,10 +375,12 @@ class StatDrillView(discord.ui.View):
 
     async def run_drill_callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
+        set_view_controls_disabled(self, disabled=True)
         try:
             db = await get_client()
             lock_msg = await assert_not_in_match(db, self.owner_id)
             if lock_msg:
+                set_view_controls_disabled(self, disabled=False)
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
 
@@ -433,6 +418,7 @@ class StatDrillView(discord.ui.View):
 
         except Exception as exc:
             logger.exception("Failed running stat drill.")
+            set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
 
 
@@ -1002,10 +988,12 @@ class EvolutionsSubView(discord.ui.View):
 
     async def start_evo_callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
+        set_view_controls_disabled(self, disabled=True)
         try:
             db = await get_client()
             lock_msg = await assert_not_in_match(db, self.owner_id)
             if lock_msg:
+                set_view_controls_disabled(self, disabled=False)
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
 
@@ -1013,6 +1001,7 @@ class EvolutionsSubView(discord.ui.View):
             if evo_key.startswith("locked_"):
                 track_id = evo_key.removeprefix("locked_")
                 min_lvl = track_min_player_level(track_id)
+                set_view_controls_disabled(self, disabled=False)
                 await interaction.followup.send(
                     embed=error_embed(f"This evolution requires player Level **{min_lvl}**."),
                     ephemeral=True,
@@ -1022,6 +1011,7 @@ class EvolutionsSubView(discord.ui.View):
 
             gate = evolution_start_gate_message(self.hub_status)
             if gate:
+                set_view_controls_disabled(self, disabled=False)
                 await interaction.followup.send(embed=error_embed(gate), ephemeral=True)
                 return
 
@@ -1031,8 +1021,8 @@ class EvolutionsSubView(discord.ui.View):
                 "p_track_id": evo_key,
             }).execute()
             result = res.data or {}
-            energy_spent = result.get("energy_spent", EVOLUTION_START_ENERGY)
-            coins_spent = result.get("coins_spent", evolution_start_cost(self.card["overall"])[1])
+            energy_spent = result.get("energy_cost", result.get("energy_spent", EVOLUTION_START_ENERGY))
+            coins_spent = result.get("coin_cost", result.get("coins_spent", evolution_start_cost(self.card["overall"])[1]))
 
             await interaction.followup.send(
                 embed=success_embed(
@@ -1048,14 +1038,17 @@ class EvolutionsSubView(discord.ui.View):
 
         except Exception as e:
             logger.exception("Failed starting evolution track.")
+            set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(embed=error_embed(_api_message(e)), ephemeral=True)
 
     async def cancel_evo_callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
+        set_view_controls_disabled(self, disabled=True)
         try:
             db = await get_client()
             lock_msg = await assert_not_in_match(db, self.owner_id)
             if lock_msg:
+                set_view_controls_disabled(self, disabled=False)
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
             await db.rpc("cancel_player_evolution", {
@@ -1072,14 +1065,17 @@ class EvolutionsSubView(discord.ui.View):
             await show_evols_menu(interaction, self.owner_id, preselected_card_id=self.card["id"])
         except Exception as exc:
             logger.exception("Failed cancelling evolution.")
+            set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
 
     async def claim_reward_callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
+        set_view_controls_disabled(self, disabled=True)
         try:
             db = await get_client()
             lock_msg = await assert_not_in_match(db, self.owner_id)
             if lock_msg:
+                set_view_controls_disabled(self, disabled=False)
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
 
@@ -1091,7 +1087,7 @@ class EvolutionsSubView(discord.ui.View):
             track = EVOLUTION_TRACKS[self.active_evo["evolution_id"]]
             applied = result.get("reward", track["reward_val"])
             reward_stat = result.get("stat", track["reward_stat"].upper())
-            blocked = result.get("blocked_by_cap", False)
+            reward_max = int(result.get("reward_max", track["reward_val"]))
 
             await show_evols_menu(interaction, self.owner_id, preselected_card_id=self.card["id"])
             cap_note = ""
@@ -1099,6 +1095,11 @@ class EvolutionsSubView(discord.ui.View):
                 cap_note = "\n*Stat reward skipped — player is already at POT ceiling.*"
             elif applied == 0:
                 cap_note = "\n*Stat reward skipped — stat is already at maximum.*"
+            elif result.get("reward_clamped"):
+                cap_note = (
+                    f"\n*Reward clamped to +{applied} {reward_stat} "
+                    f"(max +{reward_max}) to respect POT ceiling.*"
+                )
             await interaction.followup.send(
                 embed=success_embed(
                     f"🧬 **Evolution Completed!**\n\n"
@@ -1112,6 +1113,7 @@ class EvolutionsSubView(discord.ui.View):
 
         except Exception as e:
             logger.exception("Failed claiming evolution reward.")
+            set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(embed=error_embed(_api_message(e)), ephemeral=True)
 
 
@@ -1131,43 +1133,6 @@ async def show_skills_menu(interaction: discord.Interaction, owner_id: int, pres
     target_card_id = preselected_card_id or roster[0]["id"]
     card_res = await db.table("player_cards").select("*").eq("id", target_card_id).maybe_single().execute()
     card = card_res.data if card_res else None
-
-    # #region agent log
-    if card:
-        ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", target_card_id).execute()
-        playstyles = [r["playstyle_key"] for r in (ps_res.data or [])]
-        stats = stats_from_card(card)
-        stored_ovr = int(card.get("overall", 0))
-        potential = int(card.get("potential", 99))
-        calc_ovr = calculate_true_ovr(card.get("position", "MID"), stats, playstyles, potential)
-        has_points = int(card.get("skill_points", 0)) > 0
-        stat_gates = {
-            k: {"ok": can_allocate_skill_point(
-                position=card.get("position", "MID"),
-                stats=stats,
-                playstyles=playstyles,
-                potential=potential,
-                stat_key=k,
-                overall=stored_ovr,
-            )[0]}
-            for k in ("pac", "sho", "pas", "dri", "def", "phy")
-        }
-        _agent_debug_log(
-            "development_cog.py:show_skills_menu",
-            "skills menu card state",
-            {
-                "card_id": target_card_id,
-                "skill_points": card.get("skill_points", 0),
-                "stored_overall": stored_ovr,
-                "calculated_ovr": calc_ovr,
-                "potential": potential,
-                "has_points_ui_gate": has_points,
-                "at_pot_stored": stored_ovr >= potential,
-                "stat_gates": stat_gates,
-            },
-            "H1",
-        )
-    # #endregion
 
     embed = discord.Embed(
         title=f"⭐ Allocate Skills: {card['name']}",
@@ -1240,44 +1205,13 @@ class SkillPointButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
+        self.disabled = True
         try:
             db = await get_client()
             lock_msg = await assert_not_in_match(db, self.owner_id)
             if lock_msg:
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
-
-            # #region agent log
-            card_res = await db.table("player_cards").select("*").eq("id", self.card_id).maybe_single().execute()
-            card_row = card_res.data if card_res else {}
-            ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", self.card_id).execute()
-            playstyles = [r["playstyle_key"] for r in (ps_res.data or [])]
-            stats = stats_from_card(card_row)
-            stored_ovr = int(card_row.get("overall", 0))
-            potential = int(card_row.get("potential", 99))
-            gate_ok, gate_reason = can_allocate_skill_point(
-                position=card_row.get("position", "MID"),
-                stats=stats,
-                playstyles=playstyles,
-                potential=potential,
-                stat_key=self.col,
-                overall=stored_ovr,
-            )
-            _agent_debug_log(
-                "development_cog.py:SkillPointButton.callback",
-                "allocate attempt",
-                {
-                    "card_id": self.card_id,
-                    "stat": self.col,
-                    "skill_points": card_row.get("skill_points", 0),
-                    "stored_overall": stored_ovr,
-                    "potential": potential,
-                    "gate_ok": gate_ok,
-                    "gate_reason": gate_reason,
-                },
-                "H2",
-            )
-            # #endregion
 
             await db.rpc("allocate_skill_point", {
                 "p_owner_id": self.owner_id,
@@ -1288,15 +1222,8 @@ class SkillPointButton(discord.ui.Button):
             await show_skills_menu(interaction, self.owner_id, preselected_card_id=self.card_id)
 
         except Exception as exc:
-            # #region agent log
-            _agent_debug_log(
-                "development_cog.py:SkillPointButton.callback",
-                "allocate failed",
-                {"card_id": self.card_id, "stat": self.col, "error": _api_message(exc)},
-                "H2",
-            )
-            # #endregion
             logger.exception("Failed to allocate skill point.")
+            self.disabled = False
             await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
 
 

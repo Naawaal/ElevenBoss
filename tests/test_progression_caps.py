@@ -132,6 +132,58 @@ def test_can_allocate_skill_point_blocks_at_pot() -> None:
     assert "potential" in reason.lower()
 
 
+def test_evolution_reward_steps_clamps_near_pot() -> None:
+    from player_engine import can_start_evolution_track, evolution_reward_steps
+
+    stats = {"pac": 59, "sho": 59, "pas": 59, "dri": 59, "def": 59, "phy": 59}
+    steps = evolution_reward_steps(
+        position="FWD",
+        stats=stats,
+        playstyles=[],
+        potential=60,
+        stat_key="sho",
+        overall=59,
+        max_steps=5,
+    )
+    assert steps == 5
+
+    ok, _ = can_start_evolution_track(
+        position="FWD",
+        stats=stats,
+        playstyles=[],
+        potential=60,
+        overall=59,
+        track_id="shooting_star",
+    )
+    assert ok
+
+    blocked, reason = can_start_evolution_track(
+        position="FWD",
+        stats=stats,
+        playstyles=[],
+        potential=60,
+        overall=60,
+        track_id="shooting_star",
+    )
+    assert not blocked
+    assert "potential" in reason.lower()
+
+
+def test_evolution_reward_steps_zero_at_pot() -> None:
+    from player_engine import evolution_reward_steps
+
+    stats = {"pac": 60, "sho": 60, "pas": 60, "dri": 60, "def": 60, "phy": 60}
+    assert evolution_reward_steps(
+        position="FWD",
+        stats=stats,
+        playstyles=[],
+        potential=60,
+        stat_key="sho",
+        overall=60,
+        max_steps=5,
+    ) == 0
+
+
 def test_rebalance_clears_hidden_power() -> None:
     stats = {"pac": 60, "sho": 99, "pas": 60, "dri": 60, "def": 60, "phy": 60}
     rng = random.Random(42)

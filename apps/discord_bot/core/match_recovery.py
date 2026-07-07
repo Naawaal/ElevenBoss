@@ -2,6 +2,7 @@
 """Boot-time recovery for interrupted match runs."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import discord

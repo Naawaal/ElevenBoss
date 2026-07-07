@@ -49,6 +49,12 @@ BEGIN
       ('column:public.match_history.xp_applied_at'),
       ('column:public.economy_ledger.idempotency_key'),
       ('function:apply_card_xp'),
+      ('function:apply_club_economy'),
+      ('function:compute_card_ovr'),
+      ('function:peek_card_ovr'),
+      ('function:evolution_stat_reward_steps'),
+      ('function:claim_evolution_reward'),
+      ('function:start_player_evolution'),
       ('function:claim_pending_level_rewards'),
       ('function:level_from_xp'),
       ('function:count_unclaimed_level_rewards'),
@@ -91,11 +97,16 @@ BEGIN
         WHEN 'sync_training_energy' THEN to_regprocedure('public.sync_training_energy(bigint)')
         WHEN 'get_evolution_hub_status' THEN to_regprocedure('public.get_evolution_hub_status(bigint)')
         WHEN 'apply_card_xp' THEN to_regprocedure('public.apply_card_xp(uuid,integer,text)')
+        WHEN 'apply_club_economy' THEN to_regprocedure('public.apply_club_economy(bigint,bigint,integer,text,text,jsonb)')
+        WHEN 'compute_card_ovr' THEN to_regprocedure('public.compute_card_ovr(text,integer,integer,integer,integer,integer,integer,integer,uuid)')
+        WHEN 'peek_card_ovr' THEN to_regprocedure('public.peek_card_ovr(uuid,text,integer)')
+        WHEN 'evolution_stat_reward_steps' THEN to_regprocedure('public.evolution_stat_reward_steps(uuid,text,integer)')
+        WHEN 'claim_evolution_reward' THEN to_regprocedure('public.claim_evolution_reward(bigint,uuid)')
+        WHEN 'start_player_evolution' THEN to_regprocedure('public.start_player_evolution(bigint,uuid,text)')
         WHEN 'claim_pending_level_rewards' THEN to_regprocedure('public.claim_pending_level_rewards(bigint)')
         WHEN 'level_from_xp' THEN to_regprocedure('public.level_from_xp(integer)')
         WHEN 'count_unclaimed_level_rewards' THEN to_regprocedure('public.count_unclaimed_level_rewards(bigint)')
         WHEN 'daily_match_xp_used' THEN to_regprocedure('public.daily_match_xp_used(uuid)')
-        WHEN 'apply_club_economy' THEN to_regprocedure('public.apply_club_economy(bigint,bigint,integer,text,text,jsonb)')
         WHEN 'sync_action_energy' THEN to_regprocedure('public.sync_action_energy(bigint)')
         WHEN 'claim_daily_login' THEN to_regprocedure('public.claim_daily_login(bigint)')
         WHEN 'purchase_energy_refill' THEN to_regprocedure('public.purchase_energy_refill(bigint)')

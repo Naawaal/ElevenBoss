@@ -4,6 +4,11 @@ from __future__ import annotations
 import discord
 
 
+def set_view_controls_disabled(view: discord.ui.View, *, disabled: bool) -> None:
+    for item in view.children:
+        item.disabled = disabled
+
+
 async def disable_view_on_timeout(view: discord.ui.View) -> None:
     for item in view.children:
         item.disabled = True

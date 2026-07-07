@@ -6,6 +6,7 @@ import random
 from typing import Any
 
 from .engine import POSITION_WEIGHTS, calculate_true_ovr
+from .evolution_tracks import EVOLUTION_TRACKS
 
 STAT_KEYS = ("pac", "sho", "pas", "dri", "def", "phy")
 
@@ -53,6 +54,66 @@ def can_allocate_skill_point(
     projected = calculate_true_ovr(position, trial, playstyles, potential)
     if projected > potential:
         return False, "Would exceed maximum overall for their potential"
+    return True, ""
+
+
+def evolution_track_stat_col(track_id: str) -> str:
+    return str(EVOLUTION_TRACKS[track_id]["reward_stat"])
+
+
+def evolution_reward_steps(
+    *,
+    position: str,
+    stats: dict[str, int],
+    playstyles: list[str],
+    potential: int,
+    stat_key: str,
+    overall: int,
+    max_steps: int = 5,
+) -> int:
+    """Count +1 stat steps allowed before POT ceiling (mirrors evolution_stat_reward_steps RPC)."""
+    if overall >= potential:
+        return 0
+    current = int(stats.get(stat_key, 50))
+    if current >= 99:
+        return 0
+
+    steps = 0
+    trial = dict(stats)
+    for _ in range(max(0, max_steps)):
+        if current + steps >= 99:
+            break
+        trial[stat_key] = current + steps + 1
+        projected = calculate_true_ovr(position, trial, playstyles, potential)
+        if projected > potential:
+            break
+        steps += 1
+    return steps
+
+
+def can_start_evolution_track(
+    *,
+    position: str,
+    stats: dict[str, int],
+    playstyles: list[str],
+    potential: int,
+    overall: int,
+    track_id: str,
+) -> tuple[bool, str]:
+    """Return whether starting an evolution track is allowed (mirrors start_player_evolution POT gate)."""
+    if overall >= potential:
+        return False, "Player is already at maximum overall for their potential"
+    stat_key = evolution_track_stat_col(track_id)
+    steps = evolution_reward_steps(
+        position=position,
+        stats=stats,
+        playstyles=playstyles,
+        potential=potential,
+        stat_key=stat_key,
+        overall=overall,
+    )
+    if steps <= 0:
+        return False, "Evolution reward would exceed this player's potential"
     return True, ""
 
 

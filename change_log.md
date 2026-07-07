@@ -2,6 +2,19 @@
 
 Hey Managers!
 
+## Audit Hardening (US-38)
+
+Follow-up fixes from the security/economy audit — no player-facing feature changes, tighter fairness guards.
+
+### What changed
+- **Evolution POT gate** — starting or claiming an evolution now projects stat rewards against your POT ceiling (same rules as skill allocation). Partial rewards are clamped with a clear message.
+- **Match XP cap race** — daily match XP per card is checked under a row lock, so concurrent matches cannot overshoot the 100 XP/day cap.
+- **Economy idempotency** — duplicate coin ledger keys replay cleanly instead of erroring on retry.
+- **Development hub UX** — buttons disable while a drill, evolution, skill allocation, or reward claim is processing (fewer double-click errors).
+- **League economy** — re-verified with `simulate_league_economy.py`: champion gross injection **~5,480 coins**/season (additive faucet by design; no duplicate payout bug).
+
+---
+
 ## Match Loop Hardening (US-29)
 
 Bot and friendly matches now use the same economy and XP systems as league play.
