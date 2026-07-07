@@ -1094,7 +1094,6 @@ class BattleCog(commands.Cog):
     @app_commands.guild_only()
     @app_commands.check(ensure_registered)
     async def bot_battle_command(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True)
         await self.execute_bot_battle(interaction)
 
     @battle_group.command(name="how-it-works", description="How the NSS match engine uses your squad.")
@@ -1130,7 +1129,6 @@ class BattleCog(commands.Cog):
     @app_commands.guild_only()
     @app_commands.check(ensure_registered)
     async def friendly_match_command(self, interaction: discord.Interaction, opponent: discord.Member) -> None:
-        await interaction.response.defer(ephemeral=True)
         challenger = interaction.user
         if challenger.id == opponent.id:
             await interaction.followup.send(embed=error_embed("You cannot challenge yourself!"), ephemeral=True)

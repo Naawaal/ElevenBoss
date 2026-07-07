@@ -103,7 +103,7 @@ async def show_sell_menu(interaction: discord.Interaction, owner_id: int):
     starting_card_ids = {a["player_card_id"] for a in assignments_res.data}
 
     # 3. Fetch active evolution and training card ids
-    evo_res = await db.table("active_evolutions").select("card_id").eq("status", "active").execute()
+    evo_res = await db.table("active_evolutions").select("card_id").eq("owner_id", owner_id).eq("status", "active").execute()
     evo_card_ids = {e["card_id"] for e in (evo_res.data or [])}
 
     training_res = await db.table("active_training").select("card_id").execute()

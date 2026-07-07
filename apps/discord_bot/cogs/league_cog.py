@@ -409,7 +409,8 @@ class LeagueCog(commands.Cog):
     @app_commands.check(ensure_registered)
     async def league_hub(self, interaction: discord.Interaction) -> None:
         """Slash command to open the Seasonal League Hub."""
-        await interaction.response.defer(ephemeral=True)
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
         
         db = await get_client()
         guild_id = interaction.guild_id
