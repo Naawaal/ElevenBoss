@@ -379,7 +379,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_match_history_player_run
     WHERE run_id IS NOT NULL;
 
 UPDATE public.match_history
-SET xp_applied_at = created_at
+SET xp_applied_at = played_at
 WHERE xp_applied_at IS NULL;
 
 GRANT ALL PRIVILEGES ON FUNCTION public.formation_slot_role(TEXT, INTEGER) TO anon, authenticated, service_role;
