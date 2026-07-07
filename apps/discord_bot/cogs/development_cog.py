@@ -19,6 +19,8 @@ from player_engine import (
     L_MAX,
     MAX_ACTIVE_EVOLUTIONS,
     DRILL_CATALOG,
+    calculate_true_ovr,
+    can_allocate_skill_point,
     drill_spec,
     drill_unlocked,
     drill_xp_reward,
@@ -28,6 +30,7 @@ from player_engine import (
     fusion_xp_reward,
     level_from_xp,
     simulate_apply_card_xp,
+    stats_from_card,
     track_min_player_level,
     xp_progress,
 )
@@ -96,6 +99,25 @@ def _api_message(exc: Exception) -> str:
     if isinstance(exc, APIError) and exc.args and isinstance(exc.args[0], dict):
         return exc.args[0].get("message", str(exc))
     return str(exc)
+
+
+# #region agent log
+def _agent_debug_log(location: str, message: str, data: dict, hypothesis_id: str, run_id: str = "pre-fix") -> None:
+    try:
+        payload = {
+            "sessionId": "54e47f",
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        with open("debug-54e47f.log", "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload) + "\n")
+    except OSError:
+        pass
+# #endregion
 
 
 async def _edit_hub_message(interaction: discord.Interaction, embed: discord.Embed, view: discord.ui.View) -> None:
@@ -1110,6 +1132,43 @@ async def show_skills_menu(interaction: discord.Interaction, owner_id: int, pres
     card_res = await db.table("player_cards").select("*").eq("id", target_card_id).maybe_single().execute()
     card = card_res.data if card_res else None
 
+    # #region agent log
+    if card:
+        ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", target_card_id).execute()
+        playstyles = [r["playstyle_key"] for r in (ps_res.data or [])]
+        stats = stats_from_card(card)
+        stored_ovr = int(card.get("overall", 0))
+        potential = int(card.get("potential", 99))
+        calc_ovr = calculate_true_ovr(card.get("position", "MID"), stats, playstyles, potential)
+        has_points = int(card.get("skill_points", 0)) > 0
+        stat_gates = {
+            k: {"ok": can_allocate_skill_point(
+                position=card.get("position", "MID"),
+                stats=stats,
+                playstyles=playstyles,
+                potential=potential,
+                stat_key=k,
+                overall=stored_ovr,
+            )[0]}
+            for k in ("pac", "sho", "pas", "dri", "def", "phy")
+        }
+        _agent_debug_log(
+            "development_cog.py:show_skills_menu",
+            "skills menu card state",
+            {
+                "card_id": target_card_id,
+                "skill_points": card.get("skill_points", 0),
+                "stored_overall": stored_ovr,
+                "calculated_ovr": calc_ovr,
+                "potential": potential,
+                "has_points_ui_gate": has_points,
+                "at_pot_stored": stored_ovr >= potential,
+                "stat_gates": stat_gates,
+            },
+            "H1",
+        )
+    # #endregion
+
     embed = discord.Embed(
         title=f"⭐ Allocate Skills: {card['name']}",
         description=(
@@ -1188,6 +1247,38 @@ class SkillPointButton(discord.ui.Button):
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
 
+            # #region agent log
+            card_res = await db.table("player_cards").select("*").eq("id", self.card_id).maybe_single().execute()
+            card_row = card_res.data if card_res else {}
+            ps_res = await db.table("player_playstyles").select("playstyle_key").eq("card_id", self.card_id).execute()
+            playstyles = [r["playstyle_key"] for r in (ps_res.data or [])]
+            stats = stats_from_card(card_row)
+            stored_ovr = int(card_row.get("overall", 0))
+            potential = int(card_row.get("potential", 99))
+            gate_ok, gate_reason = can_allocate_skill_point(
+                position=card_row.get("position", "MID"),
+                stats=stats,
+                playstyles=playstyles,
+                potential=potential,
+                stat_key=self.col,
+                overall=stored_ovr,
+            )
+            _agent_debug_log(
+                "development_cog.py:SkillPointButton.callback",
+                "allocate attempt",
+                {
+                    "card_id": self.card_id,
+                    "stat": self.col,
+                    "skill_points": card_row.get("skill_points", 0),
+                    "stored_overall": stored_ovr,
+                    "potential": potential,
+                    "gate_ok": gate_ok,
+                    "gate_reason": gate_reason,
+                },
+                "H2",
+            )
+            # #endregion
+
             await db.rpc("allocate_skill_point", {
                 "p_owner_id": self.owner_id,
                 "p_card_id": self.card_id,
@@ -1197,6 +1288,14 @@ class SkillPointButton(discord.ui.Button):
             await show_skills_menu(interaction, self.owner_id, preselected_card_id=self.card_id)
 
         except Exception as exc:
+            # #region agent log
+            _agent_debug_log(
+                "development_cog.py:SkillPointButton.callback",
+                "allocate failed",
+                {"card_id": self.card_id, "stat": self.col, "error": _api_message(exc)},
+                "H2",
+            )
+            # #endregion
             logger.exception("Failed to allocate skill point.")
             await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
 
