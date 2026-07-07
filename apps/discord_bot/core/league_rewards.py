@@ -125,9 +125,34 @@ async def apply_league_human_rewards(
         if deduct_energy and v2:
             await sync_action_energy(db, player_id)
             energy_cost = match_energy_cost("league", v2=True)
-            await apply_match_economy(db, player_id, coins, energy_cost, "league", run_id, result_str)
+            econ = await apply_match_economy(db, player_id, coins, energy_cost, "league", run_id, result_str)
         elif v2:
-            await apply_match_economy(db, player_id, coins, 0, "league", run_id, result_str)
+            econ = await apply_match_economy(db, player_id, coins, 0, "league", run_id, result_str)
+        else:
+            econ = None
+        # #region agent log
+        try:
+            import json, time
+            with open("debug-93fd84.log", "a", encoding="utf-8") as _f:
+                _f.write(json.dumps({
+                    "sessionId": "93fd84",
+                    "timestamp": int(time.time() * 1000),
+                    "location": "league_rewards.py:apply_league_human_rewards",
+                    "message": "league_economy_applied",
+                    "data": {
+                        "player_id": player_id,
+                        "coins": coins,
+                        "result": result_str,
+                        "auto_sim": auto_sim,
+                        "deduct_energy": deduct_energy,
+                        "econ": econ,
+                    },
+                    "hypothesisId": "E",
+                    "runId": "pre-fix",
+                }) + "\n")
+        except Exception:
+            pass
+        # #endregion
 
         await db.table("players").update({
             "matches_played": player_row["matches_played"] + 1,

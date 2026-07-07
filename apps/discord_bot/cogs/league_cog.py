@@ -243,6 +243,22 @@ async def update_current_matchday(db, season_id: str) -> int | None:
                 "status": "completed",
                 "end_time": datetime.now(timezone.utc).isoformat()
             }).eq("id", season_id).execute()
+            # #region agent log
+            try:
+                import json, time
+                with open("debug-93fd84.log", "a", encoding="utf-8") as _f:
+                    _f.write(json.dumps({
+                        "sessionId": "93fd84",
+                        "timestamp": int(time.time() * 1000),
+                        "location": "league_cog.py:update_current_matchday",
+                        "message": "season_completed_without_prize_rpc",
+                        "data": {"season_id": season_id, "matchday": curr},
+                        "hypothesisId": "D",
+                        "runId": "pre-fix",
+                    }) + "\n")
+            except Exception:
+                pass
+            # #endregion
             
             league_res = await db.table("leagues").select("guild_id").eq("id", season["league_id"]).maybe_single().execute()
             if league_res and league_res.data:

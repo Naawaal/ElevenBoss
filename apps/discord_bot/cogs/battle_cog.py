@@ -1428,6 +1428,22 @@ class BattleCog(commands.Cog):
                 await complete_run(db, bot_run_id, home_score=state.home_score, away_score=state.away_score)
         except Exception as e:
             logger.exception("Failed to simulate match.")
+            # #region agent log
+            try:
+                import json, time
+                with open("debug-93fd84.log", "a", encoding="utf-8") as _f:
+                    _f.write(json.dumps({
+                        "sessionId": "93fd84",
+                        "timestamp": int(time.time() * 1000),
+                        "location": "battle_cog.py:execute_bot_battle",
+                        "message": "bot_match_exception",
+                        "data": {"error_type": type(e).__name__, "error": str(e)},
+                        "hypothesisId": "A",
+                        "runId": "pre-fix",
+                    }) + "\n")
+            except Exception:
+                pass
+            # #endregion
             if bot_run_id:
                 await abandon_run(db, bot_run_id)
             if interaction.response.is_done():
