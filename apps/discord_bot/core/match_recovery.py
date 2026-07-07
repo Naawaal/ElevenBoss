@@ -56,7 +56,10 @@ async def _abandon_ephemeral_run(bot: commands.Bot, db, run: dict) -> None:
                     "No rewards were applied. You can start a new match."
                 )
             )
-            await thread.edit(locked=True, archived=True)
+            if thread.guild:
+                from apps.discord_bot.core.thread_permissions import archive_thread_after_delay
+
+                asyncio.create_task(archive_thread_after_delay(thread, thread.guild, delay=0))
         except Exception:
             logger.warning("Failed to post abandon notice to thread %s", run.get("thread_id"))
     await _notify_participants(

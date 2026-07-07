@@ -24,6 +24,10 @@ from apps.discord_bot.core.match_cards import card_from_db_row, fetch_playstyles
 from apps.discord_bot.core.economy_rpc import sync_action_energy, match_energy_cost, economy_v2_enabled
 from apps.discord_bot.core.league_rewards import apply_league_human_rewards
 from apps.discord_bot.core.match_rewards import apply_bot_match_rewards, apply_friendly_human_rewards
+from apps.discord_bot.core.thread_permissions import (
+    MATCH_THREAD_ARCHIVE_DELAY_SEC,
+    archive_thread_after_delay,
+)
 from apps.discord_bot.core.league_journal import (
     get_or_create_league_journal,
     post_journal_result_line,
@@ -42,7 +46,6 @@ from apps.discord_bot.core.match_runs import (
     create_league_run,
     generate_sim_seed,
     get_active_fixture_run,
-    league_history_exists,
     mark_completing,
     squads_from_snapshot,
 )
@@ -343,22 +346,19 @@ class StandardMatchHandler(IMatchOutputHandler):
         )
         await target.send(embed=press_embed)
 
-        if self.thread:
+        if self.thread and self.thread.guild:
             try:
                 await self.thread.edit(name=f"🏆 {home_name} {result.goals_for}-{result.goals_against} {away_name}")
             except Exception as e:
                 logger.warning(f"Failed to rename thread: {e}")
 
-            async def archive_thread_after_delay(t: discord.Thread, delay: float) -> None:
-                await asyncio.sleep(delay)
-                try:
-                    await t.edit(locked=True, archived=True)
-                except discord.NotFound:
-                    pass
-                except Exception as err:
-                    logger.warning(f"Failed to lock and archive thread {t.id}: {err}")
-
-            asyncio.create_task(archive_thread_after_delay(self.thread, 180.0))
+            asyncio.create_task(
+                archive_thread_after_delay(
+                    self.thread,
+                    self.thread.guild,
+                    delay=MATCH_THREAD_ARCHIVE_DELAY_SEC,
+                )
+            )
 
 class LeagueReactionView(discord.ui.View):
     """Post-match social buttons (US-26)."""
@@ -1855,17 +1855,15 @@ class BattleCog(commands.Cog):
             except Exception as e:
                 logger.warning(f"Failed to rename friendly thread: {e}")
 
-            # Schedule Thread Archival and Lock after 120 seconds
-            async def archive_friendly_thread(t: discord.Thread, delay: float) -> None:
-                await asyncio.sleep(delay)
-                try:
-                    await t.edit(locked=True, archived=True)
-                except discord.NotFound:
-                    pass
-                except Exception as err:
-                    logger.warning(f"Failed to lock and archive friendly thread {t.id}: {err}")
-
-            asyncio.create_task(archive_friendly_thread(thread, 120.0))
+            # Schedule thread read-only + archive after post-match interaction window
+            if thread.guild:
+                asyncio.create_task(
+                    archive_thread_after_delay(
+                        thread,
+                        thread.guild,
+                        delay=MATCH_THREAD_ARCHIVE_DELAY_SEC,
+                    )
+                )
 
             if friendly_run_id:
                 await complete_run(db, friendly_run_id, home_score=state.home_score, away_score=state.away_score)

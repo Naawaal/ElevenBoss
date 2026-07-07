@@ -81,11 +81,14 @@ async def _fetch_thread(guild: discord.Guild, thread_id: int | None) -> discord.
         return None
 
 
-async def _lock_thread(thread: discord.Thread) -> None:
-    try:
-        await thread.edit(locked=True)
-    except discord.HTTPException:
-        logger.debug("Could not lock thread %s", thread.id, exc_info=True)
+async def _restrict_thread(thread: discord.Thread) -> None:
+    """AC-17d: bot-only sends, members can react."""
+    guild = thread.guild
+    if not guild:
+        return
+    from apps.discord_bot.core.thread_permissions import restrict_thread_to_bot_and_reactions
+
+    await restrict_thread_to_bot_and_reactions(thread, guild)
 
 
 async def _create_locked_thread_from_message(
@@ -94,7 +97,7 @@ async def _create_locked_thread_from_message(
 ) -> discord.Thread | None:
     try:
         thread = await anchor.create_thread(name=name, auto_archive_duration=THREAD_ARCHIVE_DAYS)
-        await _lock_thread(thread)
+        await _restrict_thread(thread)
         return thread
     except Exception:
         logger.exception("Failed to create thread %s from message %s", name, anchor.id)
@@ -286,7 +289,7 @@ async def archive_season_threads(
     *,
     season_number: int,
 ) -> None:
-    """Lock and archive dual_v2 threads at season end."""
+    """Archive dual_v2 threads at season end (reactions still allowed until archive)."""
     if season_row.get("thread_format") != "dual_v2":
         return
     for key in ("journal_thread_id", "matchday_thread_id"):
@@ -294,10 +297,10 @@ async def archive_season_threads(
         if not thread:
             continue
         try:
+            await _restrict_thread(thread)
             suffix = "journal" if key == "journal_thread_id" else "matchday"
             await thread.edit(
                 name=f"🏆-s{season_number}-{suffix}-concluded",
-                locked=True,
                 archived=True,
             )
         except Exception:

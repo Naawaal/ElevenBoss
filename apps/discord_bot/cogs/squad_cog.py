@@ -12,6 +12,7 @@ from apps.discord_bot.embeds.squad_embeds import get_slot_position, roster_embed
 from apps.discord_bot.core.pitch_generator import generate_squad_pitch, generate_roster_grid
 from apps.discord_bot.core.view_helpers import disable_view_on_timeout
 from apps.discord_bot.core.select_helpers import rebuild_select_options
+from match_engine import reserve_fits_formation_slot
 from apps.discord_bot.middleware.match_lock import assert_not_in_match
 
 logger = logging.getLogger(__name__)
@@ -447,9 +448,16 @@ class SquadSwapView(discord.ui.View):
             if not slot:
                 raise ValueError("Could not find the squad slot of the selected starter.")
 
-            reserve_res = await db.table("player_cards").select("id").eq("id", self.selected_reserve_id).eq("owner_id", self.user_id).maybe_single().execute()
+            reserve_res = await db.table("player_cards").select("id, position").eq("id", self.selected_reserve_id).eq("owner_id", self.user_id).maybe_single().execute()
             if not reserve_res or not reserve_res.data:
                 raise ValueError("Reserve player no longer available.")
+
+            reserve_pos = reserve_res.data["position"]
+            if not reserve_fits_formation_slot(self.hub_view.formation, slot, reserve_pos):
+                required = get_slot_position(self.hub_view.formation, slot)
+                raise ValueError(
+                    f"**{reserve_pos}** cannot play **{required}** in this formation. Pick a compatible reserve."
+                )
 
             await db.rpc("swap_squad_players", {
                 "p_discord_id": self.user_id,

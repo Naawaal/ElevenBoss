@@ -178,3 +178,29 @@ async def league_history_exists(db, player_id: int, fixture_id: str) -> bool:
         "player_id", player_id
     ).eq("fixture_id", fixture_id).maybe_single().execute()
     return bool(res and res.data)
+
+
+async def fetch_match_reward_row(
+    db,
+    player_id: int,
+    *,
+    fixture_id: str | None = None,
+    run_id: str | None = None,
+) -> dict | None:
+    """Return match_history reward row for idempotent economy/XP application."""
+    if fixture_id:
+        res = await db.table("match_history").select(
+            "id, coins_earned, points_earned, xp_applied_at"
+        ).eq("player_id", player_id).eq("fixture_id", fixture_id).maybe_single().execute()
+    elif run_id:
+        res = await db.table("match_history").select(
+            "id, coins_earned, points_earned, xp_applied_at"
+        ).eq("player_id", player_id).eq("run_id", run_id).maybe_single().execute()
+    else:
+        return None
+    return res.data if res and res.data else None
+
+
+async def mark_match_xp_applied(db, history_id: str) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    await db.table("match_history").update({"xp_applied_at": now}).eq("id", history_id).execute()

@@ -45,6 +45,8 @@ BEGIN
       ('column:public.player_cards.alloc_reset_date'),
       ('column:public.players.action_energy'),
       ('column:public.players.last_daily_login'),
+      ('column:public.match_history.run_id'),
+      ('column:public.match_history.xp_applied_at'),
       ('column:public.economy_ledger.idempotency_key'),
       ('function:apply_card_xp'),
       ('function:claim_pending_level_rewards'),
@@ -102,6 +104,7 @@ BEGIN
         WHEN 'charge_league_entry_fees' THEN to_regprocedure('public.charge_league_entry_fees(uuid)')
         WHEN 'process_match_result' THEN to_regprocedure('public.process_match_result(text,uuid[],integer,numeric[],integer[])')
         WHEN 'claim_daily_pack' THEN to_regprocedure('public.claim_daily_pack(bigint,jsonb)')
+        WHEN 'formation_slot_role' THEN to_regprocedure('public.formation_slot_role(text,integer)')
         ELSE NULL
       END IS NOT NULL
     )

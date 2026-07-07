@@ -1161,18 +1161,15 @@ async def admin_end_season(interaction: discord.Interaction, guild_id: int, owne
                 from apps.discord_bot.core.league_journal import archive_season_threads
                 await archive_season_threads(guild, season, season_number=season["season_number"])
             else:
-                async def archive_thread_after_delay(t: discord.Thread, s_num: int):
-                    await asyncio.sleep(30.0)
-                    try:
-                        await t.edit(
-                            name=f"🏆-season-{s_num}-concluded",
-                            locked=True,
-                            archived=True,
-                        )
-                    except Exception as err:
-                        logger.warning(f"Failed to lock and archive thread {t.id}: {err}")
+                from apps.discord_bot.core.thread_permissions import archive_thread_after_delay
 
-                asyncio.create_task(archive_thread_after_delay(thread, season["season_number"]))
+                asyncio.create_task(
+                    archive_thread_after_delay(thread, guild, delay=30.0)
+                )
+                try:
+                    await thread.edit(name=f"🏆-season-{season['season_number']}-concluded")
+                except Exception as err:
+                    logger.warning(f"Failed to rename season thread {thread.id}: {err}")
         except Exception:
             logger.exception("Failed to send final summary to League Journal thread.")
 

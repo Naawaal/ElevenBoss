@@ -12,8 +12,8 @@ from apps.discord_bot.core.economy_rpc import (
     match_energy_cost,
     sync_action_energy,
 )
-from apps.discord_bot.core.match_xp import build_process_match_result_rpc
-from apps.discord_bot.core.match_runs import league_history_exists
+from apps.discord_bot.core.match_runs import fetch_match_reward_row
+from apps.discord_bot.core.match_xp import apply_match_xp_if_needed
 
 logger = logging.getLogger(__name__)
 
@@ -101,59 +101,67 @@ async def apply_league_human_rewards(
     Apply league rewards for one human manager.
     Returns (coins_earned, season_pts) — season_pts for display only, not written to players.league_points.
     """
-    if await league_history_exists(db, player_id, fixture_id):
-        return 0, 0
+    existing = await fetch_match_reward_row(db, player_id, fixture_id=fixture_id)
+    if existing and existing.get("xp_applied_at"):
+        return int(existing.get("coins_earned") or 0), int(existing.get("points_earned") or 0)
 
     v2 = await economy_v2_enabled(db)
     division = player_row.get("division", "Grassroots")
     auto_sim = not deduct_energy
-    if v2 and auto_sim:
-        mult = await _league_auto_sim_coin_mult(db)
-        coins = compute_league_match_coins(
-            result_str, division, v2=True, auto_sim=True, auto_sim_mult=mult
-        )
+    if existing:
+        coins = int(existing.get("coins_earned") or 0)
+        season_pts = int(existing.get("points_earned") or 0)
+        history_id = existing["id"]
     else:
-        coins = compute_league_match_coins(result_str, division, v2=v2)
-    season_pts = {"win": 3, "draw": 1, "loss": 0}[result_str]
+        if v2 and auto_sim:
+            mult = await _league_auto_sim_coin_mult(db)
+            coins = compute_league_match_coins(
+                result_str, division, v2=True, auto_sim=True, auto_sim_mult=mult
+            )
+        else:
+            coins = compute_league_match_coins(result_str, division, v2=v2)
+        season_pts = {"win": 3, "draw": 1, "loss": 0}[result_str]
 
-    if deduct_energy and v2:
-        await sync_action_energy(db, player_id)
-        energy_cost = match_energy_cost("league", v2=True)
-        await apply_match_economy(db, player_id, coins, energy_cost, "league", run_id, result_str)
-    elif v2:
-        await apply_match_economy(db, player_id, coins, 0, "league", run_id, result_str)
+        if deduct_energy and v2:
+            await sync_action_energy(db, player_id)
+            energy_cost = match_energy_cost("league", v2=True)
+            await apply_match_economy(db, player_id, coins, energy_cost, "league", run_id, result_str)
+        elif v2:
+            await apply_match_economy(db, player_id, coins, 0, "league", run_id, result_str)
 
-    # Career W/D/L only — NOT league_points or goal_difference (weekly ladder)
-    await db.table("players").update({
-        "matches_played": player_row["matches_played"] + 1,
-        "wins": player_row["wins"] + (1 if result_str == "win" else 0),
-        "draws": player_row["draws"] + (1 if result_str == "draw" else 0),
-        "losses": player_row["losses"] + (1 if result_str == "loss" else 0),
-    }).eq("discord_id", player_id).execute()
+        await db.table("players").update({
+            "matches_played": player_row["matches_played"] + 1,
+            "wins": player_row["wins"] + (1 if result_str == "win" else 0),
+            "draws": player_row["draws"] + (1 if result_str == "draw" else 0),
+            "losses": player_row["losses"] + (1 if result_str == "loss" else 0),
+        }).eq("discord_id", player_id).execute()
 
-    await db.table("match_history").insert({
-        "player_id": player_id,
-        "result": result_str,
-        "my_rating": team_rating,
-        "opponent_rating": 0,
-        "goals_for": goals_for,
-        "goals_against": goals_against,
-        "coins_earned": coins,
-        "points_earned": season_pts,
-        "fixture_id": fixture_id,
-    }).execute()
+        insert_res = await db.table("match_history").insert({
+            "player_id": player_id,
+            "result": result_str,
+            "my_rating": team_rating,
+            "opponent_rating": 0,
+            "goals_for": goals_for,
+            "goals_against": goals_against,
+            "coins_earned": coins,
+            "points_earned": season_pts,
+            "fixture_id": fixture_id,
+            "run_id": run_id,
+        }).execute()
+        history_id = (insert_res.data or [{}])[0]["id"]
 
-    if cards:
-        xp_payload = build_process_match_result_rpc(
-            cards,
-            result=result_str,
-            match_type="league",
-            motm_name=motm_name,
-            key_events=key_events,
-            club_name=club_name,
-            team_rating=team_rating,
-        )
-        await db.rpc("process_match_result", xp_payload).execute()
+    await apply_match_xp_if_needed(
+        db,
+        history_id=history_id,
+        existing_row=existing,
+        cards=cards,
+        result_str=result_str,
+        match_type="league",
+        motm_name=motm_name,
+        key_events=key_events,
+        club_name=club_name,
+        team_rating=team_rating,
+    )
 
     return coins, season_pts
 

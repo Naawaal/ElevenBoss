@@ -9,6 +9,7 @@ from .v2_simulator import MatchState, stream_match, collect_match_events
 from .match_stats import MatchLiveStats, stats_from_events, zone_averages, format_zone_breakdown
 from .fixture_generator import generate_round_robin_fixtures, expected_fixture_counts
 from .formation_positions import get_coordinates_for_formation, FORMATION_COORDINATES, get_slot_role
+from .squad_validation import reserve_fits_formation_slot
 
 __all__ = [
     "MatchPlayerCard",
@@ -29,6 +30,7 @@ __all__ = [
     "get_coordinates_for_formation",
     "FORMATION_COORDINATES",
     "get_slot_role",
+    "reserve_fits_formation_slot",
     "MatchLiveStats",
     "stats_from_events",
     "zone_averages",

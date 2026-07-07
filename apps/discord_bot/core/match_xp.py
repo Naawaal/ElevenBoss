@@ -2,7 +2,11 @@
 """Build per-card match XP payloads for process_match_result (US-23 AC-23e)."""
 from __future__ import annotations
 
+from typing import Any
+
 from player_engine import match_xp_reward
+
+from apps.discord_bot.core.match_runs import mark_match_xp_applied
 
 MATCH_MINUTES = 90
 
@@ -62,3 +66,36 @@ def build_process_match_result_rpc(
         "p_xp_amounts": xp_amounts,
         "p_card_ratings": ratings,
     }
+
+
+async def apply_match_xp_if_needed(
+    db: Any,
+    *,
+    history_id: str,
+    existing_row: dict | None,
+    cards: list[dict],
+    result_str: str,
+    match_type: str,
+    motm_name: str,
+    key_events: list[dict],
+    club_name: str,
+    team_rating: float,
+) -> None:
+    """Apply process_match_result once per match_history row (crash-safe)."""
+    if not cards:
+        await mark_match_xp_applied(db, history_id)
+        return
+    if existing_row and existing_row.get("xp_applied_at"):
+        return
+
+    xp_payload = build_process_match_result_rpc(
+        cards,
+        result=result_str,
+        match_type=match_type,
+        motm_name=motm_name,
+        key_events=key_events,
+        club_name=club_name,
+        team_rating=team_rating,
+    )
+    await db.rpc("process_match_result", xp_payload).execute()
+    await mark_match_xp_applied(db, history_id)
