@@ -1315,20 +1315,12 @@ class DevelopmentCog(commands.Cog):
         try:
             db = await get_client()
 
-            player_res = await db.table("players").select("*").eq("discord_id", interaction.user.id).maybe_single().execute()
-            player = player_res.data if player_res else None
-
-            if not player:
+            player_res = await db.table("players").select("discord_id").eq("discord_id", interaction.user.id).maybe_single().execute()
+            if not player_res or not player_res.data:
                 await interaction.followup.send(embed=error_embed("Player profile not found."), ephemeral=True)
                 return
 
-            embed = discord.Embed(
-                title="🏋️‍♂️ Development Center",
-                description=f"Welcome to **{player['club_name']}** development center. Train stats, fuse duplicate cards, evolve playstyles, or allocate skill points.",
-                color=0x00FF87
-            )
-            view = DevelopmentHubView(interaction.user.id)
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            await show_hub(interaction, interaction.user.id)
 
         except Exception as e:
             logger.exception("Failed to load Development Center.")
