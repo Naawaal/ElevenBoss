@@ -1,6 +1,8 @@
 # apps/discord_bot/cogs/marketplace_cog.py
 from __future__ import annotations
+import json
 import logging
+import time
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -12,6 +14,25 @@ from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.middleware.match_lock import assert_not_in_match
 
 logger = logging.getLogger(__name__)
+
+
+def _agent_sale_dbg(location: str, message: str, data: dict, hypothesis_id: str, run_id: str = "pre-fix") -> None:
+    # #region agent log
+    try:
+        with open("debug-22137e.log", "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "sessionId": "22137e",
+                "runId": run_id,
+                "hypothesisId": hypothesis_id,
+                "location": location,
+                "message": message,
+                "data": data,
+                "timestamp": int(time.time() * 1000),
+            }) + "\n")
+    except Exception:
+        pass
+    # #endregion
+
 
 async def show_marketplace_hub(interaction: discord.Interaction, owner_id: int):
     db = await get_client()
@@ -98,6 +119,25 @@ async def show_sell_menu(interaction: discord.Interaction, owner_id: int):
         and p["id"] not in evo_card_ids
         and p["id"] not in training_card_ids
     ]
+
+    # #region agent log
+    owner_evo_res = await db.table("active_evolutions").select("card_id,status").eq("owner_id", owner_id).execute()
+    owner_evo_rows = owner_evo_res.data or []
+    _agent_sale_dbg(
+        "marketplace_cog.py:show_sell_menu",
+        "sell menu eligibility snapshot",
+        {
+            "owner_id": owner_id,
+            "roster_count": len(roster),
+            "eligible_count": len(eligible_players),
+            "starting_card_ids": sorted(starting_card_ids),
+            "ui_active_evo_card_ids": sorted(evo_card_ids),
+            "training_card_ids": sorted(training_card_ids),
+            "owner_evo_rows": owner_evo_rows,
+        },
+        "A",
+    )
+    # #endregion
 
     embed = discord.Embed(
         title="🤝 Sell Roster Player",
@@ -211,6 +251,27 @@ class SellPlayerSubView(discord.ui.View):
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
 
+            card_id = self.selected_card["id"] if self.selected_card else None
+            # #region agent log
+            card_evo_res = await db.table("active_evolutions").select("card_id,status,owner_id").eq("card_id", card_id).execute()
+            card_evo_rows = card_evo_res.data or []
+            active_evo_res = await db.table("active_evolutions").select("card_id,status").eq("card_id", card_id).eq("status", "active").execute()
+            _agent_sale_dbg(
+                "marketplace_cog.py:confirm_sale_callback",
+                "confirm sale pre-rpc snapshot",
+                {
+                    "owner_id": self.owner_id,
+                    "card_id": card_id,
+                    "card_name": self.selected_card.get("name") if self.selected_card else None,
+                    "in_eligible_players": any(p["id"] == card_id for p in self.eligible_players),
+                    "eligible_ids": [p["id"] for p in self.eligible_players[:25]],
+                    "card_evo_rows_any_status": card_evo_rows,
+                    "card_active_evo_rows": active_evo_res.data or [],
+                },
+                "A",
+            )
+            # #endregion
+
             res = await db.rpc("process_agent_sale", {
                 "p_club_id": self.owner_id,
                 "p_card_id": self.selected_card["id"],
@@ -232,6 +293,19 @@ class SellPlayerSubView(discord.ui.View):
             await show_sell_menu(interaction, self.owner_id)
 
         except Exception as e:
+            # #region agent log
+            _agent_sale_dbg(
+                "marketplace_cog.py:confirm_sale_callback",
+                "confirm sale rpc failed",
+                {
+                    "owner_id": self.owner_id,
+                    "card_id": self.selected_card["id"] if self.selected_card else None,
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                },
+                "A",
+            )
+            # #endregion
             logger.exception("Failed executing process_agent_sale RPC.")
             await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
 
