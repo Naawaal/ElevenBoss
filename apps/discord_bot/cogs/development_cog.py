@@ -4,12 +4,17 @@ import logging
 import discord
 from discord import app_commands
 from discord.ext import commands
-from postgrest.exceptions import APIError
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
+from apps.discord_bot.core.api_errors import api_error_message
+from apps.discord_bot.core.drill_rpc import parse_stat_drill_result
 from apps.discord_bot.core.select_helpers import rebuild_select_options
-from apps.discord_bot.core.view_helpers import disable_view_on_timeout, set_view_controls_disabled
+from apps.discord_bot.core.view_helpers import (
+    disable_view_on_timeout,
+    edit_ephemeral_hub_message,
+    set_view_controls_disabled,
+)
 from player_engine import (
     CANCEL_FEE_COINS,
     EVOLUTION_START_ENERGY,
@@ -74,6 +79,11 @@ async def fetch_evolution_hub_status(db, owner_id: int) -> dict:
 
 def evolution_start_gate_message(status: dict) -> str | None:
     active_count = int(status.get("active_count", 0))
+    if active_count > MAX_ACTIVE_EVOLUTIONS:
+        return (
+            f"You have **{active_count}** active evolutions but the club limit is **{MAX_ACTIVE_EVOLUTIONS}**. "
+            "Cancel excess tracks from the Evolution hub to start new ones."
+        )
     if active_count >= MAX_ACTIVE_EVOLUTIONS:
         return (
             f"You already have {MAX_ACTIVE_EVOLUTIONS} evolutions in progress. "
@@ -94,23 +104,7 @@ STAT_DRILLS = {
 
 
 def _api_message(exc: Exception) -> str:
-    if isinstance(exc, APIError) and exc.args and isinstance(exc.args[0], dict):
-        return exc.args[0].get("message", str(exc))
-    return str(exc)
-
-
-async def _edit_hub_message(interaction: discord.Interaction, embed: discord.Embed, view: discord.ui.View) -> None:
-    if not interaction.response.is_done():
-        await interaction.response.edit_message(embed=embed, view=view)
-        return
-    if interaction.message is not None:
-        try:
-            # ponytail: after defer(), message.edit() 404s on ephemeral — use webhook edit.
-            await interaction.followup.edit_message(interaction.message.id, embed=embed, view=view)
-        except discord.NotFound:
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        return
-    await interaction.edit_original_response(embed=embed, view=view)
+    return api_error_message(exc)
 
 
 # --- Navigation / Switch helpers ---
@@ -144,7 +138,7 @@ async def show_hub(interaction: discord.Interaction, owner_id: int):
             inline=False,
         )
     view = DevelopmentHubView(owner_id, show_claim_rewards=pending_count > 0)
-    await _edit_hub_message(interaction, embed, view)
+    await edit_ephemeral_hub_message(interaction, embed, view)
 
 # --- VIEWS ---
 
@@ -260,7 +254,7 @@ async def show_training_menu(interaction: discord.Interaction, owner_id: int) ->
             inline=False,
         )
 
-    await _edit_hub_message(interaction, embed, StatDrillView(owner_id, eligible_players[:25]))
+    await edit_ephemeral_hub_message(interaction, embed, StatDrillView(owner_id, eligible_players[:25]))
 
 
 class StatDrillView(discord.ui.View):
@@ -366,12 +360,12 @@ class StatDrillView(discord.ui.View):
     async def player_select_callback(self, interaction: discord.Interaction) -> None:
         self.selected_card_id = self.player_select.values[0]
         self._build_items()
-        await _edit_hub_message(interaction, interaction.message.embeds[0], self)
+        await edit_ephemeral_hub_message(interaction, interaction.message.embeds[0], self)
 
     async def drill_select_callback(self, interaction: discord.Interaction) -> None:
         self.selected_drill = self.drill_select.values[0]
         self._build_items()
-        await _edit_hub_message(interaction, interaction.message.embeds[0], self)
+        await edit_ephemeral_hub_message(interaction, interaction.message.embeds[0], self)
 
     async def run_drill_callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
@@ -396,12 +390,28 @@ class StatDrillView(discord.ui.View):
                 "p_drill_id": self.selected_drill,
             }).execute()
             result = res.data or {}
-            xp_gained = int(result.get("xp_gained", 0))
-            levels = int(result.get("levels_gained", 0))
-            skill_pts = int(result.get("skill_points_granted", 0))
-            new_level = result.get("new_level", selected_p.get("level", 1))
+            parsed = parse_stat_drill_result(result)
+            # #region agent log
+            import json as _json
+            import time as _time
+            with open("debug-098b89.log", "a", encoding="utf-8") as _df:
+                _df.write(_json.dumps({
+                    "sessionId": "098b89",
+                    "runId": "drill-fix",
+                    "hypothesisId": "A",
+                    "timestamp": int(_time.time() * 1000),
+                    "location": "development_cog.py:run_drill_callback",
+                    "message": "stat_drill_rpc_parsed",
+                    "data": {"raw_keys": sorted(result.keys()), "parsed": parsed},
+                }) + "\n")
+            # #endregion
+            xp_gained = parsed["xp_gained"]
+            levels = parsed["levels_gained"]
+            skill_pts = parsed["skill_points_granted"]
+            new_level = parsed["new_level"]
             new_ovr = result.get("new_ovr", selected_p["overall"])
-            coins_spent = result.get("coins_spent", 0)
+            coins_spent = parsed["coins_spent"]
+            energy_spent = parsed["energy_spent"]
 
             level_note = ""
             if levels > 0:
@@ -411,7 +421,7 @@ class StatDrillView(discord.ui.View):
                 f"**{selected_p['name']}** completed **{STAT_DRILLS.get(self.selected_drill, self.selected_drill)}**.\n"
                 f"• XP gained: `+{xp_gained}`{level_note}\n"
                 f"• OVR: **{new_ovr}** (unchanged — spend skill points to raise stats)\n"
-                f"• Spent: `15 energy` + `🪙 {coins_spent:,} coins`"
+                f"• Spent: `{energy_spent} energy` + `🪙 {coins_spent:,} coins`"
             )
             await interaction.followup.send(embed=success_embed(msg), ephemeral=True)
             await show_training_menu(interaction, self.owner_id)
@@ -441,7 +451,7 @@ async def show_card_fusion_menu(interaction: discord.Interaction, owner_id: int)
 
     if len(cards) < 2:
         embed = error_embed("You need at least 2 player cards to fuse (one to upgrade and one to sacrifice).")
-        await _edit_hub_message(interaction, embed, CardFusionView(owner_id, [], []))
+        await edit_ephemeral_hub_message(interaction, embed, CardFusionView(owner_id, [], []))
         return
 
     starting_ids, evo_ids = await _fetch_card_locks(owner_id)
@@ -458,7 +468,7 @@ async def show_card_fusion_menu(interaction: discord.Interaction, owner_id: int)
         elif not sacrifice_pool:
             msg = "No eligible sacrifice cards. Starting XI and evolution-locked players cannot be fused."
         embed = error_embed(msg)
-        await _edit_hub_message(interaction, embed, CardFusionView(owner_id, target_pool, sacrifice_pool))
+        await edit_ephemeral_hub_message(interaction, embed, CardFusionView(owner_id, target_pool, sacrifice_pool))
         return
 
     embed = discord.Embed(
@@ -473,7 +483,7 @@ async def show_card_fusion_menu(interaction: discord.Interaction, owner_id: int)
     )
     embed.add_field(name="Fusion Preview", value="Select keeper and sacrifice to see projected XP.", inline=False)
     embed.set_footer(text="Showing your top 25 eligible cards per role.")
-    await _edit_hub_message(interaction, embed, CardFusionView(owner_id, target_pool, sacrifice_pool))
+    await edit_ephemeral_hub_message(interaction, embed, CardFusionView(owner_id, target_pool, sacrifice_pool))
 
 
 class FusionKeeperSelect(discord.ui.Select):
@@ -686,7 +696,17 @@ async def show_club_evolutions_hub(interaction: discord.Interaction, owner_id: i
     )
 
     slots_label = status.get("slots_label") or f"{len(active)}/{MAX_ACTIVE_EVOLUTIONS} slots used"
+    active_count = int(status.get("active_count", len(active)))
     embed.add_field(name="Slots", value=slots_label, inline=True)
+    if active_count > MAX_ACTIVE_EVOLUTIONS:
+        embed.add_field(
+            name="⚠️ Over Slot Limit",
+            value=(
+                f"**{active_count}** tracks are active but only **{MAX_ACTIVE_EVOLUTIONS}** are allowed. "
+                "Cancel excess tracks from **Manage Active** below."
+            ),
+            inline=False,
+        )
 
     remaining = int(status.get("cooldown_remaining_seconds", 0))
     if status.get("can_cold_start"):
@@ -731,7 +751,7 @@ async def show_club_evolutions_hub(interaction: discord.Interaction, owner_id: i
         embed.add_field(name="Recently Completed", value="\n".join(hist_lines), inline=False)
 
     view = ClubEvolutionsHubView(owner_id, active, status)
-    await _edit_hub_message(interaction, embed, view)
+    await edit_ephemeral_hub_message(interaction, embed, view)
 
 
 class ClubEvolutionsHubView(discord.ui.View):
@@ -827,7 +847,7 @@ async def show_evols_menu(interaction: discord.Interaction, owner_id: int, prese
     if not roster:
         embed = discord.Embed(title="🧬 Evolutions Hub", description="No players in your roster to evolve.", color=0x00FF87)
         view = EvolutionsSubView(owner_id, None, None, roster, hub_status=hub_status)
-        await _edit_hub_message(interaction, embed, view)
+        await edit_ephemeral_hub_message(interaction, embed, view)
         return
 
     # Choose selected card
@@ -889,7 +909,7 @@ async def show_evols_menu(interaction: discord.Interaction, owner_id: int, prese
     view = EvolutionsSubView(
         owner_id, card, evo, roster, completed_tracks, hub_status=hub_status, start_blocked=bool(gate)
     )
-    await _edit_hub_message(interaction, embed, view)
+    await edit_ephemeral_hub_message(interaction, embed, view)
 
 
 class EvolutionsSubView(discord.ui.View):
@@ -1127,7 +1147,7 @@ async def show_skills_menu(interaction: discord.Interaction, owner_id: int, pres
     if not roster:
         embed = discord.Embed(title="⭐ Skill Allocation", description="No roster players found.", color=0x00FF87)
         view = SkillsSubView(owner_id, None, roster)
-        await _edit_hub_message(interaction, embed, view)
+        await edit_ephemeral_hub_message(interaction, embed, view)
         return
 
     target_card_id = preselected_card_id or roster[0]["id"]
@@ -1137,7 +1157,7 @@ async def show_skills_menu(interaction: discord.Interaction, owner_id: int, pres
     embed = discord.Embed(
         title=f"⭐ Allocate Skills: {card['name']}",
         description=(
-            f"Available Skill Points: **{card.get('skill_points', 0)}**\n\n"
+            f"Available Skill Points: **{int(card.get('skill_points', 0) or 0)}**\n\n"
             f"⚡ **PAC**: `{card.get('pac', 50)}` | "
             f"🎯 **SHO**: `{card.get('sho', 50)}` | "
             f"🧠 **PAS**: `{card.get('pas', 50)}`\n"
@@ -1147,9 +1167,15 @@ async def show_skills_menu(interaction: discord.Interaction, owner_id: int, pres
         ),
         color=0x00FF87
     )
+    skill_pts = int(card.get("skill_points", 0) or 0)
+    if skill_pts <= 0:
+        embed.description += (
+            "\n\n_No skill points yet — level up players via **Training Drills** or matches, "
+            "then return here to spend points._"
+        )
 
     view = SkillsSubView(owner_id, card, roster)
-    await _edit_hub_message(interaction, embed, view)
+    await edit_ephemeral_hub_message(interaction, embed, view)
 
 
 class SkillsSubView(discord.ui.View):
@@ -1168,13 +1194,12 @@ class SkillsSubView(discord.ui.View):
             player_sel.callback = self.player_select_callback
             self.add_item(player_sel)
 
-        # 2. Add stat allocation buttons if card has points
-        if card:
-            has_points = card.get("skill_points", 0) > 0
+        # 2. Stat buttons only when the card has points to spend
+        if card and int(card.get("skill_points", 0) or 0) > 0:
             stats = [("pac", "PAC +1"), ("sho", "SHO +1"), ("pas", "PAS +1"), ("dri", "DRI +1"), ("def", "DEF +1"), ("phy", "PHY +1")]
             for idx, (col, label) in enumerate(stats):
                 row = 1 if idx < 3 else 2
-                btn = SkillPointButton(card["id"], col, label, has_points, owner_id, row)
+                btn = SkillPointButton(card["id"], col, label, True, owner_id, row)
                 self.add_item(btn)
 
         # 3. Back button

@@ -24,7 +24,9 @@ async def weekly_league_reset_job(bot: commands.Bot) -> None:
         db = await get_client()
         
         # 1. Fetch all players
-        players_res = await db.table("players").select("discord_id, division, league_points, goal_difference, username").execute()
+        players_res = await db.table("players").select(
+            "discord_id, division, league_points, goal_difference, username, is_ai, best_weekly_pts"
+        ).execute()
         all_players = players_res.data or []
         if not all_players:
             logger.info("No players found to reset.")
@@ -70,25 +72,58 @@ async def weekly_league_reset_job(bot: commands.Bot) -> None:
                 relegated_ids_valid = [pid for pid in res.relegated_ids]
                 relegations.extend(relegated_ids_valid)
 
+        # 3b. Snapshot best weekly stats (in-memory points; before reset)
+        for div_name in DIVISIONS:
+            div_humans = sorted(
+                [p for p in by_division[div_name] if not p.get("is_ai")],
+                key=lambda p: (-p["league_points"], -p["goal_difference"]),
+            )
+            for rank, p in enumerate(div_humans, 1):
+                pts = int(p.get("league_points", 0))
+                best = int(p.get("best_weekly_pts") or 0)
+                if pts > best:
+                    await db.table("players").update({
+                        "best_weekly_pts": pts,
+                        "best_weekly_rank": rank,
+                    }).eq("discord_id", p["discord_id"]).execute()
+
         # 4. Apply database division updates
-        # Update promoted players
+        promo_new_div: dict[int, str] = {}
         for pid in promotions:
-            # Find old division index
             p_data = next((x for x in all_players if x["discord_id"] == pid), None)
             if p_data:
                 old_div = p_data["division"]
                 new_div = DIVISIONS[min(DIVISIONS.index(old_div) + 1, len(DIVISIONS) - 1)]
                 await db.table("players").update({"division": new_div}).eq("discord_id", pid).execute()
-                await _send_dm(bot, pid, f"🚀 **CONGRATULATIONS!** You have been promoted to the **{new_div}** division in ElevenBoss! Check `/profile` for details.")
+                promo_new_div[pid] = new_div
 
-        # Update relegated players
+        releg_new_div: dict[int, str] = {}
         for pid in relegations:
             p_data = next((x for x in all_players if x["discord_id"] == pid), None)
             if p_data:
                 old_div = p_data["division"]
                 new_div = DIVISIONS[max(DIVISIONS.index(old_div) - 1, 0)]
                 await db.table("players").update({"division": new_div}).eq("discord_id", pid).execute()
-                await _send_dm(bot, pid, f"📉 **NOTICE**: You have been relegated to the **{new_div}** division in ElevenBoss. Build up your squad and push for promotion next week!")
+                releg_new_div[pid] = new_div
+
+        # 4b. Weekly summary DMs
+        for div_name in DIVISIONS:
+            div_humans = sorted(
+                [p for p in by_division[div_name] if not p.get("is_ai")],
+                key=lambda p: (-p["league_points"], -p["goal_difference"]),
+            )
+            for rank, p in enumerate(div_humans, 1):
+                pts = int(p.get("league_points", 0))
+                pid = p["discord_id"]
+                if pts <= 0 and pid not in promo_new_div and pid not in releg_new_div:
+                    continue
+                lines = [f"📊 **Weekly Division Rank** — **#{rank}** in **{div_name}** with **{pts}** pts."]
+                if pid in promo_new_div:
+                    lines.append(f"🚀 Promoted to **{promo_new_div[pid]}**!")
+                elif pid in releg_new_div:
+                    lines.append(f"📉 Relegated to **{releg_new_div[pid]}**.")
+                lines.append("Fresh week starts now — `/leaderboard`")
+                await _send_dm(bot, pid, "\n".join(lines))
 
         # 5. Reset all points and goal differences to 0
         await db.table("players").update({"league_points": 0, "goal_difference": 0}).neq("discord_id", 0).execute()

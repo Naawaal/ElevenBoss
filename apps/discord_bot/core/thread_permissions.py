@@ -16,19 +16,25 @@ async def restrict_thread_to_bot_and_reactions(thread: discord.Thread, guild: di
     """Disable member messages; allow emoji reactions and bot posts."""
     try:
         everyone = guild.default_role
-        member_ow = thread.overwrites_for(everyone)
-        member_ow.send_messages = False
-        member_ow.send_messages_in_threads = False
-        member_ow.add_reactions = True
-        await thread.set_permissions(everyone, overwrite=member_ow)
+        await thread.set_permissions(
+            everyone,
+            overwrite=discord.PermissionOverwrite(
+                send_messages=False,
+                send_messages_in_threads=False,
+                add_reactions=True,
+            ),
+        )
 
         if guild.me:
-            bot_ow = thread.overwrites_for(guild.me)
-            bot_ow.send_messages = True
-            bot_ow.send_messages_in_threads = True
-            bot_ow.add_reactions = True
-            bot_ow.manage_threads = True
-            await thread.set_permissions(guild.me, overwrite=bot_ow)
+            await thread.set_permissions(
+                guild.me,
+                overwrite=discord.PermissionOverwrite(
+                    send_messages=True,
+                    send_messages_in_threads=True,
+                    add_reactions=True,
+                    manage_threads=True,
+                ),
+            )
     except discord.HTTPException:
         logger.debug("Could not set thread permission overwrites for %s", thread.id, exc_info=True)
 
@@ -48,5 +54,5 @@ async def archive_thread_after_delay(
             await thread.edit(archived=True)
     except discord.NotFound:
         pass
-    except discord.HTTPException:
+    except Exception:
         logger.warning("Failed to finalize thread %s", thread.id, exc_info=True)

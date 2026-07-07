@@ -2,30 +2,9 @@
 """Bot and friendly match rewards — economy v2, XP, ladder stats (US-29)."""
 from __future__ import annotations
 
-import json
-import time
 from typing import Any
 
 from apps.discord_bot.core.match_runs import fetch_match_reward_row
-
-
-def _agent_dbg(location: str, message: str, data: dict, hypothesis_id: str) -> None:
-    # #region agent log
-    try:
-        with open("debug-93fd84.log", "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "sessionId": "93fd84",
-                "timestamp": int(time.time() * 1000),
-                "location": location,
-                "message": message,
-                "data": data,
-                "hypothesisId": hypothesis_id,
-                "runId": "pre-fix",
-            }) + "\n")
-    except Exception:
-        pass
-    # #endregion
-
 from apps.discord_bot.core.economy_rpc import (
     apply_match_economy,
     compute_bot_match_coins,
@@ -57,14 +36,6 @@ async def apply_bot_match_rewards(
     key_events: list[dict],
 ) -> int:
     """Apply bot match payouts. Returns coins earned."""
-    # #region agent log
-    _agent_dbg(
-        "match_rewards.py:apply_bot_match_rewards:entry",
-        "reward_apply_start",
-        {"player_id": player_id, "run_id": run_id, "match_type": "bot"},
-        "A",
-    )
-    # #endregion
     existing = await fetch_match_reward_row(db, player_id, run_id=run_id) if run_id else None
     if existing and existing.get("xp_applied_at"):
         return int(existing.get("coins_earned") or 0)
@@ -76,23 +47,7 @@ async def apply_bot_match_rewards(
         await sync_action_energy(db, player_id)
         coins = compute_bot_match_coins(result_str, division_win_coins, v2=v2)
         energy_cost = match_energy_cost("bot", v2=v2)
-        # #region agent log
-        _agent_dbg(
-            "match_rewards.py:apply_bot_match_rewards:pre_economy",
-            "calling apply_match_economy",
-            {"player_id": player_id, "coins": coins, "energy_cost": energy_cost, "v2": v2},
-            "B",
-        )
-        # #endregion
-        econ = await apply_match_economy(db, player_id, coins, energy_cost, "bot", run_id, result_str)
-        # #region agent log
-        _agent_dbg(
-            "match_rewards.py:apply_bot_match_rewards:post_economy",
-            "apply_match_economy returned",
-            {"player_id": player_id, "econ": econ, "coins": coins},
-            "B",
-        )
-        # #endregion
+        await apply_match_economy(db, player_id, coins, energy_cost, "bot", run_id, result_str)
 
         user_lp = player_row.get("global_lp", 0)
         new_lp = max(0, user_lp + lp_change)
@@ -135,14 +90,6 @@ async def apply_bot_match_rewards(
         team_rating=team_rating,
     )
 
-    # #region agent log
-    _agent_dbg(
-        "match_rewards.py:apply_bot_match_rewards:exit",
-        "bot reward apply finished",
-        {"player_id": player_id, "coins": coins, "had_existing": bool(existing)},
-        "A",
-    )
-    # #endregion
     return coins
 
 
@@ -163,14 +110,6 @@ async def apply_friendly_human_rewards(
     key_events: list[dict],
 ) -> int:
     """Apply friendly match payouts for one human manager. Returns coins earned."""
-    # #region agent log
-    _agent_dbg(
-        "match_rewards.py:apply_friendly_human_rewards:entry",
-        "reward_apply_start",
-        {"player_id": player_id, "run_id": run_id, "match_type": "friendly", "result": result_str},
-        "C",
-    )
-    # #endregion
     existing = await fetch_match_reward_row(db, player_id, run_id=run_id) if run_id else None
     if existing and existing.get("xp_applied_at"):
         return int(existing.get("coins_earned") or 0)
@@ -182,15 +121,7 @@ async def apply_friendly_human_rewards(
         await sync_action_energy(db, player_id)
         coins = compute_friendly_match_coins(result_str, v2=v2)
         energy_cost = match_energy_cost("friendly", v2=v2)
-        econ = await apply_match_economy(db, player_id, coins, energy_cost, "friendly", run_id, result_str)
-        # #region agent log
-        _agent_dbg(
-            "match_rewards.py:apply_friendly_human_rewards:post_economy",
-            "apply_match_economy returned",
-            {"player_id": player_id, "coins": coins, "econ": econ, "result": result_str},
-            "C",
-        )
-        # #endregion
+        await apply_match_economy(db, player_id, coins, energy_cost, "friendly", run_id, result_str)
 
         await db.table("players").update({
             "matches_played": player_row["matches_played"] + 1,

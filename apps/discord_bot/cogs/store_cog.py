@@ -14,7 +14,7 @@ from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.embeds.gacha_embeds import gacha_cooldown_embed, gacha_claim_embed
 from apps.discord_bot.core.economy_rpc import format_action_energy_status, sync_action_energy
-from apps.discord_bot.core.view_helpers import disable_view_on_timeout
+from apps.discord_bot.core.view_helpers import disable_view_on_timeout, set_view_controls_disabled
 from gacha import generate_pack
 
 logger = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
         inline=False,
     )
 
-    view = StoreHubView(owner_id)
+    view = StoreHubView(owner_id, login_claimed_today=login_claimed_today, gacha_ready=gacha_ready)
     if interaction.response.is_done():
         if interaction.message is not None:
             try:
@@ -100,9 +100,25 @@ async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
 
 
 class StoreHubView(discord.ui.View):
-    def __init__(self, owner_id: int) -> None:
+    def __init__(
+        self,
+        owner_id: int,
+        *,
+        login_claimed_today: bool = False,
+        gacha_ready: bool = True,
+    ) -> None:
         super().__init__(timeout=900)
         self.owner_id = owner_id
+        self._sync_button_states(login_claimed_today, gacha_ready)
+
+    def _sync_button_states(self, login_claimed_today: bool, gacha_ready: bool) -> None:
+        for child in self.children:
+            if not isinstance(child, discord.ui.Button):
+                continue
+            if child.custom_id == "store_daily_login":
+                child.disabled = login_claimed_today
+            elif child.custom_id == "store_gacha_claim":
+                child.disabled = not gacha_ready
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -113,6 +129,7 @@ class StoreHubView(discord.ui.View):
     @discord.ui.button(style=discord.ButtonStyle.success, label="🎁 Claim Daily Login", custom_id="store_daily_login", row=0)
     async def daily_login_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.defer(ephemeral=True)
+        set_view_controls_disabled(self, disabled=True)
         try:
             db = await get_client()
             res = await db.rpc("claim_daily_login", {"p_club_id": self.owner_id}).execute()
@@ -125,11 +142,21 @@ class StoreHubView(discord.ui.View):
             )
             await show_store(interaction, self.owner_id)
         except Exception as exc:
-            await interaction.followup.send(embed=error_embed(str(exc)), ephemeral=True)
+            err = str(exc)
+            if "already claimed today" in err.lower():
+                await interaction.followup.send(
+                    embed=error_embed("You've already claimed your daily login bonus today."),
+                    ephemeral=True,
+                )
+                await show_store(interaction, self.owner_id)
+                return
+            set_view_controls_disabled(self, disabled=False)
+            await interaction.followup.send(embed=error_embed(err), ephemeral=True)
 
     @discord.ui.button(style=discord.ButtonStyle.primary, label="⚡ Buy Energy Refill", custom_id="store_energy_refill", row=0)
     async def energy_refill_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.defer(ephemeral=True)
+        set_view_controls_disabled(self, disabled=True)
         try:
             db = await get_client()
             res = await db.rpc("purchase_energy_refill", {"p_club_id": self.owner_id}).execute()
@@ -142,11 +169,13 @@ class StoreHubView(discord.ui.View):
             )
             await show_store(interaction, self.owner_id)
         except Exception as exc:
+            set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(embed=error_embed(str(exc)), ephemeral=True)
 
     @discord.ui.button(style=discord.ButtonStyle.secondary, label="🎫 Claim Free Pack", custom_id="store_gacha_claim", row=0)
     async def gacha_claim_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.defer(ephemeral=True)
+        set_view_controls_disabled(self, disabled=True)
         try:
             db = await get_client()
             pack = generate_pack(n=5)
@@ -184,10 +213,12 @@ class StoreHubView(discord.ui.View):
                 try:
                     remaining = int(err.split("COOLDOWN:")[-1].strip())
                     await interaction.followup.send(embed=gacha_cooldown_embed(remaining), ephemeral=True)
+                    await show_store(interaction, self.owner_id)
                     return
                 except ValueError:
                     pass
             logger.exception("Failed to claim daily pack in store.")
+            set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(
                 embed=error_embed(f"An error occurred while claiming your pack: {err}"),
                 ephemeral=True,

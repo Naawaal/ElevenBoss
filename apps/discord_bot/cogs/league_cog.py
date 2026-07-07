@@ -13,6 +13,7 @@ from apps.discord_bot.db.client import get_client
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from match_engine import generate_round_robin_fixtures, simulate_match, MatchInput, MatchPlayerCard
 from apps.discord_bot.core.locks import get_guild_thread_lock
+from apps.discord_bot.core.competitive_display import league_standings_leaderboard_hint
 from apps.discord_bot.core.league_journal import (
     get_or_create_league_journal,
     resolve_season_threads,
@@ -243,22 +244,12 @@ async def update_current_matchday(db, season_id: str) -> int | None:
                 "status": "completed",
                 "end_time": datetime.now(timezone.utc).isoformat()
             }).eq("id", season_id).execute()
-            # #region agent log
+
             try:
-                import json, time
-                with open("debug-93fd84.log", "a", encoding="utf-8") as _f:
-                    _f.write(json.dumps({
-                        "sessionId": "93fd84",
-                        "timestamp": int(time.time() * 1000),
-                        "location": "league_cog.py:update_current_matchday",
-                        "message": "season_completed_without_prize_rpc",
-                        "data": {"season_id": season_id, "matchday": curr},
-                        "hypothesisId": "D",
-                        "runId": "pre-fix",
-                    }) + "\n")
+                await db.rpc("distribute_season_prizes", {"p_season_id": season_id}).execute()
+                logger.info("Distributed season prizes for %s", season_id)
             except Exception:
-                pass
-            # #endregion
+                logger.exception("distribute_season_prizes failed for season %s", season_id)
             
             league_res = await db.table("leagues").select("guild_id").eq("id", season["league_id"]).maybe_single().execute()
             if league_res and league_res.data:
@@ -635,7 +626,8 @@ class LeagueCog(commands.Cog):
         )
         table_str = format_standings_table(standings, all_fixtures)
         embed.description = f"```\n{table_str}\n```\n*{tie_breaker_footer()}*"
-        
+        embed.set_footer(text=league_standings_leaderboard_hint())
+
         view = StandingsView(self, interaction.user.id, hub_view)
         await interaction.edit_original_response(embed=embed, view=view)
         view.message = hub_view.message
@@ -928,7 +920,7 @@ class LeagueCog(commands.Cog):
             value=f"{window_end_str}🏆 Matchday **{curr}** of **{total}**",
             inline=False,
         )
-        embed.set_footer(text=f"{tie_breaker_footer()} • Registered: {reg_count}")
+        embed.set_footer(text=f"Registered: {reg_count} • {league_standings_leaderboard_hint()}")
         return embed
 
     async def show_opponent_scout(self, interaction: discord.Interaction, hub_view: LeagueHubView):

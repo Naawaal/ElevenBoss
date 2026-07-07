@@ -24,6 +24,8 @@ from apps.discord_bot.core.match_cards import card_from_db_row, fetch_playstyles
 from apps.discord_bot.core.economy_rpc import sync_action_energy, match_energy_cost, economy_v2_enabled
 from apps.discord_bot.core.league_rewards import apply_league_human_rewards
 from apps.discord_bot.core.match_rewards import apply_bot_match_rewards, apply_friendly_human_rewards
+from apps.discord_bot.core.competitive_display import format_bot_rewards_block, format_season_reward_line
+from leagues import division_rank_points, global_lp_delta, clamp_global_lp
 from apps.discord_bot.core.thread_permissions import (
     MATCH_THREAD_ARCHIVE_DELAY_SEC,
     archive_thread_after_delay,
@@ -326,23 +328,31 @@ class StandardMatchHandler(IMatchOutputHandler):
             )
         
         lp_change = kwargs.get("lp_change")
-        total_lp = kwargs.get("total_lp")
-        division_name = kwargs.get("division_name")
-        
-        rewards_lines = [f"🪙 **+{active_earned} coins**"]
-        if lp_change is not None:
-            sign = "+" if lp_change >= 0 else ""
-            rewards_lines.append(f"🏆 **{sign}{lp_change} LP** (Total: {total_lp} LP - {division_name})")
+        global_divisions = kwargs.get("global_divisions") or []
+        weekly_total = kwargs.get("weekly_total", 0)
+        new_lp = kwargs.get("total_lp", 0)
+
+        if lp_change is not None and global_divisions:
+            rewards_value = format_bot_rewards_block(
+                coins=active_earned,
+                div_pts_earned=active_pts,
+                weekly_total=weekly_total,
+                lp_delta=lp_change,
+                new_lp=new_lp,
+                divisions=global_divisions,
+            )
         else:
-            rewards_lines.append(f"🏆 **+{active_pts} league pts**")
+            rewards_value = f"🪙 **+{active_earned} coins**"
+            if active_pts > 0:
+                rewards_value += f"\n📊 **+{active_pts} Division Rank**"
 
         press_embed.add_field(
             name="🎁 Rewards",
-            value="\n".join(rewards_lines),
+            value=rewards_value,
             inline=True
         )
         press_embed.set_footer(
-            text=f"✅ Rewards, XP gains, and league standings saved to database. {MATCH_ENGINE_FOOTER}"
+            text=f"✅ Rewards saved. Check `/leaderboard` for rankings. {MATCH_ENGINE_FOOTER}"
         )
         await target.send(embed=press_embed)
 
@@ -490,29 +500,29 @@ class LeagueMatchHandler(IMatchOutputHandler):
 
         rewards_text = ""
         db = await get_client()
-        # Find home manager info
-        home_res = await db.table("players").select("*").eq("discord_id", home_team_id).maybe_single().execute()
+        home_res = await db.table("players").select("is_ai").eq("discord_id", home_team_id).maybe_single().execute()
         home_p = home_res.data if home_res else None
-        # Find away manager info
-        away_res = await db.table("players").select("*").eq("discord_id", away_team_id).maybe_single().execute()
+        away_res = await db.table("players").select("is_ai").eq("discord_id", away_team_id).maybe_single().execute()
         away_p = away_res.data if away_res else None
 
-        if home_p and not home_p["is_ai"]:
-            home_result_str = "win" if state.home_score > state.away_score else ("draw" if state.home_score == state.away_score else "loss")
-            home_coins = 150 if home_result_str == "win" else (50 if home_result_str == "draw" else 0)
-            home_pts = 3 if home_result_str == "win" else (1 if home_result_str == "draw" else 0)
-            rewards_text += f"🏡 **{home_name}**: `🪙 +{home_coins} coins`, `🏆 +{home_pts} pts`\n"
-        if away_p and not away_p["is_ai"]:
-            away_result_str = "win" if state.away_score > state.home_score else ("draw" if state.away_score == state.home_score else "loss")
-            away_coins = 150 if away_result_str == "win" else (50 if away_result_str == "draw" else 0)
-            away_pts = 3 if away_result_str == "win" else (1 if away_result_str == "draw" else 0)
-            rewards_text += f"✈️ **{away_name}**: `🪙 +{away_coins} coins`, `🏆 +{away_pts} pts`\n"
+        kw_home_coins = kwargs.get("home_coins")
+        kw_away_coins = kwargs.get("away_coins")
+        kw_home_pts = kwargs.get("home_pts")
+        kw_away_pts = kwargs.get("away_pts")
+        if kw_home_coins is not None and kw_home_pts is not None:
+            rewards_text += format_season_reward_line(home_name, kw_home_coins, kw_home_pts, prefix="🏡 ") + "\n"
+            if kwargs.get("home_milestone"):
+                rewards_text += f"⭐ **{home_name}** Matchday Milestone: +{kwargs['home_milestone']} coins!\n"
+        if kw_away_coins is not None and kw_away_pts is not None:
+            rewards_text += format_season_reward_line(away_name, kw_away_coins, kw_away_pts, prefix="✈️ ") + "\n"
+            if kwargs.get("away_milestone"):
+                rewards_text += f"⭐ **{away_name}** Matchday Milestone: +{kwargs['away_milestone']} coins!\n"
 
         if rewards_text:
-            press_embed.add_field(name="🎁 Match Rewards", value=rewards_text, inline=True)
-        
+            press_embed.add_field(name="🎁 Match Rewards", value=rewards_text.strip(), inline=True)
+
         press_embed.set_footer(
-            text=f"✅ Rewards, XP gains, and league standings saved to database. {MATCH_ENGINE_FOOTER}"
+            text=f"✅ Season Pts updated. `/leaderboard` → Season tab. {MATCH_ENGINE_FOOTER}"
         )
 
         winner_name = home_name if state.home_score > state.away_score else (away_name if state.away_score > state.home_score else None)
@@ -891,6 +901,10 @@ async def run_league_match_simulation(
         stats_rng.choice(all_human_cards).name if all_human_cards else "AI Match MVP"
     )
 
+    h_coins = a_coins = 0
+    h_pts = a_pts = 0
+    h_milestone = a_milestone = None
+
     if not home_p["is_ai"]:
         h_coins, h_pts = await apply_league_human_rewards(
             db,
@@ -909,7 +923,7 @@ async def run_league_match_simulation(
             deduct_energy=(active_player_id == fixture["home_team_id"]),
         )
         from apps.discord_bot.core.league_rewards import check_matchday_milestone
-        await check_matchday_milestone(
+        h_milestone = await check_matchday_milestone(
             db, player_id=int(fixture["home_team_id"]), season_id=fixture["season_id"],
             matchday=fixture["matchday"], points_earned=h_pts,
         )
@@ -932,15 +946,10 @@ async def run_league_match_simulation(
             deduct_energy=(active_player_id == fixture["away_team_id"]),
         )
         from apps.discord_bot.core.league_rewards import check_matchday_milestone
-        await check_matchday_milestone(
+        a_milestone = await check_matchday_milestone(
             db, player_id=int(fixture["away_team_id"]), season_id=fixture["season_id"],
             matchday=fixture["matchday"], points_earned=a_pts,
         )
-
-    home_coins = 0
-    home_pts = {"win": 3, "draw": 1, "loss": 0}[home_result_str]
-    away_coins = 0
-    away_pts = {"win": 3, "draw": 1, "loss": 0}[away_result_str]
 
     await db.table("league_fixtures").update({
         "home_score": state.home_score,
@@ -1010,13 +1019,13 @@ async def run_league_match_simulation(
         shots_home=shots_h,
         shots_away=shots_a,
         motm=motm,
-        coins_earned=home_coins if active_player_id == fixture["home_team_id"] else away_coins,
-        points_earned=home_pts if active_player_id == fixture["home_team_id"] else away_pts,
+        coins_earned=h_coins if active_player_id == fixture["home_team_id"] else a_coins,
+        points_earned=h_pts if active_player_id == fixture["home_team_id"] else a_pts,
         key_events=key_events_list
     )
 
-    active_earned = home_coins if active_player_id == fixture["home_team_id"] else away_coins
-    active_pts = home_pts if active_player_id == fixture["home_team_id"] else away_pts
+    active_earned = h_coins if active_player_id == fixture["home_team_id"] else a_coins
+    active_pts = h_pts if active_player_id == fixture["home_team_id"] else a_pts
 
     await handler.finalize_match(
         result=match_res,
@@ -1031,6 +1040,12 @@ async def run_league_match_simulation(
         away_team_id=fixture["away_team_id"],
         zone_home=format_zone_breakdown(home_squad, home_name),
         zone_away=format_zone_breakdown(away_squad, away_name),
+        home_coins=h_coins if not home_p["is_ai"] else None,
+        away_coins=a_coins if not away_p["is_ai"] else None,
+        home_pts=h_pts if not home_p["is_ai"] else None,
+        away_pts=a_pts if not away_p["is_ai"] else None,
+        home_milestone=h_milestone,
+        away_milestone=a_milestone,
     )
 
     if run_id:
@@ -1350,21 +1365,12 @@ class BattleCog(commands.Cog):
             
             # Generate MatchResult and rewards
             win_coins = current_div["win_coins"]
-            if state.home_score > state.away_score:
-                res_str = "win"
-                points_earned = 3
-                lp_change = 15
-            elif state.home_score == state.away_score:
-                res_str = "draw"
-                points_earned = 1
-                lp_change = 5
-            else:
-                res_str = "loss"
-                points_earned = 0
-                lp_change = -10
-
-            new_lp = max(0, user_lp + lp_change)
-            actual_lp_change = new_lp - user_lp
+            res_str = "win" if state.home_score > state.away_score else (
+                "draw" if state.home_score == state.away_score else "loss"
+            )
+            points_earned = division_rank_points(res_str)
+            lp_delta = global_lp_delta(res_str)
+            new_lp, actual_lp_change = clamp_global_lp(user_lp, lp_delta)
 
             poss_h, poss_a, shots_h, shots_a = _match_stats_from_state(state)
             motm = state.live_stats.pick_motm(random.choice(match_cards).name)
@@ -1381,7 +1387,7 @@ class BattleCog(commands.Cog):
                 goals_for=state.home_score,
                 goals_against=state.away_score,
                 points_earned=points_earned,
-                lp_change=lp_change,
+                lp_change=lp_delta,
                 division_win_coins=win_coins,
                 run_id=bot_run_id,
                 motm_name=motm,
@@ -1403,12 +1409,7 @@ class BattleCog(commands.Cog):
                 motm=motm
             )
 
-            # Match new division for displaying in press conference
-            new_div_name = "Bronze III"
-            for div in divisions:
-                if new_lp >= div["min_lp"]:
-                    new_div_name = div["name"]
-                    break
+            weekly_total = int(player.get("league_points", 0)) + points_earned
 
             await handler.finalize_match(
                 result=result,
@@ -1423,27 +1424,15 @@ class BattleCog(commands.Cog):
                 away_team_id=0,
                 zone_home=format_zone_breakdown(match_cards, player["club_name"]),
                 zone_away=format_zone_breakdown(opp_squad, opp_name),
+                lp_change=actual_lp_change,
+                total_lp=new_lp,
+                weekly_total=weekly_total,
+                global_divisions=divisions,
             )
             if bot_run_id:
                 await complete_run(db, bot_run_id, home_score=state.home_score, away_score=state.away_score)
         except Exception as e:
             logger.exception("Failed to simulate match.")
-            # #region agent log
-            try:
-                import json, time
-                with open("debug-93fd84.log", "a", encoding="utf-8") as _f:
-                    _f.write(json.dumps({
-                        "sessionId": "93fd84",
-                        "timestamp": int(time.time() * 1000),
-                        "location": "battle_cog.py:execute_bot_battle",
-                        "message": "bot_match_exception",
-                        "data": {"error_type": type(e).__name__, "error": str(e)},
-                        "hypothesisId": "A",
-                        "runId": "pre-fix",
-                    }) + "\n")
-            except Exception:
-                pass
-            # #endregion
             if bot_run_id:
                 await abandon_run(db, bot_run_id)
             if interaction.response.is_done():

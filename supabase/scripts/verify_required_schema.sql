@@ -44,6 +44,9 @@ BEGIN
       ('column:public.player_cards.daily_alloc_count'),
       ('column:public.player_cards.alloc_reset_date'),
       ('column:public.players.action_energy'),
+      ('column:public.players.best_weekly_pts'),
+      ('column:public.players.best_weekly_rank'),
+      ('table:public.weekly_rank_rewards'),
       ('column:public.players.last_daily_login'),
       ('column:public.match_history.run_id'),
       ('column:public.match_history.xp_applied_at'),
@@ -61,6 +64,7 @@ BEGIN
       ('function:daily_match_xp_used'),
       ('function:distribute_season_prizes'),
       ('function:charge_league_entry_fees'),
+      ('function:claim_weekly_rank_tier'),
       ('function:process_match_result'),
       ('function:claim_daily_pack'),
       ('policy:public.league_members.league_members_select'),
@@ -113,6 +117,7 @@ BEGIN
         WHEN 'get_game_config' THEN to_regprocedure('public.get_game_config(text)')
         WHEN 'distribute_season_prizes' THEN to_regprocedure('public.distribute_season_prizes(uuid)')
         WHEN 'charge_league_entry_fees' THEN to_regprocedure('public.charge_league_entry_fees(uuid)')
+        WHEN 'claim_weekly_rank_tier' THEN to_regprocedure('public.claim_weekly_rank_tier(bigint,text)')
         WHEN 'process_match_result' THEN to_regprocedure('public.process_match_result(text,uuid[],integer,numeric[],integer[])')
         WHEN 'claim_daily_pack' THEN to_regprocedure('public.claim_daily_pack(bigint,jsonb)')
         WHEN 'formation_slot_role' THEN to_regprocedure('public.formation_slot_role(text,integer)')
@@ -137,7 +142,7 @@ BEGIN
         'economy_ledger', 'league_members', 'match_locks', 'match_runs',
         'league_fixtures', 'league_seasons', 'league_participants', 'match_logs',
         'player_season_stats', 'league_season_awards', 'player_league_history',
-        'league_matchday_milestones',
+        'league_matchday_milestones', 'weekly_rank_rewards',
         'pending_level_rewards', 'fusion_daily_log', 'player_drill_daily_log',
         'game_config', 'agent_sale_daily_log', 'energy_refill_daily_log'
     )

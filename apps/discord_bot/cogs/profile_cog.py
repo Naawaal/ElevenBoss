@@ -7,7 +7,9 @@ from discord.ext import commands
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed
+from apps.discord_bot.core.competitive_display import profile_leaderboard_hint
 from apps.discord_bot.core.economy_rpc import format_action_energy_status, sync_action_energy
+from leagues import tier_progress_label
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +100,16 @@ class ProfileCog(commands.Cog):
             embed.add_field(name="⚔️ Server Division", value=player["division"], inline=True)
             embed.add_field(name="📊 Division Rank Points", value=f"{player['league_points']} pts (GD: {player['goal_difference']})", inline=True)
             embed.add_field(
-                name="ℹ️ Division Rank",
-                value="Weekly ladder from **bot battles** only. Guild season table is in `/league hub`.",
+                name="📈 Weekly tiers",
+                value=tier_progress_label(int(player.get("league_points", 0))),
+                inline=True,
+            )
+            best_pts = player.get("best_weekly_pts") or 0
+            if best_pts:
+                embed.add_field(name="🏅 Best weekly", value=f"**{best_pts}** pts", inline=True)
+            embed.add_field(
+                name="ℹ️ Rankings",
+                value="**Division Rank** = bot battles (weekly). **Season Pts** = `/league hub`. Use **`/leaderboard`** for full tables.",
                 inline=False,
             )
             
@@ -118,7 +128,7 @@ class ProfileCog(commands.Cog):
                     trophy_lines.append(f"Season #{h.get('season_id', '')[:8]}… — **#{h['finish_position']}** ({award_label})")
                 embed.add_field(name="🏆 Trophy Cabinet", value="\n".join(trophy_lines), inline=False)
 
-            embed.set_footer(text="Use /store for daily bonus and energy refills")
+            embed.set_footer(text=f"{profile_leaderboard_hint()} · /store for daily bonus")
 
             await interaction.followup.send(embed=embed, ephemeral=True)
         except Exception as e:

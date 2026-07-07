@@ -79,21 +79,21 @@ def simulate_match(match_input: MatchInput) -> MatchResult:
         goals_for = goals
         goals_against = goals
         coins_earned = 50
-        points_earned = 1
     elif diff > 3.0:
         result = "win"
         margin = max(1, int(round(diff / 6.0)) + random.choice([0, 1]))
         goals_against = random.choice([0, 1, 2])
         goals_for = goals_against + margin
         coins_earned = 150
-        points_earned = 3
     else:
         result = "loss"
         margin = max(1, int(round(abs(diff) / 6.0)) + random.choice([0, 1]))
         goals_for = random.choice([0, 1, 2])
         goals_against = goals_for + margin
         coins_earned = 0
-        points_earned = 0
+
+    from leagues import division_rank_points
+    points_earned = division_rank_points(result)
 
     # Generate possession based on the rating difference
     pos_base = 50 + int(diff * 1.5)

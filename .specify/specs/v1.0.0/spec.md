@@ -1109,3 +1109,60 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **THEN** migration 035 applied, `verify_required_schema.sql` passes, `change_log.md` updated for player-facing match economy/XP changes.
 - **AND** grep confirms zero `p_xp_amount": 15` and zero direct `players.update` coin mutations in `apps/discord_bot/cogs/battle_cog.py`.
 
+---
+
+## 30. League Points Integration & `/leaderboard` (US-30)
+
+### Terminology (3 tracks — do not conflate)
+
+| DB column | Player label | Earned from |
+|-----------|--------------|-------------|
+| `players.league_points` | **Division Rank** (weekly) | Bot battles only (3/1/0) |
+| `players.global_lp` | **Global LP** (persistent) | Bot battles (+15/+5/−10) |
+| Fixture-derived `points` | **Season Pts** | Guild league matches only |
+
+### US-30: `/leaderboard` Rankings Hub
+
+> **As a** registered manager,
+> **I want to** view my standing across Division Rank, Global LP, and guild Season tables in one place,
+> **So that** competitive points feel meaningful and I know where I rank.
+
+**Acceptance Criteria:**
+
+#### AC-30a: Command & session
+- **GIVEN** a registered player runs `/leaderboard`,
+- **THEN** the bot defers ephemeral immediately and shows an embed with three tab buttons: **Division Rank**, **Global LP**, **Season**.
+- **AND** only the invoking manager can use the buttons (`interaction_check`).
+
+#### AC-30b: Division Rank tab
+- **GIVEN** Division Rank tab is active,
+- **THEN** the embed lists human players in the selected server division sorted by `league_points` DESC, `goal_difference` DESC.
+- **AND** a division Select defaults to the viewer's `players.division`.
+- **AND** the viewer's rank, weekly tier progress (6/12/18), promo/releg zones, and Monday reset countdown are shown.
+- **AND** a **Claim Weekly** button appears when an unclaimed tier is available; claim uses RPC `claim_weekly_rank_tier` via `apply_club_economy`.
+
+#### AC-30c: Global LP tab
+- **GIVEN** Global LP tab is active,
+- **THEN** the embed lists top human players by `global_lp` with global division tier labels.
+- **AND** the viewer's global rank and LP progress bar to next tier are shown.
+
+#### AC-30d: Season tab
+- **GIVEN** an active guild season exists,
+- **THEN** the Season tab reuses `fetch_standings()` + `format_standings_table()` (fixture-derived Season Pts).
+- **AND** empty states handle: no guild, no league, no active season, spectator not registered.
+
+#### AC-30e: Post-match labels
+- **GIVEN** a bot battle ends,
+- **THEN** rewards show **Division Rank** and **Global LP** (not ambiguous "league pts").
+- **GIVEN** a guild league match ends,
+- **THEN** rewards show actual economy v2 coins and **Season Pts**.
+
+#### AC-30f: Weekly tier economy
+- **GIVEN** weekly Division Rank pts cross 6, 12, or 18 thresholds,
+- **THEN** coin rewards scale by server division tier via `apply_club_economy` with idempotency key `weekly_tier:{iso_week}:{player_id}:{tier}`.
+- **AND** unclaimed tiers reset Monday 00:00 UTC with `league_points`.
+
+#### AC-30g: Pure logic consolidation
+- **GIVEN** match result scoring,
+- **THEN** all W/D/L and LP formulas live in `packages/leagues/leagues/match_points.py` (single source of truth).
+

@@ -14,6 +14,13 @@ def test_gate_blocks_full_slots() -> None:
     assert "3 evolutions" in msg
 
 
+def test_gate_blocks_legacy_overflow() -> None:
+    msg = evolution_start_gate_message({"active_count": 7, "can_start": False})
+    assert msg is not None
+    assert "7" in msg
+    assert "3" in msg
+
+
 def test_gate_blocks_cooldown() -> None:
     msg = evolution_start_gate_message({
         "active_count": 1,

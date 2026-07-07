@@ -2,6 +2,40 @@
 
 Hey Managers!
 
+## Evolution Slot Fix (legacy clubs)
+
+Some managers who started evolutions **before the 3-slot club limit** could show **7/3 slots used** and could not start new tracks.
+
+### What changed
+- **Database cleanup** — excess active evolution tracks are auto-cancelled down to **3 per club** (keeps tracks with the most match progress, then the newest).
+- **Legacy row repair** — old evolution rows get normalized so match progress (`0/3` bars) ticks correctly again.
+- **Clearer hub message** — if you're still over the limit before cleanup runs, the Evolution hub explains what to do.
+
+---
+
+## League Points & `/leaderboard` (US-30)
+
+Competitive points finally have a home — three clear tracks, one command.
+
+### What's new
+- **`/leaderboard`** — tabbed rankings hub:
+  - **Division Rank** — weekly bot-battle ladder (promo/releg zones, division filter, pagination)
+  - **Global LP** — persistent cross-server prestige rank
+  - **Season** — guild fixture standings (same data as `/league hub`)
+- **Weekly tier rewards** — earn **6 / 12 / 18** Division Rank pts in a week to unlock Bronze / Silver / Gold coin tiers (claim on `/leaderboard` → Division tab).
+- **Clear post-match labels** — bot battles show **Division Rank** + **Global LP**; league matches show **Season Pts** and real economy v2 coins (no more misleading "+3 league pts" or hardcoded 150-coin display).
+- **`/profile`** shows weekly tier progress and links to `/leaderboard`.
+- **Monday reset** DMs include your final weekly rank; season end auto-distributes prizes.
+
+### Three tracks (don't mix them up)
+| Track | From | Resets |
+|-------|------|--------|
+| Division Rank | Bot battles | Weekly (Monday UTC) |
+| Global LP | Bot battles | Never |
+| Season Pts | Guild league fixtures | Per season |
+
+---
+
 ## Audit Hardening (US-38)
 
 Follow-up fixes from the security/economy audit — no player-facing feature changes, tighter fairness guards.

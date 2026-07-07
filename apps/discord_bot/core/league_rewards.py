@@ -14,6 +14,7 @@ from apps.discord_bot.core.economy_rpc import (
 )
 from apps.discord_bot.core.match_runs import fetch_match_reward_row
 from apps.discord_bot.core.match_xp import apply_match_xp_if_needed
+from leagues import season_fixture_points
 
 logger = logging.getLogger(__name__)
 
@@ -120,39 +121,14 @@ async def apply_league_human_rewards(
             )
         else:
             coins = compute_league_match_coins(result_str, division, v2=v2)
-        season_pts = {"win": 3, "draw": 1, "loss": 0}[result_str]
+        season_pts = season_fixture_points(result_str)
 
         if deduct_energy and v2:
             await sync_action_energy(db, player_id)
             energy_cost = match_energy_cost("league", v2=True)
-            econ = await apply_match_economy(db, player_id, coins, energy_cost, "league", run_id, result_str)
+            await apply_match_economy(db, player_id, coins, energy_cost, "league", run_id, result_str)
         elif v2:
-            econ = await apply_match_economy(db, player_id, coins, 0, "league", run_id, result_str)
-        else:
-            econ = None
-        # #region agent log
-        try:
-            import json, time
-            with open("debug-93fd84.log", "a", encoding="utf-8") as _f:
-                _f.write(json.dumps({
-                    "sessionId": "93fd84",
-                    "timestamp": int(time.time() * 1000),
-                    "location": "league_rewards.py:apply_league_human_rewards",
-                    "message": "league_economy_applied",
-                    "data": {
-                        "player_id": player_id,
-                        "coins": coins,
-                        "result": result_str,
-                        "auto_sim": auto_sim,
-                        "deduct_energy": deduct_energy,
-                        "econ": econ,
-                    },
-                    "hypothesisId": "E",
-                    "runId": "pre-fix",
-                }) + "\n")
-        except Exception:
-            pass
-        # #endregion
+            await apply_match_economy(db, player_id, coins, 0, "league", run_id, result_str)
 
         await db.table("players").update({
             "matches_played": player_row["matches_played"] + 1,

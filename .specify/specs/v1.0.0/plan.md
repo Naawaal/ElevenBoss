@@ -1677,4 +1677,33 @@ async def apply_bot_match_rewards(db, *, player_row, cards, result_str, ...):
 - Pydantic v2 `ConfigDict` migration (separate hygiene ticket)
 - Ranked PvP mode implementation
 
+---
+
+## 28. League Points Integration & `/leaderboard` (US-30)
+
+### Implementation summary
+
+| Layer | Deliverable |
+|-------|-------------|
+| `packages/leagues` | `match_points.py`, `weekly_tiers.py`, `leaderboard_format.py` |
+| Migration `039` | `weekly_rank_rewards`, `best_weekly_*` columns, `claim_weekly_rank_tier` RPC |
+| `leaderboard_cog.py` | `/leaderboard` — Division / Global LP / Season tabs |
+| `competitive_display.py` | Post-match reward formatters |
+| `battle_cog.py` | LP display fix, league coin fix, consolidated imports |
+| `scheduler_jobs.py` | Rank snapshot DMs before weekly reset |
+| `league_cog.py` | Auto `distribute_season_prizes` on natural season complete |
+
+See `spec.md` US-30 for acceptance criteria.
+
+---
+
+## 28. League Points Integration & `/leaderboard` (US-30)
+
+**Packages:** `match_points.py`, `weekly_tiers.py`, `leaderboard_format.py` in `packages/leagues/`.
+
+**Migration 039:** `weekly_rank_rewards`, `players.best_weekly_pts` / `best_weekly_rank`, `game_config` tier keys, RPC `claim_weekly_rank_tier`.
+
+**Apps:** `leaderboard_cog.py` (3-tab ephemeral hub), `competitive_display.py`, `view_helpers.edit_ephemeral_hub_message`, battle_cog display fixes, profile `/leaderboard` link, scheduler weekly snapshot DMs, auto `distribute_season_prizes` on natural season end.
+
+**Terminology:** Division Rank (`league_points`), Global LP (`global_lp`), Season Pts (fixtures) — never "league pts" without qualifier.
 
