@@ -773,7 +773,7 @@ class LeagueCog(commands.Cog):
             await interaction.followup.send(
                 embed=error_embed(
                     f"❌ League registration requires **{min_matches}** career matches "
-                    f"(you have **{played}**). Play bot or friendly matches first."
+                    f"(you have **{played}**). Play bot matches first."
                 ),
                 ephemeral=True,
             )

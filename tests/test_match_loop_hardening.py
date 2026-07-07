@@ -1,10 +1,9 @@
 # tests/test_match_loop_hardening.py
-"""US-29 — bot/friendly match XP and economy helpers."""
+"""US-29 — bot match XP and economy helpers."""
 from __future__ import annotations
 
 from apps.discord_bot.core.economy_rpc import (
     compute_bot_match_coins,
-    compute_friendly_match_coins,
     match_energy_cost,
 )
 from apps.discord_bot.core.match_xp import build_process_match_result_rpc
@@ -12,13 +11,7 @@ from apps.discord_bot.core.match_xp import build_process_match_result_rpc
 
 def test_bot_match_energy_cost_v2() -> None:
     assert match_energy_cost("bot", v2=True) == 20
-    assert match_energy_cost("friendly", v2=True) == 15
-
-
-def test_friendly_match_coins_winner_only() -> None:
-    assert compute_friendly_match_coins("win", v2=True) > 0
-    assert compute_friendly_match_coins("loss", v2=True) == 0
-    assert compute_friendly_match_coins("draw", v2=True) == 0
+    assert match_energy_cost("league", v2=True) == 10
 
 
 def test_bot_match_coins_use_config_not_inline_loss() -> None:
@@ -29,12 +22,12 @@ def test_bot_match_coins_use_config_not_inline_loss() -> None:
     assert loss != 15  # old hardcoded consolation
 
 
-def test_build_process_match_result_rpc_friendly_type() -> None:
+def test_build_process_match_result_rpc_bot_type() -> None:
     cards = [{"id": "aaa", "name": "Striker"}]
     payload = build_process_match_result_rpc(
         cards,
         result="win",
-        match_type="friendly",
+        match_type="bot",
         motm_name="Striker",
         key_events=[],
         club_name="FC Test",

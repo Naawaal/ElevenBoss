@@ -524,9 +524,15 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 #### AC-18d: Stat Isolation & Thread Clean-up
 - **GIVEN** the friendly match concludes (at minute 90),
-- **THEN** the final score and events are serialized and written to `friendly_match_logs` (Option A). Competitive tables like `match_logs` or `player_season_stats` are completely untouched.
+- **THEN** the final score and events are serialized and written to `friendly_match_logs` (Option A). Competitive tables like `match_logs`, `match_history`, `player_season_stats`, and `players` career stats are completely untouched.
+- **AND** no action energy is consumed, no coins are awarded, and no card XP or evolution progress is applied.
 - **AND** both managers are mentioned in the final whistle embed inside the thread, and their respective entries are deleted from `match_locks`.
 - **AND** the bot schedules a task to archive and lock the thread after a **120-second delay** to keep the server channels clean.
+
+#### AC-18e: League Registration Gate
+- **GIVEN** a manager attempts guild league registration,
+- **WHEN** their `matches_played` count is evaluated,
+- **THEN** only **bot matches** count toward the minimum — friendly matches do not increment `matches_played` and do not satisfy the gate.
 
 ---
 
@@ -849,14 +855,14 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 #### AC-25c: Action Energy Pool
 - **GIVEN** a registered player,
 - **THEN** `players.action_energy` (max 100) regens **1 per 6 minutes** via `sync_action_energy`.
-- **AND** costs: bot match 20, friendly 15, league 10, basic drill 10, advanced drill 15, evolution start 25 (from `game_config`).
+- **AND** costs: bot match 20, league 10, basic drill 10, advanced drill 15, evolution start 25 (from `game_config`). Friendly matches cost **0** energy.
 - **AND** `/profile`, `/development`, and battle hub show unified `⚡ current/max` with time-to-full estimate.
 
 #### AC-25d: Config-Driven Income
 - **GIVEN** economy v2 enabled,
 - **THEN** bot match coins = `floor(match_bot_win × global_division.win_coins / 100)` for wins; draw/loss use `match_bot_draw` / `match_bot_loss`.
 - **AND** league match coins scale between `match_league_win_min` and `match_league_win_max` by server `division` tier.
-- **AND** friendly winners receive `match_friendly_win` coins (losers 0).
+- **AND** friendly matches award **no coins** (sandbox mode).
 - **AND** `claim_daily_login` grants `daily_login_base` + streak bonus (cap +50), once per UTC day.
 
 #### AC-25e: Config-Driven Sinks
@@ -1050,12 +1056,12 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AND** coin payout uses `compute_bot_match_coins(result, global_division.win_coins)` — not inline `win_coins` / hardcoded loss consolation.
 - **AND** no direct `players.update({coins, energy})` in `battle_cog` bot path.
 
-#### AC-29b: Bot & Friendly Match XP Pipe (closes US-23e gap)
-- **GIVEN** a bot or friendly match concludes for a human manager's XI,
+#### AC-29b: Bot Match XP Pipe (closes US-23e gap)
+- **GIVEN** a bot match concludes for a human manager's XI,
 - **WHEN** rewards are applied,
-- **THEN** XP uses `build_process_match_result_rpc(..., match_type='bot'|'friendly')` with per-card `p_xp_amounts` — **never** hardcoded `p_xp_amount: 15`.
-- **AND** friendly matches grant match XP to both managers' XIs (when applicable); evolution ticks remain inside `process_match_result` (no duplicate `tick_evolution_match_progress` on the same cards in the same flow).
-- **AND** daily match XP cap per card (US-24) applies uniformly across match types.
+- **THEN** XP uses `build_process_match_result_rpc(..., match_type='bot')` with per-card `p_xp_amounts` — **never** hardcoded `p_xp_amount: 15`.
+- **AND** evolution ticks remain inside `process_match_result` (no duplicate `tick_evolution_match_progress` on the same cards in the same flow).
+- **AND** daily match XP cap per card (US-24) applies to bot and league match types. Friendly matches grant **no XP**.
 
 #### AC-29c: `process_match_result` Schema Alignment
 - **GIVEN** migration `035_match_result_schema_fix.sql` is applied,

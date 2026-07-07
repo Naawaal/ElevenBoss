@@ -1530,8 +1530,8 @@ One thread per anchor message (Discord limit). Flow: announcement → anchor →
 ├─────────────┼──────────────────────┼──────────────────────────┤
 │ bot         │ apply_match_economy    │ build_process_match_result │
 │             │ idempotency=run_id   │ match_type='bot'           │
-│ friendly    │ apply_match_economy    │ build_process_match_result │
-│             │ (winner coins only)    │ match_type='friendly' ×2   │
+│ friendly    │ (none — sandbox)       │ (none — sandbox)           │
+│             │ friendly_match_logs    │ no economy/XP/stats        │
 │ league      │ league_rewards.py ✓    │ league_rewards.py ✓        │
 └─────────────┴──────────────────────┴──────────────────────────┘
                               │

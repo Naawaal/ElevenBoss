@@ -23,7 +23,7 @@ from match_engine import (
 from apps.discord_bot.core.match_cards import card_from_db_row, fetch_playstyles
 from apps.discord_bot.core.economy_rpc import sync_action_energy, match_energy_cost, economy_v2_enabled
 from apps.discord_bot.core.league_rewards import apply_league_human_rewards
-from apps.discord_bot.core.match_rewards import apply_bot_match_rewards, apply_friendly_human_rewards
+from apps.discord_bot.core.match_rewards import apply_bot_match_rewards
 from apps.discord_bot.core.competitive_display import format_bot_rewards_block, format_season_reward_line
 from leagues import division_rank_points, global_lp_delta, clamp_global_lp
 from apps.discord_bot.core.thread_permissions import (
@@ -1098,7 +1098,8 @@ class BattleCog(commands.Cog):
             title="🏟️ ElevenBoss Battle Arena",
             description=(
                 f"Welcome to the Battle Arena, Manager **{player['manager_name']}**!\n"
-                f"Choose your competitive match pathway below. Bot battles consume **20** ⚡ action energy."
+                f"Choose your competitive match pathway below. Bot battles consume **20** ⚡ action energy.\n"
+                f"Friendly matches are **free** — no energy, no coins, no XP."
             ),
             color=0x00FF87
         )
@@ -1639,8 +1640,8 @@ class BattleCog(commands.Cog):
                     match_cards.append(card_from_db_row(c, playstyles))
                 return match_cards, [c["id"] for c in active_cards], active_cards
 
-            c_cards, c_card_ids, c_raw_cards = await get_squad_cards(challenger.id)
-            o_cards, o_card_ids, o_raw_cards = await get_squad_cards(opponent.id)
+            c_cards, _, _ = await get_squad_cards(challenger.id)
+            o_cards, _, _ = await get_squad_cards(opponent.id)
             
             if len(c_cards) != 11 or len(o_cards) != 11:
                 error_msg = ""
@@ -1650,22 +1651,6 @@ class BattleCog(commands.Cog):
                     error_msg += f"❌ Opponent **{o_player['manager_name']}** has {len(o_cards)}/11 players assigned.\n"
                 await thread.send(embed=error_embed(f"Friendly match cancelled:\n{error_msg}Managers must have exactly 11 active squad players to start."))
                 return
-
-            v2 = await economy_v2_enabled(db)
-            friendly_cost = match_energy_cost("friendly", v2=v2)
-            for label, pid, prow in (
-                ("Challenger", challenger.id, c_player),
-                ("Opponent", opponent.id, o_player),
-            ):
-                energy_row = await sync_action_energy(db, pid)
-                curr = energy_row.get("action_energy", prow.get("action_energy", 0))
-                if curr < friendly_cost:
-                    await thread.send(
-                        embed=error_embed(
-                            f"Friendly match cancelled: **{label}** needs **{friendly_cost}** ⚡ (has **{curr}**)."
-                        )
-                    )
-                    return
 
             c_rating = sum(p.overall for p in c_cards) / 11
             o_rating = sum(p.overall for p in o_cards) / 11
@@ -1801,7 +1786,7 @@ class BattleCog(commands.Cog):
                 inline=False,
             )
             press_embed.set_footer(
-                text=f"🤝 Match concluded. Friendly match logs are completely isolated. {MATCH_ENGINE_FOOTER}"
+                text=f"🤝 No energy spent. No coins or XP earned. {MATCH_ENGINE_FOOTER}"
             )
             
             await thread.send(content=f"🏁 Match finished! {challenger.mention} {opponent.mention}", embed=press_embed)
@@ -1815,44 +1800,6 @@ class BattleCog(commands.Cog):
                 "box_score": box_score,
                 "key_events": key_events_list
             }).execute()
-
-            if state.home_score > state.away_score:
-                home_result, away_result = "win", "loss"
-            elif state.home_score < state.away_score:
-                home_result, away_result = "loss", "win"
-            else:
-                home_result, away_result = "draw", "draw"
-
-            await apply_friendly_human_rewards(
-                db,
-                player_id=challenger.id,
-                player_row=c_player,
-                result_str=home_result,
-                cards=c_raw_cards,
-                club_name=c_player["club_name"],
-                team_rating=c_rating,
-                opponent_rating=o_rating,
-                goals_for=state.home_score,
-                goals_against=state.away_score,
-                run_id=friendly_run_id,
-                motm_name=motm,
-                key_events=key_events_list,
-            )
-            await apply_friendly_human_rewards(
-                db,
-                player_id=opponent.id,
-                player_row=o_player,
-                result_str=away_result,
-                cards=o_raw_cards,
-                club_name=o_player["club_name"],
-                team_rating=o_rating,
-                opponent_rating=c_rating,
-                goals_for=state.away_score,
-                goals_against=state.home_score,
-                run_id=friendly_run_id,
-                motm_name=motm,
-                key_events=key_events_list,
-            )
 
             # Edit thread name
             try:

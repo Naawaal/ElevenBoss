@@ -2,6 +2,18 @@
 
 Hey Managers!
 
+## Friendly Matches — Free Sandbox (US-18)
+
+Friendly matches are now pure sparring — no cost, no grind rewards.
+
+### What changed
+- **No action energy** required to challenge or play a friendly match.
+- **No coins, card XP, or career record updates** — your profile stats stay untouched.
+- **League registration** still requires **bot matches** only; friendlies do not count toward the career-match gate.
+- Match results are still saved in isolated `friendly_match_logs` for history.
+
+---
+
 ## Evolution Slot Fix (legacy clubs)
 
 Some managers who started evolutions **before the 3-slot club limit** could show **7/3 slots used** and could not start new tracks.
@@ -151,7 +163,6 @@ This update overhauls player growth, unifies action energy, and rebuilds the clu
 - **Regen:** **+1 energy every 6 minutes** (synced when you open hubs or run actions).
 - **Costs:**
   - Bot match: **20** energy
-  - Friendly match: **15** energy
   - League match: **10** energy
   - Basic drill: **10** energy
   - Advanced drill (player level 10+): **15** energy
@@ -182,7 +193,7 @@ Drills grant **XP only** (skill points come from leveling).
 ### Match coin rewards (examples)
 - **Bot:** win scales with division (base 200 × division multiplier); draw **100**; loss **50**.
 - **League:** win **300–500** by server division tier; draw is one-third of win.
-- **Friendly:** win **150** coins (XP only for losers).
+- **Friendly:** no coin rewards (free sandbox).
 
 All match coin and energy changes are applied atomically via `apply_club_economy` and logged in `economy_ledger`.
 
