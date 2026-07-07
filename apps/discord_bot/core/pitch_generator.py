@@ -235,22 +235,42 @@ def _render_roster_grid(cards: list[dict], font_bold_path: str, font_reg_path: s
             width=2
         )
 
-        # 2. Draw OVR and Position at top of the card
+        # 2. Draw OVR (large) and position below
         ovr = card.get("overall", 0)
         pos = card.get("position", "???")
-        ovr_text = f"{ovr} {pos}"
-        
+        ovr_str = str(ovr)
+
         try:
-            _, _, text_w, text_h = draw.textbbox((0, 0), ovr_text, font=font_ovr)
+            font_ovr_big = ImageFont.truetype(font_bold_path, 28)
+        except OSError:
+            font_ovr_big = font_ovr
+
+        try:
+            _, _, ovr_w, ovr_h = draw.textbbox((0, 0), ovr_str, font=font_ovr_big)
         except AttributeError:
-            text_w, text_h = draw.textsize(ovr_text, font=font_ovr)
+            ovr_w, ovr_h = draw.textsize(ovr_str, font=font_ovr_big)
 
-        ovr_x = x0 + (card_w - text_w) // 2
-        ovr_y = y0 + 15
-        draw.text((ovr_x, ovr_y), ovr_text, fill=border_color, font=font_ovr)
+        ovr_x = x0 + (card_w - ovr_w) // 2
+        ovr_y = y0 + 10
+        draw.text((ovr_x, ovr_y), ovr_str, fill=border_color, font=font_ovr_big)
 
-        # Draw a subtle separator line under OVR
-        draw.line([x0 + 15, y0 + 45, x1 - 15, y0 + 45], fill=(50, 60, 78, 255), width=1)
+        ovr_label = "OVR"
+        try:
+            _, _, lbl_w, lbl_h = draw.textbbox((0, 0), ovr_label, font=font_sub)
+        except AttributeError:
+            lbl_w, lbl_h = draw.textsize(ovr_label, font=font_sub)
+        lbl_x = x0 + (card_w - lbl_w) // 2
+        draw.text((lbl_x, ovr_y + ovr_h + 2), ovr_label, fill=(150, 160, 175, 255), font=font_sub)
+
+        try:
+            _, _, pos_w, pos_h = draw.textbbox((0, 0), pos, font=font_sub)
+        except AttributeError:
+            pos_w, pos_h = draw.textsize(pos, font=font_sub)
+        pos_x = x0 + (card_w - pos_w) // 2
+        draw.text((pos_x, ovr_y + ovr_h + lbl_h + 4), pos, fill=border_color, font=font_sub)
+
+        # Draw a subtle separator line under header block
+        draw.line([x0 + 15, y0 + 58, x1 - 15, y0 + 58], fill=(50, 60, 78, 255), width=1)
 
         # 3. Draw Player Name centered
         name = card.get("name", "Unknown")
@@ -265,7 +285,7 @@ def _render_roster_grid(cards: list[dict], font_bold_path: str, font_reg_path: s
             name_w, name_h = draw.textsize(name, font=font_name)
 
         name_x = x0 + (card_w - name_w) // 2
-        name_y = y0 + 75
+        name_y = y0 + 82
         draw.text((name_x, name_y), name, fill=(255, 255, 255, 255), font=font_name)
 
         # 4. Draw Level and ID at the bottom

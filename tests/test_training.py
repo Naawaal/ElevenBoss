@@ -1,7 +1,8 @@
 # tests/test_training.py
 from __future__ import annotations
-from economy import GameConfig
+from economy.config import GameConfig
 from training import calculate_xp_gain
+
 
 def test_calculate_xp_gain() -> None:
     config = GameConfig(

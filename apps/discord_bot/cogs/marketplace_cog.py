@@ -102,7 +102,8 @@ async def show_sell_menu(interaction: discord.Interaction, owner_id: int):
     embed = discord.Embed(
         title="🤝 Sell Roster Player",
         description=(
-            "Select a player card from your roster below to receive a purchase valuation from transfer agents.\n\n"
+            "Select a player card from your roster below to receive a purchase valuation from transfer agents.\n"
+            "*(Max **10** agent sales per day.)*\n\n"
             "*(Note: Players in starting 11 or active evolutions cannot be sold.)*"
         ),
         color=0x00FF87

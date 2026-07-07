@@ -53,31 +53,22 @@ class EconomyCog(commands.Cog):
                 name="💰 Wallet Balances",
                 value=(
                     f"🪙 **Coins Balance**: `{player['coins']:,} coins`\n"
-                    f"🎟️ **Tokens Balance**: `{tokens:,} tokens`"
+                    f"💎 **Gems Balance**: `{tokens:,} gems`"
                 ),
                 inline=False
             )
             embed.add_field(
-                name="👔 Starting 11 Wage Bill",
+                name="👔 Starting 11 Wage Bill (forecast)",
                 value=(
                     f"👥 **Active Starting Players**: `{len(starting_cards)}/11`\n"
-                    f"📉 **Weekly Wage bill**: `🪙 {weekly_wages:,} coins / week`"
+                    f"📉 **Estimated weekly wages**: `🪙 {weekly_wages:,} coins / week` *(not auto-deducted)*"
                 ),
                 inline=False
             )
-            
-            # Forecast
-            net_balance_after_wage = player["coins"] - weekly_wages
-            warning_text = ""
-            if net_balance_after_wage < 0:
-                warning_text = "\n⚠️ *Warning: Your current coin balance is insufficient to cover next week's wages.*"
-                
+
             embed.add_field(
-                name="📈 Financial Forecast",
-                value=(
-                    f"Estimated balance after upcoming weekly wages: `🪙 {net_balance_after_wage:,} coins`"
-                    f"{warning_text}"
-                ),
+                name="📈 Balance",
+                value=f"Current coins: `🪙 {player['coins']:,}`",
                 inline=False
             )
 

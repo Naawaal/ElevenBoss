@@ -306,21 +306,19 @@ class OnboardingCog(commands.Cog):
     @app_commands.command(name="register", description="Register your football club and sign your starting squad.")
     @app_commands.guild_only()
     async def register(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
         # Check registration
         db = await get_client()
         result = await db.table("players").select("discord_id, club_name, manager_name").eq("discord_id", interaction.user.id).maybe_single().execute()
         if result and result.data:
             club = result.data.get("club_name")
             manager = result.data.get("manager_name")
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"You're already registered as Manager **{manager}** of **{club}**!",
-                ephemeral=True
+                ephemeral=True,
             )
             return
 
-        # Defer and create onboarding thread
-        await interaction.response.defer(ephemeral=True)
-        
         try:
             # We assume thread_manager is attached to the bot singleton
             thread_manager: ThreadManager = getattr(self.bot, "thread_manager")

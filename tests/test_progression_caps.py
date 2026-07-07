@@ -116,6 +116,22 @@ def test_detect_god_player_inflation() -> None:
     assert info["hidden_power"] > 1
 
 
+def test_can_allocate_skill_point_blocks_at_pot() -> None:
+    from player_engine import can_allocate_skill_point
+
+    stats = {"pac": 60, "sho": 60, "pas": 60, "dri": 60, "def": 60, "phy": 60}
+    ok, reason = can_allocate_skill_point(
+        position="FWD",
+        stats=stats,
+        playstyles=[],
+        potential=60,
+        stat_key="sho",
+        overall=60,
+    )
+    assert not ok
+    assert "potential" in reason.lower()
+
+
 def test_rebalance_clears_hidden_power() -> None:
     stats = {"pac": 60, "sho": 99, "pas": 60, "dri": 60, "def": 60, "phy": 60}
     rng = random.Random(42)

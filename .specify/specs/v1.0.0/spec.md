@@ -24,7 +24,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 #### AC-01a: Trigger & Guard
 
-- **GIVEN** an unregistered user attempts to run any core gameplay command other than `/register` (e.g., `/match play`, `/gacha claim`),
+- **GIVEN** an unregistered user attempts to run any core gameplay command other than `/register` (e.g., `/match play`, `/store`),
 - **THEN** the bot intercepts the request and returns an ephemeral error directing them to run `/register`: *"You don't have a club yet! Run `/register` to get started."* No account is created silently.
 - **GIVEN** an already-registered user runs `/register`,
 - **THEN** the bot responds with an ephemeral embed: *"You're already registered as Manager [manager_name] of [club_name]!"* No thread is created.
@@ -118,7 +118,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 **Acceptance Criteria:**
 - **GIVEN** I am a registered player,
-- **WHEN** I run `/gacha claim`,
+- **WHEN** I run `/store` and click the **🎫 Claim Free Pack** button,
 - **THEN** the bot checks my last claim timestamp.
 - **AND GIVEN** 22 hours have elapsed since my last claim (or I have never claimed),
 - **THEN** I receive a pack of **5 randomised players** drawn from a weighted rarity pool (`Common 60%, Rare 30%, Epic 8%, Legendary 2%`).
@@ -194,24 +194,15 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 ---
 
-### US-06: Player Levelling (Progression)
+### US-06: Player Levelling (Progression) — **DEPRECATED**
 
-> **As a** registered player,
-> **I want to** spend coins to level up my players,
-> **So that** my team's overall rating improves over time.
+> **Status:** Superseded by **US-23** (v1.9). Coin-based `/player level-up` and direct OVR bumps per level are removed. Progression is XP-driven with skill-point allocation.
 
-**Acceptance Criteria:**
-- **GIVEN** I run `/player level-up <player_id>`,
-- **WHEN** the command is processed,
-- **THEN** the bot checks the level-up cost for this player: `cost = (current_level ^ 1.5) * 100` (rounded to nearest 10).
-- **AND GIVEN** I have sufficient coins,
-- **THEN** the coin deduction and player `level` increment are applied in a **single atomic transaction**.
-- **AND** the player's overall rating increases by `+1` per level up to their rarity cap (Common max 75, Rare max 84, Epic max 90, Legendary max 99).
-- **AND** the bot responds with a success embed showing: new level, new rating, coins spent, remaining coins.
-- **GIVEN** I have insufficient coins,
-- **THEN** the bot responds with an ephemeral error embed showing cost vs. current balance.
-- **GIVEN** the player is already at their rarity rating cap,
-- **THEN** the bot responds with an ephemeral error explaining the cap.
+**Legacy acceptance criteria (v1.0.0 only):**
+- Coin level-up via `/player level-up <player_id>` at cost `(current_level ^ 1.5) * 100`.
+- Direct `+1 OVR` per level up to rarity cap.
+
+**Migration note:** If `/player level-up` still exists in code, it must return an ephemeral redirect to `/development` → Skill Allocation.
 
 ---
 
@@ -321,8 +312,8 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 **Acceptance Criteria:**
 - **AC-08a:** Player cards support role attributes (`GK`, `Defender`, `Midfielder`, `Forward`), morale (impacted by match results), contracts (renewable via coins), and dynamic potential for youth cards (age 16-21).
 - **AC-08b:** PlayStyles act as positive match engine simulation modifiers.
-- **AC-08c:** Running `/player-profile` displays an exhaustive profile (OVR, Role, Level/XP progress bar, PlayStyles, Morale, Contract Days, and Age) with interactive button controls for `[Start Evolution]` and `[Level Up]`. These buttons redirect directly to pre-filtered sub-menus in the Development Center.
-- **AC-08d:** Entering the **Skill Allocation** sub-menu of the `/development` hub allows managers to allocate acquired level-up points to 6 core attributes (PAC, SHO, PAS, DRI, DEF, PHY).
+- **AC-08c:** Running `/player-profile` displays an exhaustive profile (OVR, Role, Level/XP progress bar, PlayStyles, Morale, Contract Days, and Age) with interactive button controls for `[Start Evolution]` and `[Allocate Skill Points]`. These buttons redirect directly to pre-filtered sub-menus in the Development Center. *(Amended v1.9 — US-23: "Level Up" renamed; skill points granted on XP level-up.)*
+- **AC-08d:** Entering the **Skill Allocation** sub-menu of the `/development` hub allows managers to allocate skill points earned from XP level-ups to 6 core attributes (PAC, SHO, PAS, DRI, DEF, PHY), subject to POT caps. *(Amended v1.9 — US-23.)*
 - **AC-08e:** Entering the **Evolutions** sub-menu of the `/development` hub displays options/select menu for 3 basic evolution tracks allowing players to undergo progressive training challenges.
 - **AC-08f:** A club may have at most **3** simultaneous active evolutions (`status = 'active'`). Attempting to start a 4th is rejected server-side with a clear error message.
 - **AC-08g:** After a **cold** evolution start, the club enters a **10-hour cooldown** before another cold start. Cancelling an active evolution grants a **replacement** start in the freed slot without waiting for the cooldown; replacement starts do not reset the cooldown timer.
@@ -360,10 +351,10 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 > **So that** I don't have to remember and execute multiple different commands to train, allocate skills, or evolve my players.
 
 **Acceptance Criteria:**
-- **AC-10a:** Slash command `/development` is introduced, opening the central `DevelopmentHubView` containing four button pathways: `[🏋️ Training Drills]`, `[🧬 Evolutions]`, `[⭐ Allocate Skills]`, and `[🔥 Card Fusion]` (sacrifice a bench card to level up a keeper via `train_with_fodder`).
+- **AC-10a:** Slash command `/development` is introduced, opening the central `DevelopmentHubView` containing four button pathways: `[🏋️ Training Drills]`, `[🧬 Evolutions]`, `[⭐ Allocate Skills]`, and `[🔥 Card Fusion]` (sacrifice a bench card to grant fusion XP to a keeper via `apply_card_xp`). *(Amended v1.9 — US-23: fusion grants XP, not direct level/stat.)*
 - **AC-10b:** State-swapping UI: Clicking any button updates/edits the existing dashboard message without spawning a new one or requiring the user to type other commands.
 - **AC-10c:** A back-navigation button `[⬅️ Back to Hub]` is present on all sub-menu screens to allow returns to the main dashboard.
-- **AC-10d:** Quick-action buttons on `/player-profile` (`[Start Evolution]` and `[Level Up]`) correctly route the user by opening the pre-filtered sub-menu of the `/development` flow for that specific card.
+- **AC-10d:** Quick-action buttons on `/player-profile` (`[Start Evolution]` and `[Allocate Skill Points]`) correctly route the user by opening the pre-filtered sub-menu of the `/development` flow for that specific card. *(Amended v1.9 — US-23.)*
 - **AC-10e:** View security and timeouts are enforced: all views have a timeout of at least 15 minutes, and only the invoking manager can interact with the buttons.
 
 ---
@@ -616,7 +607,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 #### AC-22a: Stat Drill RPCs
 - **GIVEN** a manager opens Stat Training in `/development`,
-- **THEN** `sync_training_energy` and `process_stat_drill` RPCs exist and atomically enforce energy, coins, daily limits, match locks, and stat/OVR caps.
+- **THEN** `sync_training_energy` and `process_stat_drill` RPCs exist and atomically enforce energy, coins, daily limits, match locks, level-tier gates, and POT-aware skill allocation (not direct stat bumps post-v1.9). *(Amended v1.9 — US-23: drills grant XP via `apply_card_xp`.)*
 
 #### AC-22b: Server-Side Agent Sale Pricing
 - **GIVEN** a manager confirms an agent sale,
@@ -662,4 +653,459 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **GIVEN** the bot runs on Linux (Render),
 - **THEN** pitch/roster image generation resolves asset paths relative to the repo root, not a hardcoded Windows path.
 
+---
+
+# ElevenBoss v1.9 Features
+
+### US-23: Dynamic Player Leveling System
+
+> **As a** football club manager,
+> **I want** my players to earn XP from matches, drills, and card fusion, automatically level up, and receive skill points I can allocate to attributes,
+> **So that** every match and training session feels rewarding and progression is balanced, gated, and exploit-resistant.
+
+**Problem statement:** Players display a Level/XP bar (e.g. `Level 3 | 75/112 XP`) but **never receive skill points on level-up**. A legacy `level` column is incremented independently by fusion, creating two conflicting progression systems. Stat drills bypass leveling by granting direct `+1` attribute gains.
+
+**Design principles:**
+1. **Single source of truth:** `player_cards.xp` drives `player_cards.level`. Level is always recomputed inside the database on every XP mutation.
+2. **Three complementary XP sources, one stat sink:** Fusion / Matches / Drills → XP → Level-up → Skill points → Attribute allocation (POT-capped).
+3. **All XP mutations** go through one atomic RPC: `apply_card_xp`.
+
+#### AC-23a: Level & XP Structure
+- **GIVEN** a newly registered player card,
+- **THEN** it starts at `level = 1`, `xp = 0`, `skill_points_earned = 0`, `skill_points_spent = 0`, and `skill_points` (available balance) = 0.
+- **AND** the maximum level is `L_MAX = 100` (configurable constant in `packages/player_engine`).
+- **AND** XP required to advance from level L to L+1 is: `xp_needed(L) = floor(BASE × EXP^(L−1))` where `BASE = 100`, `EXP = 1.12`.
+- **AND** cumulative XP to reach level L is the sum of `xp_needed(i)` for `i = 1..L−1`.
+- **AND** each level gained awards `POINTS_PER_LEVEL = 3` skill points, added atomically to `skill_points` and `skill_points_earned`.
+- **AND** skill points available satisfies: `skill_points = skill_points_earned − skill_points_spent` (enforced by RPC invariant).
+- **AND** at level 100, further XP is discarded (`xp_wasted` returned in RPC JSON; no overflow).
+
+#### AC-23b: Central XP Pipeline (`apply_card_xp`)
+- **GIVEN** any XP grant (match, drill, fusion),
+- **WHEN** the mutation is processed,
+- **THEN** it MUST call `apply_card_xp(p_card_id, p_xp_amount, p_source)` — never a raw `SET xp = xp + N` without level sync.
+- **AND** the RPC locks the card row (`FOR UPDATE`), computes old/new level from XP, grants skill points for `levels_gained`, updates `last_level_up_at` when levels increase, logs to `player_xp_log`, and returns JSON: `{old_level, new_level, levels_gained, skill_points_granted, xp_added, xp_wasted}`.
+- **AND** `player_cards.level` is always equal to `level_from_xp(xp)` after the RPC completes.
+
+#### AC-23c: Method 1 — Card Fusion (XP source)
+- **GIVEN** a manager opens **Card Fusion** in `/development`,
+- **WHEN** they sacrifice a bench card to feed a keeper,
+- **THEN** the sacrificed card is permanently deleted (existing guards: not starting XI, not in match/training/active evolution, not self-fusion).
+- **AND** fusion XP is: `50 + (sacrifice.level × 8) + (sacrifice.overall × 2)`.
+- **AND** XP is applied to the keeper via `apply_card_xp(..., 'fusion')`.
+- **AND** fusion does **not** directly increment `level` or any attribute on the keeper.
+- **AND** each club may perform at most **3 fusions per UTC calendar day** (tracked in `fusion_daily_log`).
+- **AND** the UI shows projected XP and level-up preview before confirm; warns if keeper is already at max level.
+
+#### AC-23d: Method 2 — Skill Point Allocation (level-up reward sink)
+- **GIVEN** a player has `skill_points > 0`,
+- **WHEN** a manager opens **Skill Allocation** in `/development` or clicks **Allocate Skill Points** on `/player-profile`,
+- **THEN** they may spend 1 skill point per tap to increase one of PAC, SHO, PAS, DRI, DEF, PHY by +1.
+- **AND** `allocate_skill_point` atomically decrements `skill_points`, increments `skill_points_spent`, bumps the stat, and calls `recalculate_card_ovr`.
+- **AND** allocation is rejected if: stat ≥ 99, `overall ≥ potential`, or the post-allocation OVR would exceed `potential`.
+- **AND** when `apply_card_xp` returns `levels_gained > 0`, the bot sends an ephemeral notification with a link/button to Skill Allocation.
+
+#### AC-23e: Method 3 — Match XP (passive)
+- **GIVEN** a match concludes (bot, friendly, or league) and rewards are applied post-whistle,
+- **THEN** each participating card receives match XP computed in pure logic and applied via `apply_card_xp`.
+- **AND** base XP uses `calculate_match_development_xp(minutes, rating)` from `training_engine`, then multipliers:
+  - Match type: friendly `×0.8`, bot `×1.0`, league `×1.25`
+  - Goal bonus: `+5` per goal; assist bonus: `+3` per assist; MOTM: `+15`
+  - Result bonus: win `+5`, draw `+2`, loss `+0`
+- **AND** per-match XP is clamped to `[1, 35]`.
+- **AND** abandoned/crashed matches award no XP (existing match-run recovery policy).
+
+#### AC-23f: Method 3 — Drill XP (replaces direct stat drills)
+- **GIVEN** a manager runs a stat drill in `/development`,
+- **THEN** the drill grants **XP only** (no direct attribute increment).
+- **AND** drill tiers and gates:
+
+| Tier | Min level | Energy | Coin cost | Base XP |
+|------|-----------|--------|-----------|---------|
+| Basic | 1 | 15 | `5 × OVR` | 25 |
+| Intermediate | 10 | 20 | `8 × OVR` | 60 |
+| Advanced | 25 | 25 | `12 × OVR` | 120 |
+| Elite | 50 | 30 | `15 × OVR` | 200 |
+
+- **AND** final drill XP = `base_xp × (1 / (1 + 0.05 × (level − 1)))` (diminishing returns).
+- **AND** drills below the player's level tier appear grayed/locked in the UI; server rejects under-level attempts.
+- **AND** daily drill limit (20) and training energy checks remain enforced.
+
+#### AC-23g: Content Gating by Player Level
+- **GIVEN** evolution tracks in `EVOLUTION_TRACKS`,
+- **THEN** each track has a `min_player_level` requirement:
+  - Pace Masterclass: Level 5
+  - Shooting Star: Level 10
+  - Defensive Wall: Level 8
+- **AND** `start_player_evolution` rejects starts when `card.level < track.min_player_level`.
+- **AND** the Evolution Hub hides or disables tracks the player does not qualify for, showing the requirement.
+
+#### AC-23h: Retroactive Level-Up Reward Catch-Up
+- **GIVEN** the v1.9 migration runs on deploy,
+- **THEN** for every card where `(level_from_xp(xp) − 1) × POINTS_PER_LEVEL > skill_points_earned`, a row is inserted into `pending_level_rewards` with `missing_points`, `claimed = false`, `notified = false`.
+- **AND** on bot startup, affected club owners receive a DM embed **"🎁 Level-Up Rewards Available!"** listing players and missing points, with a **Claim All** button.
+- **AND** clicking **Claim All** calls `claim_pending_level_rewards(p_owner_id)` atomically: credits `skill_points` and `skill_points_earned`, sets `claimed = true`, disables the button.
+- **AND** the claim is idempotent — second click returns zero additional points.
+- **AND** if DMs are disabled, managers can claim via **Claim Level Rewards** on the `/development` hub (logged for ops).
+- **AND** pending rewards attach to `player_id`; the **current owner** at claim time receives the points.
+
+#### AC-23i: Player Profile & Development UI
+- **GIVEN** `/player-profile`,
+- **THEN** the embed shows: XP-derived level, XP progress bar, **Available Skill Points**, and a button **Allocate Skill Points** (not "Level Up") when points > 0.
+- **AND** `/development` hub pathways remain: Training Drills, Evolutions, Skill Allocation, Card Fusion — all aligned with XP/skill-point flows above.
+
+#### AC-23j: Anti-Exploit & Integrity
+- **GIVEN** any progression mutation,
+- **THEN** `match_locks` blocks fusion, drills, and skill allocation during active matches.
+- **AND** `skill_points_earned` must equal `(level − 1) × POINTS_PER_LEVEL` plus any retroactive claim credits (no manual inflation).
+- **AND** `allocate_skill_point` enforces POT ceiling (aligned with migration 024 / `can_gain_stat_progression`).
+- **AND** fusion self-target, daily fusion cap, and max-level XP waste behaviors are enforced server-side.
+
+#### AC-23k: Deprecations & Breaking Changes
+- **GIVEN** the v1.9 deploy,
+- **THEN** `process_stat_drill` no longer grants direct `+1` stat (XP only).
+- **AND** `train_with_fodder` no longer increments `level` or stats directly (fusion XP via `apply_card_xp`).
+- **AND** `process_match_result` delegates per-card XP to `apply_card_xp`.
+- **AND** existing player stats from pre-v1.9 drills/fusion are retained; only future gains use the new pipeline.
+
+---
+
+### US-24: Progression Hardening & Economy Safeguards (v1.9.1)
+
+> **As a** game operator,
+> **I want** retroactive rewards, skill allocation, and XP sources bounded by anti-exploit rules,
+> **So that** veteran catch-up does not break competitive balance and claim flows work for every manager.
+
+**Problem statement:** Post-audit of US-23 identified: (1) `pending_level_rewards.club_id` frozen at migration owner breaks claim after card transfer; (2) DM-only claim marks `notified` when blocked; (3) lump-sum retro payout spikes economy; (4) no daily caps on allocation, match XP per card, or drills per player.
+
+#### AC-24a: Retroactive Reward Scaling
+- **GIVEN** an unclaimed row in `pending_level_rewards`,
+- **WHEN** rewards are calculated or claimed,
+- **THEN** payable points = `min(RETRO_MAX_PER_PLAYER, floor(missing_raw × RETRO_SCALE_PCT / 100))` where `RETRO_SCALE_PCT = 75`, `RETRO_MAX_PER_PLAYER = 18`.
+- **AND** existing unclaimed rows are re-scaled once in migration `027`.
+
+#### AC-24b: Claim Ownership (Current Owner)
+- **GIVEN** a card with unclaimed `pending_level_rewards`,
+- **WHEN** `claim_pending_level_rewards(p_owner_id)` runs,
+- **THEN** only rows where `player_cards.owner_id = p_owner_id` are credited (ignore stale `club_id`).
+- **AND** `club_id` is synced to `player_cards.owner_id` on migration and on each claim.
+- **AND** claim remains idempotent (`claimed` flag + `FOR UPDATE`).
+
+#### AC-24c: Fallback Claim (Development Hub)
+- **GIVEN** a manager has unclaimed retro rewards,
+- **WHEN** DMs are disabled or the startup DM was missed,
+- **THEN** opening `/development` shows a **Claim Level Rewards** button and embed notice when `count_unclaimed_level_rewards > 0`.
+- **AND** startup notifier sets `notified = true` **only** on successful DM delivery (not on `Forbidden`).
+- **AND** no separate `/claim-rewards` slash command is required.
+
+#### AC-24d: Skill Allocation Pacing
+- **GIVEN** the pacing window (30 days from v1.9.1 deploy),
+- **WHEN** `allocate_skill_point` is called,
+- **THEN** each card may spend at most `ALLOCATION_DAILY_CAP = 15` skill points per UTC day (`daily_alloc_count` on `player_cards`).
+- **AND** counter resets when `alloc_reset_date < CURRENT_DATE`.
+- **AND** after pacing window ends, daily allocation cap is not enforced.
+
+#### AC-24e: Match XP Daily Cap (Per Card)
+- **GIVEN** match XP applied via `apply_card_xp(..., 'match_simulation')`,
+- **WHEN** the card has already received `MATCH_XP_DAILY_CAP = 100` match XP today (sum `player_xp_log` for UTC day),
+- **THEN** further match XP for that card is reduced to the remaining allowance (may be 0).
+
+#### AC-24f: Drill Cap Per Player
+- **GIVEN** `process_stat_drill`,
+- **WHEN** a card has already completed `DRILL_PER_PLAYER_DAILY_CAP = 5` drills today,
+- **THEN** the RPC rejects with a clear error.
+- **AND** club-wide `daily_drill_count` limit (20) remains enforced.
+
+#### AC-24g: Allocate Pre-Check
+- **GIVEN** `allocate_skill_point`,
+- **WHEN** allocation would exceed POT,
+- **THEN** the RPC rejects **before** mutating stats (pre-check `overall >= potential` and stat < 99).
+- **AND** the RPC rejects when `overall >= potential` or stat ≥ 99 before spending; post-update OVR check rolls back the whole transaction on POT breach.
+
+#### AC-24h: Schema & Verification
+- **GIVEN** migration `027_progression_hardening.sql` is applied,
+- **THEN** `verify_required_schema.sql` includes new columns/table/RPC guards.
+- **AND** `scratch/verify_schema_full.py` passes.
+
+---
+
+### US-25: Economy v2 — Unified Faucets, Sinks & Action Energy (v2.0)
+
+> **As a** game operator,
+> **I want** all coin and energy mutations centralized with DB-backed tunables,
+> **So that** the economy stays auditable, balanced, and adjustable without redeploying bot code.
+
+#### AC-25a: `game_config` Table
+- **GIVEN** migration `028_economy_foundation.sql` is applied,
+- **THEN** table `game_config(key, value_json, updated_at, updated_by)` exists with seed rows for match rewards, drill costs, fusion cost, energy regen, agent sale cap, and `economy_v2_enabled`.
+- **AND** `get_game_config(p_key)` returns JSONB with SQL fallback defaults when key missing.
+
+#### AC-25b: Unified `apply_club_economy` RPC
+- **GIVEN** any coin or action-energy mutation (match payout, drill, fusion, refill, daily login),
+- **WHEN** `apply_club_economy(p_club_id, p_coin_delta, p_energy_delta, p_source, p_idempotency_key, p_meta)` runs,
+- **THEN** it syncs action energy, validates non-negative balances, updates `players.coins` and `players.action_energy`, dual-writes legacy `energy`/`training_energy`, and appends `economy_ledger` with optional `idempotency_key` (unique — replays return prior result).
+- **AND** match payouts in `battle_cog` use this RPC with `match_run_id` as idempotency key.
+
+#### AC-25c: Action Energy Pool
+- **GIVEN** a registered player,
+- **THEN** `players.action_energy` (max 100) regens **1 per 6 minutes** via `sync_action_energy`.
+- **AND** costs: bot match 20, friendly 15, league 10, basic drill 10, advanced drill 15, evolution start 25 (from `game_config`).
+- **AND** `/profile`, `/development`, and battle hub show unified `⚡ current/max` with time-to-full estimate.
+
+#### AC-25d: Config-Driven Income
+- **GIVEN** economy v2 enabled,
+- **THEN** bot match coins = `floor(match_bot_win × global_division.win_coins / 100)` for wins; draw/loss use `match_bot_draw` / `match_bot_loss`.
+- **AND** league match coins scale between `match_league_win_min` and `match_league_win_max` by server `division` tier.
+- **AND** friendly winners receive `match_friendly_win` coins (losers 0).
+- **AND** `claim_daily_login` grants `daily_login_base` + streak bonus (cap +50), once per UTC day.
+
+#### AC-25e: Config-Driven Sinks
+- **GIVEN** `process_stat_drill`, `start_player_evolution`, `train_with_fodder`,
+- **THEN** coin/energy costs read from `game_config` and `drill_catalog` tier metadata (basic: 100 + 2×OVR, 10⚡, 30 XP; advanced tier at level 10+: 300 + 3×OVR, 15⚡, 80 XP).
+- **AND** fusion costs `fusion_coins` (200 default) per `train_with_fodder`.
+- **AND** `purchase_energy_refill` grants +50 energy for escalating coin cost (200/400/600), max 3/day.
+
+#### AC-25f: Agent Sale Daily Cap
+- **GIVEN** `process_agent_sale`,
+- **WHEN** club has sold `agent_sale_daily_cap` (10) cards today,
+- **THEN** RPC rejects with clear error.
+- **AND** sales remain ledgered as `agent_sale`.
+
+#### AC-25g: Store Hub
+- **GIVEN** a registered manager invokes `/store`,
+- **THEN** an ephemeral hub shows coins, gems, action energy, and buttons **Claim Daily Login** and **Buy Energy Refill**.
+- **AND** daily login calls `claim_daily_login` (once per UTC day); energy refill calls `purchase_energy_refill` (escalating coin cost, max 3/day).
+- **AND** these actions are **not** exposed on `/development` (development remains training, fusion, evolutions, skill allocation).
+
+#### AC-25h: Ops Tuning (no Discord admin command)
+- **GIVEN** economy tuning or audit is needed,
+- **THEN** operators edit `game_config` in Supabase or run [`scripts/simulate_economy.py`](scripts/simulate_economy.py) / ledger SQL — no `/economy` slash command.
+
+#### AC-25i: Migration & Rollback
+- **GIVEN** deploy,
+- **THEN** existing coin balances are preserved (no wipe).
+- **AND** `economy_v2_enabled` in `game_config` allows ops to disable v2 match routing without schema rollback.
+- **AND** `scripts/simulate_economy.py` and `tests/test_economy_flows.py` validate 30-day archetype budgets.
+
+### US-26: Immersive League Mode v2
+
+> **As a** guild league manager,
+> **I want** a full season-based league with clear standings, fair rewards, and immersive matchdays,
+> **So that** the league feels like the flagship competitive mode of ElevenBoss.
+
+**Design reference:** [`.specify/specs/v1.0.0/league-mode-design.md`](league-mode-design.md)
+
+#### AC-26a: Decoupled Points
+- **GIVEN** a league match concludes,
+- **THEN** seasonal standings update via `league_fixtures` only.
+- **AND** `players.league_points` and `players.goal_difference` are **not** modified (weekly Division Rank is bot-match only).
+- **AND** profile labels weekly stats as **Division Rank Points**.
+
+#### AC-26b: Economy & XP Pipe
+- **GIVEN** a human manager plays a league match,
+- **THEN** coins flow through `apply_club_economy` with `match_type=league` division scaling.
+- **AND** card XP uses `build_process_match_result_rpc(..., match_type='league')` (1.25× multiplier).
+- **AND** energy deducts via `sync_action_energy` + `match_energy_league` when the manager triggers play.
+
+#### AC-26c: XI Guard
+- **GIVEN** a manager with fewer than 11 squad assignments,
+- **WHEN** they attempt to play a league fixture,
+- **THEN** `execute_league_match` rejects with the same guard as bot/friendly matches.
+
+#### AC-26d: Hub Dashboard
+- **GIVEN** `/league hub` with an active season,
+- **THEN** the embed shows: table position, points, GD, form (last 5), next opponent, matchday countdown, season progress.
+
+#### AC-26e: Season Prizes
+- **GIVEN** an admin ends a season,
+- **THEN** `distribute_season_prizes` awards coins by finish tier and writes `player_league_history` + `league_season_awards`.
+
+#### AC-26f: Matchday Spectacle
+- **GIVEN** a league match starts in the journal,
+- **THEN** pre-match lineup pitch images may be posted, live ticker runs, and post-match updates live standings embed.
+
+#### AC-26g: Registration & Config
+- **GIVEN** admin opens registration or configures a season,
+- **THEN** `league_seasons.config_json` stores size, duration, OVR cap, bot fill, entry fee.
+- **AND** hub shows registration countdown when `status='registration'`.
+
+### US-27: League Economy Hardening
+
+> **As a** game economy steward,
+> **I want** league coin faucets and exploit vectors closed with calibrated tunables,
+> **So that** immersive league mode rewards skill without inflating coins or bypassing energy gates.
+
+**Design reference:** [`.specify/specs/v1.0.0/league-economy-calibration.md`](league-economy-calibration.md)
+
+#### AC-27a: Entry Fee Sink
+- **GIVEN** an admin starts a season with `config_json.entry_fee_coins > 0` (or global `league_entry_fee_coins`),
+- **WHEN** each human is inserted into `league_participants`,
+- **THEN** `apply_club_economy` debits the fee with source `league_entry` and idempotency key `league_entry:{season_id}:{player_id}`.
+- **AND** managers with insufficient coins are skipped with an admin-visible warning (not silently added).
+- **AND** fee may scale by division tier: `base + tier × league_entry_fee_per_division` (from `game_config`).
+
+#### AC-27b: Entry Fee Refund
+- **GIVEN** a season ends normally via `distribute_season_prizes`,
+- **WHEN** a human participant finished with `is_active = TRUE`,
+- **THEN** entry fee is refunded via `apply_club_economy` source `league_entry_refund` (same idempotency pattern).
+- **AND** kicked/inactive/disbanded participants receive **no** refund.
+
+#### AC-27c: Auto-Sim Coin Multiplier
+- **GIVEN** a league fixture is resolved by auto-sim (`active_player_id IS NULL`),
+- **WHEN** match coins are granted,
+- **THEN** payout = `floor(match_coins × league_auto_sim_coin_mult)` (default **0.5**).
+- **AND** season prizes and milestones are **unchanged** (manual engagement still rewarded).
+- **AND** XP pipe is unchanged (energy bypass for XP is acceptable at v1; monitor OVR growth).
+
+#### AC-27d: Calibrated `game_config` Defaults
+- **GIVEN** migration `033_league_economy_calibration.sql` is applied,
+- **THEN** defaults match calibration targets:
+
+| Key | Target |
+|-----|--------|
+| `league_season_prize_pool_base` | 3500 |
+| `league_participation_coins` | 150 |
+| `league_milestone_bonus_coins` | 100 |
+| `match_league_win_min` | 250 |
+| `match_league_win_max` | 400 |
+| `league_entry_fee_coins` | 1500 |
+| `league_entry_fee_per_division` | 250 |
+| `league_auto_sim_coin_mult` | 0.5 |
+
+#### AC-27e: Join Eligibility Gate
+- **GIVEN** a manager clicks Register in `/league hub`,
+- **WHEN** `league_join_min_matches` (default 10) or `league_join_min_account_days` (default 7) is not met,
+- **THEN** registration is rejected with a clear ephemeral message (matches played / days remaining).
+- **AND** gate reads `players.matches_played` and `players.created_at` only (no new columns).
+
+#### AC-27f: Hub & Admin Transparency
+- **GIVEN** registration is open,
+- **THEN** hub embed shows entry fee (if any) and eligibility requirements.
+- **GIVEN** season start,
+- **THEN** admin confirmation lists managers charged vs skipped (insufficient coins).
+
+#### AC-27g: Simulation & Monitoring
+- **GIVEN** `scripts/simulate_league_economy.py` is run post-calibration,
+- **THEN** Grassroots champion (12W, 3 milestones, manual) gross injection is **~5,480 coins** (down from ~7,150 pre-US-27); entry fee is refunded on season complete.
+- **AND** calibration doc §7 monitoring thresholds remain the ops playbook (ledger SQL, no admin slash).
+
+#### Deferred (not US-27)
+- Season-end XP bonus, untradeable league card prizes, promotion/relegation prize tiers, separate league-energy bar.
+
+### US-28: League Season Announcement & Dual Threads
+
+> **As a** guild league participant,
+> **I want** a striking season launch and separated official standings vs live commentary threads,
+> **So that** the league channel stays organized and matchday feels professional.
+
+#### AC-28a: Banner Season Announcement
+- **GIVEN** an admin starts a season and `league_channel_id` is configured,
+- **WHEN** the season is announced,
+- **THEN** the bot posts role ping (if configured) + plain text `Check /league hub...` + gold embed with `assets/background.png` and registered club list.
+- **AND** footer shows matchday count.
+
+#### AC-28b: Dual Locked Threads at Season Start
+- **GIVEN** season start succeeds,
+- **THEN** two public threads are created: `📊 League Journal` (official record) and `🎙️ MatchDay` (live commentary).
+- **AND** both threads are **locked** immediately (bot-only posts).
+- **AND** thread IDs are stored on `league_seasons` (`journal_thread_id`, `matchday_thread_id`, etc.) with `thread_format='dual_v2'`.
+
+#### AC-28c: Output Split
+- **GIVEN** `thread_format='dual_v2'`,
+- **WHEN** a league match runs,
+- **THEN** live commentary, pitch images, and press conference post to **MatchDay**.
+- **AND** pinned/edited standings + compact result lines post to **League Journal** only.
+
+#### AC-28d: Legacy Migration
+- **GIVEN** an active season with `thread_format='legacy'` (started before US-28),
+- **THEN** matches continue using single `get_or_create_league_journal` until season ends.
+- **AND** new seasons always use `dual_v2`.
+
+#### AC-28e: Season End
+- **GIVEN** admin ends a `dual_v2` season,
+- **THEN** season summary posts to Journal thread; both threads are locked and archived.
+- **AND** parent channel receives conclusion announcement (unchanged).
+
+#### AC-28f: Fallback
+- **GIVEN** thread creation fails (missing permissions),
+- **THEN** banner announcement still posts; season uses legacy journal fallback; error is logged.
+
+---
+
+### US-29: Match Loop Hardening & Dead Code Removal (v2.1)
+
+> **As a** game operator and registered manager,
+> **I want** bot and friendly matches to use the same economy/XP pipes as league matches, schema/RPC drift closed, and legacy debug paths removed,
+> **So that** progression and economy rules are consistent, auditable, and production-safe.
+
+**Audit source:** Codebase audit (Jul 2026) — bot path regressions vs US-23/US-25, `process_match_result` column drift, scheduler/UX gaps.
+
+**Design reference:** [`.specify/specs/v1.0.0/league-mode-design.md`](league-mode-design.md) § Decoupled League Systems (weekly bot ladder remains; guild seasons stay fixture-based).
+
+#### AC-29a: Bot Match Economy v2 (closes US-25b gap)
+- **GIVEN** `economy_v2_enabled = true` and a manager plays `/battle bot`,
+- **WHEN** the match concludes,
+- **THEN** coins and energy mutate **only** via `apply_match_economy` / `apply_club_economy` with idempotency key `match_run_id`.
+- **AND** energy pre-check uses `sync_action_energy` + `match_energy_cost('bot')` (default **20**), not legacy `players.energy < 10`.
+- **AND** coin payout uses `compute_bot_match_coins(result, global_division.win_coins)` — not inline `win_coins` / hardcoded loss consolation.
+- **AND** no direct `players.update({coins, energy})` in `battle_cog` bot path.
+
+#### AC-29b: Bot & Friendly Match XP Pipe (closes US-23e gap)
+- **GIVEN** a bot or friendly match concludes for a human manager's XI,
+- **WHEN** rewards are applied,
+- **THEN** XP uses `build_process_match_result_rpc(..., match_type='bot'|'friendly')` with per-card `p_xp_amounts` — **never** hardcoded `p_xp_amount: 15`.
+- **AND** friendly matches grant match XP to both managers' XIs (when applicable); evolution ticks remain inside `process_match_result` (no duplicate `tick_evolution_match_progress` on the same cards in the same flow).
+- **AND** daily match XP cap per card (US-24) applies uniformly across match types.
+
+#### AC-29c: `process_match_result` Schema Alignment
+- **GIVEN** migration `035_match_result_schema_fix.sql` is applied,
+- **THEN** `player_cards.recent_match_ratings` exists (`JSONB`, default `'[]'`).
+- **AND** `process_match_result` reads potential ceiling from `base_potential` (not undefined `initial_potential` column).
+- **AND** `verify_required_schema.sql` guards `recent_match_ratings`, `process_match_result`, and migration 034 `announcement_message_id`.
+
+#### AC-29d: Atomic Daily Pack Claim
+- **GIVEN** a manager claims a free pack from `/store`,
+- **WHEN** `claim_daily_pack(p_club_id)` runs,
+- **THEN** cooldown check, `last_claim_at` update, and card inserts occur in **one** RPC transaction.
+- **AND** failed card insert does not consume the 22h cooldown.
+- **AND** `store_cog` calls the RPC only — no sequential `UPDATE` then `INSERT` in app code.
+
+#### AC-29e: Slash Command Defer Compliance
+- **GIVEN** `/battle bot`, `/battle friendly`, or `/register` (new-user path) is invoked,
+- **THEN** `interaction.response.defer` runs **before** any Supabase query or match simulation.
+- **AND** handlers use `followup.send` / `followup.edit` after defer (no bare `followup` without prior defer).
+
+#### AC-29f: Matchday Reminder Dedup
+- **GIVEN** `league_matchday_reminder_job` runs hourly,
+- **WHEN** a matchday window is within 6 hours of closing,
+- **THEN** each human participant receives **at most one** DM per `(season_id, matchday)` pair.
+- **AND** dedup state is persisted (e.g. `league_matchday_reminders` table or milestone-style flag).
+
+#### AC-29g: Production Hygiene — Debug Instrumentation Removed
+- **GIVEN** deploy to production,
+- **THEN** no cog/core module writes to `debug-*.log` files (`battle_cog`, `league_cog`, `league_journal`, `development_cog`, `squad_cog`).
+- **AND** `AGENTS.md` verification checklist item for debug removal passes.
+
+#### AC-29h: Dead Code & Legacy Path Removal
+- **GIVEN** economy v2 is the only supported match economy (`economy_v2_enabled` defaults true),
+- **THEN** direct `players.coins` / `energy` fallback branches in `league_rewards.py` and inline bot payout math are **deleted** (not left behind).
+- **AND** `energy_regen_job` is removed from scheduler **or** repurposed to call `sync_action_energy` batch — not a no-op `regen_energy_tick` cron.
+- **AND** disabled "Ranked (Soon)" UI stub in `battle_cog` is removed.
+- **AND** `README.md` no longer references deleted `gacha_cog.py` / `/gacha-claim` (points to `/store`).
+
+#### AC-29i: Division Ladder Clarity (no accidental cross-wipe)
+- **GIVEN** `weekly_league_reset_job` runs Monday 00:00 UTC,
+- **THEN** it promotes/relegates on `players.division` + `players.league_points` / `goal_difference` only (weekly **Division Rank** ladder per `league-mode-design.md`).
+- **AND** it does **not** modify `global_lp`, guild `league_fixtures`, or season standings.
+- **AND** `/profile` labels `league_points` as **Division Rank (weekly)** and does not imply guild season rank.
+
+#### AC-29j: Test & CI Health
+- **GIVEN** `pytest tests/` runs in CI,
+- **THEN** `tests/test_training.py` imports from `packages/training` (or is removed if superseded by `test_progression.py`).
+- **AND** new tests cover bot/friendly economy+XP wiring (`tests/test_match_loop_hardening.py` or extend `test_match_xp` / `test_economy_flows`).
+
+#### AC-29k: Ship Checklist
+- **GIVEN** implementation complete,
+- **THEN** migration 035 applied, `verify_required_schema.sql` passes, `change_log.md` updated for player-facing match economy/XP changes.
+- **AND** grep confirms zero `p_xp_amount": 15` and zero direct `players.update` coin mutations in `apps/discord_bot/cogs/battle_cog.py`.
 

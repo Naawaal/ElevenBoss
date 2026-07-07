@@ -28,6 +28,13 @@ from typing import AsyncGenerator
 
 from pydantic import BaseModel, Field
 
+from .match_stats import MatchLiveStats
+from .phase_stats import PhaseStat, phase_stat_value
+
+# Stat gap impact: /55 yields ~75%+ favorite win at +10 OVR (audit target)
+_STAT_DIFF_DIVISOR = 55.0
+_STAGNATION_MULT = 0.05  # per spec (plan.md NSS section)
+
 
 # ---------------------------------------------------------------------------
 # Phase Enum
@@ -48,24 +55,23 @@ class MatchTeamState:
     """Wraps a squad list and tracks live per-team state."""
 
     __slots__ = (
-        "name", "squad", "momentum", "stagnation_counter",
+        "name", "squad", "momentum", "stagnation_counter", "is_home",
         "_avg_attack", "_avg_midfield", "_avg_defense", "_avg_gk",
     )
 
-    def __init__(self, name: str, squad: list, avg_rating: float) -> None:
+    def __init__(self, name: str, squad: list, avg_rating: float, is_home: bool = False) -> None:
         self.name = name
         self.squad = squad
         self.momentum: float = 0.0          # ±10 cap
         self.stagnation_counter: int = 0
+        self.is_home = is_home
 
-        # Compute zone averages from squad, falling back to avg_rating
         self._avg_attack = avg_rating
         self._avg_midfield = avg_rating
         self._avg_defense = avg_rating
         self._avg_gk = avg_rating
         self._compute_zone_averages()
 
-    # -- Zone average computation ------------------------------------------
     _POSITION_ZONES: dict[str, str] = {
         "GK": "gk",
         "DEF": "defense", "CB": "defense", "LB": "defense", "RB": "defense",
@@ -86,7 +92,6 @@ class MatchTeamState:
             zone = self._POSITION_ZONES.get(pos.upper(), "midfield")
             buckets[zone].append(float(ovr))
 
-        # Use per-zone averages when populated, else fallback to overall avg
         overall_fallback = sum(
             p.overall if hasattr(p, "overall") else p.get("overall", 50)
             for p in self.squad
@@ -97,7 +102,6 @@ class MatchTeamState:
         self._avg_midfield = _avg(buckets["midfield"], overall_fallback)
         self._avg_attack = _avg(buckets["attack"], overall_fallback)
 
-    # -- Convenience zone accessors ----------------------------------------
     @property
     def attack(self) -> float:
         return self._avg_attack
@@ -113,6 +117,27 @@ class MatchTeamState:
     @property
     def gk(self) -> float:
         return self._avg_gk
+
+    def phase_attack(self, phase: PhaseStat, tactics_mult: float = 1.0) -> float:
+        fallbacks = {
+            PhaseStat.MIDFIELD: self._avg_midfield,
+            PhaseStat.PASSING: self._avg_midfield,
+            PhaseStat.ATTACK: self._avg_attack,
+            PhaseStat.SHOOTING: self._avg_attack,
+            PhaseStat.PACE: self._avg_attack,
+            PhaseStat.DEFENSE: self._avg_defense,
+            PhaseStat.GOALKEEPING: self._avg_gk,
+        }
+        val = phase_stat_value(self.squad, phase, fallbacks[phase])
+        if phase in (PhaseStat.ATTACK, PhaseStat.SHOOTING, PhaseStat.PACE) and tactics_mult != 1.0:
+            val *= tactics_mult
+        return val
+
+    def phase_defense(self) -> float:
+        return phase_stat_value(self.squad, PhaseStat.DEFENSE, self._avg_defense)
+
+    def phase_gk(self) -> float:
+        return phase_stat_value(self.squad, PhaseStat.GOALKEEPING, self._avg_gk)
 
     def clamp_momentum(self) -> None:
         self.momentum = max(-10.0, min(10.0, self.momentum))
@@ -144,6 +169,8 @@ class MatchState(BaseModel):
     momentum: int = 0           # -100..+100 (mapped from internal ±10 float)
     home_tactics_modifier: float = 1.0
     context_tags: list[str] = Field(default_factory=list)
+    pending_home_momentum: float = 0.0
+    live_stats: MatchLiveStats = Field(default_factory=MatchLiveStats)
 
     def update_tags(self) -> None:
         tags: list[str] = []
@@ -167,6 +194,12 @@ class MatchState(BaseModel):
 # ---------------------------------------------------------------------------
 # Core probability engine
 # ---------------------------------------------------------------------------
+def _probability_floor(attacker_stat: float, defender_stat: float) -> float:
+    """Lower floor when stat gap is large so favorites convert dominance."""
+    diff = attacker_stat - defender_stat
+    return 0.02 if diff > 15.0 else 0.05
+
+
 def _roll_chance(
     rng: random.Random,
     base_chance: float,
@@ -178,17 +211,16 @@ def _roll_chance(
     """
     Central probability formula.
 
-    chance = base_chance + (attacker_stat - defender_stat) / 100 + momentum * 0.05 + stagnation * 0.10
-
-    Returns True if the roll succeeds.
+    chance = base_chance + (attacker_stat - defender_stat) / 60 + momentum * 0.05 + stagnation * 0.05
     """
     chance = (
         base_chance
-        + (attacker_stat - defender_stat) / 100.0
+        + (attacker_stat - defender_stat) / _STAT_DIFF_DIVISOR
         + momentum * 0.05
-        + stagnation * 0.10
+        + stagnation * _STAGNATION_MULT
     )
-    chance = max(0.05, min(0.95, chance))   # hard clamp
+    floor = _probability_floor(attacker_stat, defender_stat)
+    chance = max(floor, min(0.95, chance))
     return rng.random() < chance
 
 
@@ -196,10 +228,6 @@ def _roll_chance(
 # Player selection helpers (thread-safe — use the per-match rng)
 # ---------------------------------------------------------------------------
 def _pick_player(rng: random.Random, squad: list, prefer_zone: str | None = None) -> object:
-    """
-    Pick a player from the squad, preferring a zone if specified.
-    Falls back to any player if the zone is empty.
-    """
     if prefer_zone and squad:
         zone_players = [
             p for p in squad
@@ -219,6 +247,13 @@ def _get_name(player) -> str:
     return player.name if hasattr(player, "name") else player.get("name", "Unknown Player")
 
 
+def _apply_pending_home_momentum(state: MatchState, home: MatchTeamState) -> None:
+    if state.pending_home_momentum:
+        home.momentum += state.pending_home_momentum
+        home.clamp_momentum()
+        state.pending_home_momentum = 0.0
+
+
 # ---------------------------------------------------------------------------
 # Momentum application
 # ---------------------------------------------------------------------------
@@ -235,7 +270,6 @@ def _apply_momentum_save(defending_team: MatchTeamState) -> None:
 
 
 def _decay_momentum(team: MatchTeamState) -> None:
-    """Decay towards 0 by 0.5."""
     if team.momentum > 0:
         team.momentum = max(0.0, team.momentum - 0.5)
     elif team.momentum < 0:
@@ -271,30 +305,21 @@ async def stream_match(
     away_name: str,
     rng: random.Random | None = None,
 ) -> AsyncGenerator[dict, None]:
-    """
-    Async generator that drives the Markov-chain match simulation.
-
-    Yields event dicts with the exact keys expected by IMatchOutputHandler:
-        minute, type, score_update, actor, team  (+optional assister)
-    """
-    # Thread-safe RNG — never touches global random state
     if rng is None:
         rng = random.Random()
 
-    # Build team state wrappers
-    home = MatchTeamState(home_name, home_squad, state.home_rating)
-    away = MatchTeamState(away_name, away_squad, state.away_rating)
+    home = MatchTeamState(home_name, home_squad, state.home_rating, is_home=True)
+    away = MatchTeamState(away_name, away_squad, state.away_rating, is_home=False)
 
-    # Engine state
     phase = Phase.MIDFIELD
-    attacking: MatchTeamState = home       # who currently has the ball
+    attacking: MatchTeamState = home
     defending: MatchTeamState = away
     last_decay_minute = 0
     halftime_yielded = False
+    stats = state.live_stats
 
     state.update_tags()
 
-    # ── KICKOFF ──────────────────────────────────────────────────────────
     yield {
         "minute": 0,
         "type": "KICKOFF",
@@ -303,9 +328,7 @@ async def stream_match(
         "team": home_name,
     }
 
-    # ── MAIN MARKOV LOOP ────────────────────────────────────────────────
     while state.minute < 90:
-        # Check if we should insert half-time first
         if state.minute >= 45 and not halftime_yielded:
             state.minute = 45
             halftime_yielded = True
@@ -319,30 +342,25 @@ async def stream_match(
             }
             phase = Phase.MIDFIELD
             continue
-        # Apply tactics modifier to home attack rating
-        effective_home_attack = home.attack * state.home_tactics_modifier
 
-        # Momentum decay every ~10 in-game minutes
+        _apply_pending_home_momentum(state, home)
+        tactics = state.home_tactics_modifier if attacking.is_home else 1.0
+
         if state.minute - last_decay_minute >= 10:
             _decay_momentum(home)
             _decay_momentum(away)
             last_decay_minute = state.minute
 
-        # Sync public state
-        state.momentum = int(home.momentum * 10)  # ±10 → ±100
+        state.momentum = int(home.momentum * 10)
         state.update_tags()
 
-        # ── PHASE EVALUATION ────────────────────────────────────────────
         if phase == Phase.MIDFIELD:
-            # Hidden phase — compare midfield vs midfield + momentum
-            atk_mid = attacking.midfield + (attacking.momentum * 2)
-            def_mid = defending.midfield + (defending.momentum * 2)
+            atk_mid = attacking.phase_attack(PhaseStat.MIDFIELD) + (attacking.momentum * 2)
+            def_mid = defending.phase_attack(PhaseStat.MIDFIELD) + (defending.momentum * 2)
 
-            # Foul sub-roll (~8% per midfield phase)
             if rng.random() < 0.08:
                 state.minute = _advance_clock(rng, phase, state.minute)
                 phase = Phase.SET_PIECE
-                # Foul committed by defending team
                 fouler = _pick_player(rng, defending.squad, "defense")
                 fouler_name = _get_name(fouler)
                 yield {
@@ -352,7 +370,6 @@ async def stream_match(
                     "actor": fouler_name,
                     "team": defending.name,
                 }
-                # Yellow card sub-roll (~30% of fouls)
                 if rng.random() < 0.30:
                     yield {
                         "minute": state.minute,
@@ -367,19 +384,20 @@ async def stream_match(
             if state.minute >= 90:
                 break
 
-            midfield_base = 0.55 if attacking.name == home_name else 0.50
-            if _roll_chance(rng, midfield_base, atk_mid, def_mid, attacking.momentum, 0):
+            midfield_base = 0.55 if attacking.is_home else 0.50
+            won_midfield = _roll_chance(rng, midfield_base, atk_mid, def_mid, attacking.momentum, 0)
+            if won_midfield:
+                stats.record_possession(attacking.is_home)
                 phase = Phase.BUILD_UP
-                # Attacking side keeps possession — no transition of sides
             else:
+                stats.record_possession(defending.is_home)
                 phase = Phase.BUILD_UP
-                # Opponent wins midfield — swap sides
                 attacking, defending = defending, attacking
+                tactics = state.home_tactics_modifier if attacking.is_home else 1.0
 
         elif phase == Phase.BUILD_UP:
-            # Hidden phase — compare passing vs defense
-            atk_pass = attacking.midfield  # passing ≈ midfield quality
-            def_def = defending.defense
+            atk_pass = attacking.phase_attack(PhaseStat.PASSING)
+            def_def = defending.phase_defense()
 
             state.minute = _advance_clock(rng, phase, state.minute)
             if state.minute >= 90:
@@ -389,16 +407,13 @@ async def stream_match(
                             attacking.stagnation_counter):
                 phase = Phase.ATTACK
             else:
-                # Failed build-up → opponent counter-attack
                 phase = Phase.COUNTER_ATTACK
                 attacking, defending = defending, attacking
+                tactics = state.home_tactics_modifier if attacking.is_home else 1.0
 
         elif phase == Phase.ATTACK:
-            # [VISIBLE] — compare creativity (attack) vs defense
-            atk_stat = attacking.attack
-            if attacking.name == home_name:
-                atk_stat = effective_home_attack
-            def_stat = defending.defense
+            atk_stat = attacking.phase_attack(PhaseStat.ATTACK, tactics)
+            def_stat = defending.phase_defense()
 
             state.minute = _advance_clock(rng, phase, state.minute)
             if state.minute >= 90:
@@ -406,6 +421,7 @@ async def stream_match(
 
             actor = _pick_player(rng, attacking.squad, "attack")
             actor_name = _get_name(actor)
+            stats.record_chance(attacking.is_home)
 
             yield {
                 "minute": state.minute,
@@ -418,34 +434,29 @@ async def stream_match(
             if _roll_chance(rng, 0.40, atk_stat, def_stat, attacking.momentum,
                             attacking.stagnation_counter):
                 phase = Phase.SCORING_OPP
-                # Keep same attacking/defending sides
             else:
                 attacking.stagnation_counter += 1
                 phase = Phase.MIDFIELD
 
         elif phase == Phase.SCORING_OPP:
-            # [VISIBLE] — compare shooting vs GK
-            atk_shot = attacking.attack
-            if attacking.name == home_name:
-                atk_shot = effective_home_attack
-            def_gk = defending.gk
+            atk_shot = attacking.phase_attack(PhaseStat.SHOOTING, tactics)
+            def_gk = defending.phase_gk()
 
             state.minute = _advance_clock(rng, phase, state.minute)
 
             scorer = _pick_player(rng, attacking.squad, "attack")
             scorer_name = _get_name(scorer)
-
-            # Reset stagnation — a shot has occurred
             attacking.stagnation_counter = 0
+            stats.record_shot(attacking.is_home)
 
             roll = rng.random()
-            chance = max(0.05, min(0.95,
-                0.45 + (atk_shot - def_gk) / 100.0 + attacking.momentum * 0.05
-            ))
+            diff = atk_shot - def_gk
+            chance = 0.45 + diff / _STAT_DIFF_DIVISOR + attacking.momentum * 0.05
+            floor = _probability_floor(atk_shot, def_gk)
+            chance = max(floor, min(0.95, chance))
 
             if roll < chance:
-                # ── GOAL ────────────────────────────────────────────────
-                if attacking.name == home_name:
+                if attacking.is_home:
                     state.home_score += 1
                 else:
                     state.away_score += 1
@@ -458,7 +469,7 @@ async def stream_match(
                     "team": attacking.name,
                 }
 
-                # Assist roll (~70%)
+                assister_name = None
                 if rng.random() < 0.70:
                     other_players = [
                         p for p in attacking.squad
@@ -466,13 +477,14 @@ async def stream_match(
                     ]
                     if other_players:
                         assister = _pick_player(rng, other_players, "midfield")
-                        event["assister"] = _get_name(assister)
+                        assister_name = _get_name(assister)
+                        event["assister"] = assister_name
 
+                stats.record_goal(scorer_name, assister_name)
                 yield event
 
                 _apply_momentum_goal(attacking, defending)
 
-                # Injury sub-roll on goal celebrations (~1%)
                 if rng.random() < 0.01 and len(attacking.squad) > 0:
                     injury_player = _pick_player(rng, attacking.squad)
                     yield {
@@ -486,7 +498,6 @@ async def stream_match(
                 phase = Phase.MIDFIELD
 
             elif roll < chance + (1 - chance) * 0.45:
-                # ── SAVE ────────────────────────────────────────────────
                 goalkeeper = _pick_player(rng, defending.squad, "gk")
                 yield {
                     "minute": state.minute,
@@ -497,11 +508,8 @@ async def stream_match(
                 }
                 _apply_momentum_save(defending)
                 phase = Phase.SET_PIECE
-                # Set piece goes to the attacking side (corner)
-                # attacking/defending stay the same
 
             else:
-                # ── MISS ────────────────────────────────────────────────
                 yield {
                     "minute": state.minute,
                     "type": "MISS",
@@ -512,13 +520,13 @@ async def stream_match(
                 phase = Phase.MIDFIELD
 
         elif phase == Phase.SET_PIECE:
-            # [VISIBLE] — set piece (corner / free kick)
             state.minute = _advance_clock(rng, phase, state.minute)
             if state.minute >= 90:
                 break
 
             actor = _pick_player(rng, attacking.squad, "midfield")
             actor_name = _get_name(actor)
+            stats.record_chance(attacking.is_home)
 
             yield {
                 "minute": state.minute,
@@ -528,19 +536,15 @@ async def stream_match(
                 "team": attacking.name,
             }
 
-            # Set piece → scoring opportunity (~35%) or cleared
-            if _roll_chance(rng, 0.35, attacking.attack, defending.defense,
-                            attacking.momentum, 0):
+            if _roll_chance(rng, 0.35, attacking.phase_attack(PhaseStat.ATTACK, tactics),
+                            defending.phase_defense(), attacking.momentum, 0):
                 phase = Phase.SCORING_OPP
             else:
                 phase = Phase.MIDFIELD
 
         elif phase == Phase.COUNTER_ATTACK:
-            # [VISIBLE] — fast break, high risk/reward
-            atk_speed = attacking.attack
-            if attacking.name == home_name:
-                atk_speed = effective_home_attack
-            def_recovery = defending.defense
+            atk_speed = attacking.phase_attack(PhaseStat.PACE, tactics)
+            def_recovery = defending.phase_defense()
 
             state.minute = _advance_clock(rng, phase, state.minute)
             if state.minute >= 90:
@@ -548,6 +552,7 @@ async def stream_match(
 
             actor = _pick_player(rng, attacking.squad, "attack")
             actor_name = _get_name(actor)
+            stats.record_chance(attacking.is_home)
 
             yield {
                 "minute": state.minute,
@@ -557,7 +562,6 @@ async def stream_match(
                 "team": attacking.name,
             }
 
-            # Counter-attack: higher reward (skip build-up) but lower base chance
             if _roll_chance(rng, 0.30, atk_speed, def_recovery,
                             attacking.momentum, 0):
                 phase = Phase.SCORING_OPP
@@ -565,7 +569,6 @@ async def stream_match(
                 attacking.stagnation_counter += 1
                 phase = Phase.MIDFIELD
 
-            # Injury sub-roll on counter-attacks (~2%)
             if rng.random() < 0.02 and len(defending.squad) > 0:
                 injury_player = _pick_player(rng, defending.squad, "defense")
                 yield {
@@ -576,7 +579,6 @@ async def stream_match(
                     "team": defending.name,
                 }
 
-    # ── FULL TIME ────────────────────────────────────────────────────────
     state.minute = 90
     state.momentum = int(home.momentum * 10)
     state.update_tags()

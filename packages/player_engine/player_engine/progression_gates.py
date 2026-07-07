@@ -28,6 +28,34 @@ def can_gain_stat_progression(
     return True, ""
 
 
+def can_allocate_skill_point(
+    *,
+    position: str,
+    stats: dict[str, int],
+    playstyles: list[str],
+    potential: int,
+    stat_key: str,
+    overall: int | None = None,
+) -> tuple[bool, str]:
+    """Return whether spending 1 skill point on stat_key is allowed (mirrors allocate_skill_point RPC)."""
+    if stat_key not in STAT_KEYS:
+        return False, "Invalid stat"
+    current = int(stats.get(stat_key, 50))
+    ok, reason = can_gain_stat_progression(
+        overall=overall if overall is not None else calculate_true_ovr(position, stats, playstyles, potential),
+        potential=potential,
+        stat_value=current,
+    )
+    if not ok:
+        return ok, reason
+    trial = dict(stats)
+    trial[stat_key] = min(99, current + 1)
+    projected = calculate_true_ovr(position, trial, playstyles, potential)
+    if projected > potential:
+        return False, "Would exceed maximum overall for their potential"
+    return True, ""
+
+
 def simulate_legacy_stat_drill(
     *,
     overall: int,

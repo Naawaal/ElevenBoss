@@ -50,6 +50,7 @@ def test_player_admin_split_structure():
     assert "hub_view_table_btn" in button_custom_ids
     assert "hub_my_fixtures_btn" in button_custom_ids
     assert "hub_season_stats_btn" in button_custom_ids
+    assert "hub_scout_btn" in button_custom_ids
     
     # Assert admin buttons are NOT present
     assert "league_admin_start" not in button_custom_ids

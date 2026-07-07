@@ -16,33 +16,28 @@ from player_engine import (
     CANCEL_FEE_COINS,
     EVOLUTION_START_ENERGY,
     EVOLUTION_TRACKS,
+    L_MAX,
     MAX_ACTIVE_EVOLUTIONS,
+    DRILL_CATALOG,
+    drill_spec,
+    drill_unlocked,
+    drill_xp_reward,
     evolution_start_cost,
+    evolution_unlocked,
     format_cooldown_remaining,
+    fusion_xp_reward,
+    level_from_xp,
+    simulate_apply_card_xp,
+    track_min_player_level,
+    xp_progress,
 )
 
 from apps.discord_bot.middleware.match_lock import assert_not_in_match
+from apps.discord_bot.views.level_reward_claim import claim_level_rewards, unclaimed_reward_count
+from apps.discord_bot.core.economy_rpc import format_action_energy_status, sync_action_energy
+from economy.flows import drill_cost, EconomyConfig
 
 logger = logging.getLogger(__name__)
-
-_DEBUG_LOG = "debug-4aa967.log"
-
-
-def _agent_debug_log(location: str, message: str, data: dict, hypothesis_id: str) -> None:
-    # #region agent log
-    try:
-        with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "sessionId": "4aa967",
-                "timestamp": int(time.time() * 1000),
-                "location": location,
-                "message": message,
-                "data": data,
-                "hypothesisId": hypothesis_id,
-            }) + "\n")
-    except OSError:
-        pass
-    # #endregion
 
 
 def _evo_played(evo: dict) -> int:
@@ -92,12 +87,8 @@ def evolution_start_gate_message(status: dict) -> str | None:
 
 
 STAT_DRILLS = {
-    "pac_sprint": "⚡ Pace Sprint",
-    "sho_finishing": "🎯 Finishing Drill",
-    "pas_distribution": "🧠 Distribution Drill",
-    "dri_dribble": "👟 Dribbling Drill",
-    "def_tackling": "🛡️ Tackling Drill",
-    "phy_strength": "💪 Strength Drill",
+    drill_id: meta["name"]
+    for drill_id, meta in DRILL_CATALOG.items()
 }
 
 
@@ -126,27 +117,83 @@ async def show_hub(interaction: discord.Interaction, owner_id: int):
     db = await get_client()
     player_res = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
     player = player_res.data if player_res else None
-    
+
+    energy_row = await sync_action_energy(db, owner_id)
+    ae = energy_row.get("action_energy", 0)
+    max_e = energy_row.get("max_energy", 100)
+
+    pending_count = await unclaimed_reward_count(owner_id)
+
     embed = discord.Embed(
         title="🏋️‍♂️ Development Center",
-        description=f"Welcome to **{player['club_name']}** development center. Train stats, fuse duplicate cards, evolve playstyles, or allocate skill points.",
-        color=0x00FF87
+        description=(
+            f"Welcome to **{player['club_name']}** development center. "
+            f"Train stats, fuse cards, evolve playstyles, or allocate skill points.\n\n"
+            f"{format_action_energy_status(ae, max_e)}"
+        ),
+        color=0x00FF87,
     )
-    view = DevelopmentHubView(owner_id)
+    if pending_count > 0:
+        embed.add_field(
+            name="🎁 Level-Up Rewards",
+            value=(
+                f"You have **{pending_count}** player(s) with unclaimed retroactive skill points. "
+                "Use **Claim Level Rewards** below (also sent via DM when possible)."
+            ),
+            inline=False,
+        )
+    view = DevelopmentHubView(owner_id, show_claim_rewards=pending_count > 0)
     await _edit_hub_message(interaction, embed, view)
 
 # --- VIEWS ---
 
 class DevelopmentHubView(discord.ui.View):
-    def __init__(self, owner_id: int) -> None:
+    def __init__(self, owner_id: int, *, show_claim_rewards: bool = False) -> None:
         super().__init__(timeout=900)
         self.owner_id = owner_id
+        if show_claim_rewards:
+            claim_btn = discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                label="🎁 Claim Level Rewards",
+                custom_id="hub_claim_level_rewards",
+                row=2,
+            )
+            claim_btn.callback = self._claim_rewards_btn
+            self.add_item(claim_btn)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("This belongs to another manager.", ephemeral=True)
             return False
         return True
+
+    async def _claim_rewards_btn(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        try:
+            if await unclaimed_reward_count(self.owner_id) <= 0:
+                await interaction.followup.send(
+                    embed=error_embed("No unclaimed level rewards found."),
+                    ephemeral=True,
+                )
+                return
+            claimed, total = await claim_level_rewards(self.owner_id)
+            if claimed <= 0:
+                await interaction.followup.send(
+                    embed=error_embed("No rewards could be claimed."),
+                    ephemeral=True,
+                )
+                return
+            await interaction.followup.send(
+                embed=success_embed(
+                    f"Claimed **{total}** skill points for **{claimed}** player(s). "
+                    "Use **Allocate Skills** below to spend them."
+                ),
+                ephemeral=True,
+            )
+            await show_hub(interaction, self.owner_id)
+        except Exception as exc:
+            logger.exception("Failed claiming level rewards from development hub.")
+            await interaction.followup.send(embed=error_embed(str(exc)), ephemeral=True)
 
     @discord.ui.button(style=discord.ButtonStyle.primary, label="🏋️ Training Drills", custom_id="hub_drills", row=0)
     async def training_btn(self, interaction: discord.Interaction, _button: discord.ui.Button):
@@ -172,16 +219,11 @@ class DevelopmentHubView(discord.ui.View):
 
 async def show_training_menu(interaction: discord.Interaction, owner_id: int) -> None:
     db = await get_client()
-    energy_res = await db.rpc("sync_training_energy", {"p_club_id": owner_id}).execute()
-    energy = energy_res.data or {}
-    # #region agent log
-    _agent_debug_log(
-        "development_cog.py:show_training_menu",
-        "sync_training_energy ok",
-        {"keys": sorted(energy.keys()), "daily_drill_limit": energy.get("daily_drill_limit")},
-        "B",
-    )
-    # #endregion
+    player_res = await db.table("players").select("daily_drill_count").eq("discord_id", owner_id).maybe_single().execute()
+    energy_row = await sync_action_energy(db, owner_id)
+    training_energy = energy_row.get("action_energy", energy_row.get("training_energy", 0))
+    daily_count = player_res.data.get("daily_drill_count", 0) if player_res and player_res.data else 0
+    daily_limit = 20
 
     roster_res = await db.table("player_cards").select("*").eq("owner_id", owner_id).order("overall", desc=True).execute()
     roster = roster_res.data or []
@@ -190,17 +232,19 @@ async def show_training_menu(interaction: discord.Interaction, owner_id: int) ->
     evo_ids = {e["card_id"] for e in (evo_res.data or [])}
     eligible_players = [p for p in roster if p["id"] not in evo_ids]
 
-    training_energy = energy.get("training_energy", 0)
-    daily_count = energy.get("daily_drill_count", 0)
-    daily_limit = energy.get("daily_drill_limit", 20)
+    cfg = EconomyConfig()
+    basic_coins, basic_energy = drill_cost(60, 5, cfg)
+    adv_coins, adv_energy = drill_cost(60, 12, cfg)
 
     embed = discord.Embed(
         title="🏋️ Stat Training Drills",
         description=(
-            "Spend **Training Energy** and coins to boost a player's core stats.\n\n"
-            f"⚡ **Training Energy**: `{training_energy}/100` *(+25/hour)*\n"
+            "Spend **action energy** and coins to earn **player XP**. "
+            "Level-ups grant **skill points** — allocate them under **Allocate Skills**.\n\n"
+            f"⚡ **Action Energy**: `{training_energy}/100` *(+1 per 6 min)*\n"
             f"📅 **Daily Drills**: `{daily_count}/{daily_limit}`\n"
-            f"💪 **Cost per drill**: `15 energy` + `5 × player OVR` coins"
+            f"💪 **Basic drill** (Lv 1+): `{basic_energy}⚡` + `{basic_coins}` coins @ 60 OVR\n"
+            f"💪 **Advanced drill** (Lv 10+): `{adv_energy}⚡` + `{adv_coins}` coins @ 60 OVR"
         ),
         color=0x00FF87,
     )
@@ -242,14 +286,31 @@ class StatDrillView(discord.ui.View):
             self.player_select.callback = self.player_select_callback
             self.add_item(self.player_select)
 
-            drill_options = [
-                discord.SelectOption(
-                    label=name,
-                    value=drill_id,
-                    default=(self.selected_drill == drill_id),
+            selected = next(
+                (p for p in self.eligible_players if str(p["id"]) == str(self.selected_card_id)),
+                None,
+            )
+            player_level = int((selected or {}).get("level", 1))
+
+            drill_options = []
+            for drill_id, name in STAT_DRILLS.items():
+                spec = drill_spec(drill_id)
+                if not spec:
+                    continue
+                unlocked = drill_unlocked(drill_id, player_level)
+                xp_preview = drill_xp_reward(spec.xp_base, player_level)
+                drill_options.append(
+                    discord.SelectOption(
+                        label=name,
+                        value=drill_id,
+                        description=(
+                            f"+{xp_preview} XP · {spec.energy}⚡"
+                            if unlocked
+                            else f"🔒 Requires Level {spec.min_level}"
+                        ),
+                        default=(self.selected_drill == drill_id),
+                    )
                 )
-                for drill_id, name in STAT_DRILLS.items()
-            ]
             self.drill_select = discord.ui.Select(
                 placeholder="Select stat drill...",
                 min_values=1,
@@ -285,8 +346,17 @@ class StatDrillView(discord.ui.View):
         await show_hub(interaction, self.owner_id)
 
     def _update_run_btn(self) -> None:
-        if hasattr(self, "run_btn"):
-            self.run_btn.disabled = not (self.selected_card_id and self.selected_drill)
+        if not hasattr(self, "run_btn"):
+            return
+        if not (self.selected_card_id and self.selected_drill):
+            self.run_btn.disabled = True
+            return
+        selected = next(
+            (p for p in self.eligible_players if str(p["id"]) == str(self.selected_card_id)),
+            None,
+        )
+        player_level = int((selected or {}).get("level", 1))
+        self.run_btn.disabled = not drill_unlocked(self.selected_drill, player_level)
 
     async def player_select_callback(self, interaction: discord.Interaction) -> None:
         self.selected_card_id = self.player_select.values[0]
@@ -312,19 +382,6 @@ class StatDrillView(discord.ui.View):
                 "pac_sprint": "pac", "sho_finishing": "sho", "pas_distribution": "pas",
                 "dri_dribble": "dri", "def_tackling": "def", "phy_strength": "phy",
             }.get(self.selected_drill, "pac")
-            # #region agent log
-            _agent_debug_log(
-                "development_cog.py:run_drill_callback",
-                "pre drill state",
-                {
-                    "overall": selected_p.get("overall"),
-                    "potential": selected_p.get("potential"),
-                    "stat": selected_p.get(drill_stat_key),
-                    "drill": self.selected_drill,
-                },
-                "A",
-            )
-            # #endregion
 
             res = await db.rpc("process_stat_drill", {
                 "p_owner_id": self.owner_id,
@@ -332,28 +389,21 @@ class StatDrillView(discord.ui.View):
                 "p_drill_id": self.selected_drill,
             }).execute()
             result = res.data or {}
-            # #region agent log
-            _agent_debug_log(
-                "development_cog.py:run_drill_callback",
-                "process_stat_drill ok",
-                {
-                    "stat": result.get("stat"),
-                    "new_ovr": result.get("new_ovr"),
-                    "levels_gained": result.get("levels_gained"),
-                    "coins_spent": result.get("coins_spent"),
-                },
-                "E",
-            )
-            # #endregion
-            stat = str(result.get("stat", "")).upper()
+            xp_gained = int(result.get("xp_gained", 0))
             levels = int(result.get("levels_gained", 0))
+            skill_pts = int(result.get("skill_points_granted", 0))
+            new_level = result.get("new_level", selected_p.get("level", 1))
             new_ovr = result.get("new_ovr", selected_p["overall"])
             coins_spent = result.get("coins_spent", 0)
 
+            level_note = ""
+            if levels > 0:
+                level_note = f"\n• **Level Up!** Now level **{new_level}** (+{skill_pts} skill points)"
+
             msg = (
                 f"**{selected_p['name']}** completed **{STAT_DRILLS.get(self.selected_drill, self.selected_drill)}**.\n"
-                f"• Stat trained: `+{levels} {stat}`\n"
-                f"• New OVR: **{new_ovr}**\n"
+                f"• XP gained: `+{xp_gained}`{level_note}\n"
+                f"• OVR: **{new_ovr}** (unchanged — spend skill points to raise stats)\n"
                 f"• Spent: `15 energy` + `🪙 {coins_spent:,} coins`"
             )
             await interaction.followup.send(embed=success_embed(msg), ephemeral=True)
@@ -361,18 +411,6 @@ class StatDrillView(discord.ui.View):
 
         except Exception as exc:
             logger.exception("Failed running stat drill.")
-            # #region agent log
-            err_data = {"type": type(exc).__name__, "message": str(exc)}
-            if isinstance(exc, APIError):
-                err_data["code"] = getattr(exc, "code", None)
-                err_data["details"] = getattr(exc, "details", None)
-            _agent_debug_log(
-                "development_cog.py:run_drill_callback",
-                "process_stat_drill failed",
-                err_data,
-                "A",
-            )
-            # #endregion
             await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
 
 
@@ -420,10 +458,12 @@ async def show_card_fusion_menu(interaction: discord.Interaction, owner_id: int)
         description=(
             "Sacrifice a **bench card** to feed XP into a **keeper**. The sacrificed card is **permanently deleted**.\n\n"
             "*Sacrifice: not in starting XI or active evolution. "
-            "Keeper: not in active evolution.*"
+            "Keeper: not in active evolution.*\n"
+            "*Max **3 fusions per day** per club · **200 coins** per fusion.*"
         ),
         color=0xFF6B35,
     )
+    embed.add_field(name="Fusion Preview", value="Select keeper and sacrifice to see projected XP.", inline=False)
     embed.set_footer(text="Showing your top 25 eligible cards per role.")
     await _edit_hub_message(interaction, embed, CardFusionView(owner_id, target_pool, sacrifice_pool))
 
@@ -440,7 +480,8 @@ class FusionKeeperSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction) -> None:
         self.view.keeper_id = self.values[0]
         self.view._rebuild_options()
-        await interaction.response.edit_message(view=self.view)
+        embed = self.view._fusion_preview_embed(interaction.message.embeds[0])
+        await interaction.response.edit_message(embed=embed, view=self.view)
 
 
 class FusionSacrificeSelect(discord.ui.Select):
@@ -455,7 +496,8 @@ class FusionSacrificeSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction) -> None:
         self.view.sacrifice_id = self.values[0]
         self.view._rebuild_options()
-        await interaction.response.edit_message(view=self.view)
+        embed = self.view._fusion_preview_embed(interaction.message.embeds[0])
+        await interaction.response.edit_message(embed=embed, view=self.view)
 
 
 class FusionConfirmButton(discord.ui.Button):
@@ -482,11 +524,12 @@ class FusionConfirmButton(discord.ui.Button):
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
 
-            await db.rpc("train_with_fodder", {
+            fusion_res = await db.rpc("train_with_fodder", {
                 "p_owner_id": interaction.user.id,
                 "p_target_id": self.view.keeper_id,
                 "p_fodder_id": self.view.sacrifice_id,
             }).execute()
+            fusion = fusion_res.data or {}
 
             target_res = await db.table("player_cards").select("*").eq("id", self.view.keeper_id).maybe_single().execute()
             keeper = target_res.data
@@ -494,7 +537,12 @@ class FusionConfirmButton(discord.ui.Button):
                 raise ValueError("Could not find the keeper card after fusion.")
 
             new_level = keeper["level"]
-            progress = f"📈 **Level**: {new_level}\n⭐ **OVR**: {keeper['overall']}"
+            levels_gained = int(fusion.get("levels_gained", 0))
+            fusion_xp = int(fusion.get("fusion_xp", 0))
+            skill_pts = int(fusion.get("skill_points_granted", 0))
+            progress = f"📈 **Level**: {new_level}\n⭐ **OVR**: {keeper['overall']}\n✨ **Fusion XP**: +{fusion_xp}"
+            if levels_gained > 0:
+                progress += f"\n🎉 **Level Up!** +{skill_pts} skill points to allocate"
 
             embed = discord.Embed(
                 title="🔥 Fusion Complete!",
@@ -582,6 +630,38 @@ class CardFusionView(discord.ui.View):
         self.keeper_select.disabled = len(self.keeper_select.options) == 0
         self.sacrifice_select.disabled = len(self.sacrifice_select.options) == 0
         self.confirm_btn.disabled = not (self.keeper_id and self.sacrifice_id)
+
+    def _card_by_id(self, pool: list[dict], card_id: str | None) -> dict | None:
+        if not card_id:
+            return None
+        return next((p for p in pool if str(p["id"]) == str(card_id)), None)
+
+    def _fusion_preview_embed(self, embed: discord.Embed) -> discord.Embed:
+        embed = embed.copy()
+        keeper = self._card_by_id(self.keeper_pool, self.keeper_id)
+        sacrifice = self._card_by_id(self.sacrifice_pool, self.sacrifice_id)
+        if not keeper or not sacrifice:
+            embed.set_field_at(
+                0,
+                name="Fusion Preview",
+                value="Select keeper and sacrifice to see projected XP.",
+                inline=False,
+            )
+            return embed
+        fusion_xp = fusion_xp_reward(int(sacrifice.get("level", 1)), int(sacrifice.get("overall", 0)))
+        sim = simulate_apply_card_xp(int(keeper.get("xp", 0)), fusion_xp)
+        keeper_level = level_from_xp(int(keeper.get("xp", 0)))
+        lines = [
+            f"**{sacrifice['name']}** → **{keeper['name']}**",
+            f"• Fusion XP: **+{fusion_xp}**",
+            f"• Projected level: **{keeper_level}** → **{sim.new_level}**",
+        ]
+        if sim.levels_gained > 0:
+            lines.append(f"• **Level Up!** +{sim.skill_points_granted} skill points")
+        elif keeper_level >= L_MAX:
+            lines.append("• ⚠️ Keeper is max level — XP will be wasted")
+        embed.set_field_at(0, name="Fusion Preview", value="\n".join(lines), inline=False)
+        return embed
 
 
 # --- 3. EVOLUTIONS SUB VIEW SYSTEM ---
@@ -834,15 +914,31 @@ class EvolutionsSubView(discord.ui.View):
 
         if card and not _is_active_evo(active_evo) and not self.start_blocked:
             energy_cost, coin_cost = evolution_start_cost(card["overall"])
-            evo_options = [
-                discord.SelectOption(
-                    label=track["name"],
-                    description=f"{energy_cost}⚡ + {coin_cost:,}🪙 | {track['goal']} matches → +{track['reward_val']} {track['reward_stat'].upper()}",
-                    value=k,
-                )
-                for k, track in EVOLUTION_TRACKS.items()
-                if k not in self.completed_tracks
-            ]
+            card_level = int(card.get("level", 1))
+            evo_options = []
+            for k, track in EVOLUTION_TRACKS.items():
+                if k in self.completed_tracks:
+                    continue
+                min_lvl = track_min_player_level(k)
+                if evolution_unlocked(k, card_level):
+                    evo_options.append(
+                        discord.SelectOption(
+                            label=track["name"],
+                            description=(
+                                f"{energy_cost}⚡ + {coin_cost:,}🪙 | "
+                                f"{track['goal']} matches → +{track['reward_val']} {track['reward_stat'].upper()}"
+                            ),
+                            value=k,
+                        )
+                    )
+                else:
+                    evo_options.append(
+                        discord.SelectOption(
+                            label=f"🔒 {track['name']}",
+                            description=f"Requires player Level {min_lvl} (current: {card_level})",
+                            value=f"locked_{k}",
+                        )
+                    )
             if evo_options:
                 evo_sel = discord.ui.Select(placeholder="Choose evolution path...", options=evo_options, row=1)
                 evo_sel.callback = self.start_evo_callback
@@ -892,6 +988,14 @@ class EvolutionsSubView(discord.ui.View):
                 return
 
             evo_key = interaction.data["values"][0]
+            if evo_key.startswith("locked_"):
+                track_id = evo_key.removeprefix("locked_")
+                min_lvl = track_min_player_level(track_id)
+                await interaction.followup.send(
+                    embed=error_embed(f"This evolution requires player Level **{min_lvl}**."),
+                    ephemeral=True,
+                )
+                return
             track = EVOLUTION_TRACKS[evo_key]
 
             gate = evolution_start_gate_message(self.hub_status)
@@ -957,19 +1061,6 @@ class EvolutionsSubView(discord.ui.View):
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
 
-            # #region agent log
-            _agent_debug_log(
-                "development_cog.py:claim_reward_callback",
-                "pre claim state",
-                {
-                    "overall": self.card.get("overall"),
-                    "potential": self.card.get("potential"),
-                    "evo_id": self.active_evo.get("evolution_id"),
-                },
-                "C",
-            )
-            # #endregion
-
             res = await db.rpc("claim_evolution_reward", {
                 "p_owner_id": self.owner_id,
                 "p_evo_id": self.active_evo["id"],
@@ -979,15 +1070,6 @@ class EvolutionsSubView(discord.ui.View):
             applied = result.get("reward", track["reward_val"])
             reward_stat = result.get("stat", track["reward_stat"].upper())
             blocked = result.get("blocked_by_cap", False)
-
-            # #region agent log
-            _agent_debug_log(
-                "development_cog.py:claim_reward_callback",
-                "claim_evolution_reward ok",
-                {"reward": applied, "new_ovr": result.get("new_ovr"), "blocked_by_cap": blocked},
-                "C",
-            )
-            # #endregion
 
             await show_evols_menu(interaction, self.owner_id, preselected_card_id=self.card["id"])
             cap_note = ""

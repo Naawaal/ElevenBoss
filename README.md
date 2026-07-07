@@ -15,7 +15,7 @@ ElevenBoss/
 │       ├── main.py                # Bot Entrypoint
 │       ├── cogs/                  # App slash commands
 │       │   ├── onboarding_cog.py  # /register + setup wizard thread
-│       │   ├── gacha_cog.py       # /gacha-claim
+│       │   ├── store_cog.py         # /store — daily login, energy refill, free pack
 │       │   ├── squad_cog.py       # /squad-view, /squad-set-player, /squad-set-formation
 │       │   ├── match_cog.py       # /match-play
 │       │   ├── player_cog.py      # /player-level-up

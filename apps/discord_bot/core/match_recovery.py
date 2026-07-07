@@ -70,6 +70,7 @@ async def _abandon_ephemeral_run(bot: commands.Bot, db, run: dict) -> None:
 
 async def _recover_league_run(bot: commands.Bot, db, run: dict) -> None:
     from apps.discord_bot.cogs.battle_cog import LeagueMatchHandler, run_league_match_simulation
+    from apps.discord_bot.core.league_journal import resolve_season_threads
 
     fixture_id = run.get("fixture_id")
     if not fixture_id:
@@ -96,17 +97,26 @@ async def _recover_league_run(bot: commands.Bot, db, run: dict) -> None:
         logger.warning("Cannot recover league run %s — guild %s unavailable", run["id"], guild_id)
         return
 
-    thread = await _resolve_thread(bot, run)
-    if not thread:
-        logger.warning("Cannot recover league run %s — thread missing", run["id"])
-        return
+    season_threads = await resolve_season_threads(bot, db, guild, fixture["season_id"])
+    if not season_threads:
+        thread = await _resolve_thread(bot, run)
+        if not thread:
+            logger.warning("Cannot recover league run %s — thread missing", run["id"])
+            return
+        season_threads_commentary = thread
+        journal_thread = None
+        journal_standings_msg_id = None
+    else:
+        season_threads_commentary = season_threads.commentary_thread
+        journal_thread = season_threads.journal_thread
+        journal_standings_msg_id = season_threads.journal_standings_message_id
 
     snapshot = run.get("squad_snapshot") or {}
     home_name = snapshot.get("home_name", "Home")
     away_name = snapshot.get("away_name", "Away")
 
     try:
-        await thread.send(
+        await season_threads_commentary.send(
             embed=discord.Embed(
                 title="⚠️ Match interrupted — completing result",
                 description=(
@@ -119,7 +129,13 @@ async def _recover_league_run(bot: commands.Bot, db, run: dict) -> None:
     except Exception:
         pass
 
-    handler = LeagueMatchHandler(thread, fixture_id=fixture_id, season_id=fixture["season_id"])
+    handler = LeagueMatchHandler(
+        commentary_thread=season_threads_commentary,
+        fixture_id=fixture_id,
+        season_id=fixture["season_id"],
+        journal_thread=journal_thread,
+        journal_standings_msg_id=journal_standings_msg_id,
+    )
     await run_league_match_simulation(
         bot=bot,
         db=db,

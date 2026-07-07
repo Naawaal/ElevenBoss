@@ -8,10 +8,16 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from match_engine import generate_round_robin_fixtures, simulate_match, MatchInput, MatchPlayerCard
 from apps.discord_bot.core.locks import get_guild_thread_lock
+from apps.discord_bot.core.league_journal import (
+    get_or_create_league_journal,
+    resolve_season_threads,
+)
+from leagues import compute_form, format_standings_table, sort_standings, tie_breaker_footer
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +28,49 @@ BOT_NAMES = [
     "Zenith United", "Sovereign Athletic", "Majestic FC", "Titan Legends",
     "Antigravity FC", "Grandmasters United"
 ]
+
+async def _league_join_limits(db) -> tuple[int, int]:
+    min_matches, min_days = 10, 7
+    try:
+        m_res = await db.rpc("get_game_config", {"p_key": "league_join_min_matches"}).execute()
+        d_res = await db.rpc("get_game_config", {"p_key": "league_join_min_account_days"}).execute()
+        if m_res.data is not None:
+            min_matches = int(m_res.data)
+        if d_res.data is not None:
+            min_days = int(d_res.data)
+    except Exception:
+        logger.debug("league join limits read failed", exc_info=True)
+    return min_matches, min_days
+
+
+def _account_age_days(created_at) -> int:
+    if not created_at:
+        return 9999
+    if isinstance(created_at, str):
+        created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    else:
+        created_dt = created_at
+    return (datetime.now(timezone.utc) - created_dt).days
+
+
+async def _display_entry_fee(db, season: dict | None, division: str = "Grassroots") -> str:
+    from economy.flows import EconomyConfig, league_division_tier, league_entry_fee
+
+    base: int | None = None
+    if season and season.get("config_json") and "entry_fee_coins" in season["config_json"]:
+        base = int(season["config_json"]["entry_fee_coins"])
+        if base <= 0:
+            return "Free entry"
+
+    c = EconomyConfig()
+    if base is not None:
+        fee = base + league_division_tier(division) * c.league_entry_fee_per_division
+    else:
+        fee = league_entry_fee(division, c)
+    if fee <= 0:
+        return "Free entry"
+    return f"**{fee:,}** coins (scales by division; refunded on season complete)"
+
 
 # --- STANDINGS HELPER ---
 async def fetch_standings(db, season_id: str) -> list[dict]:
@@ -87,11 +136,11 @@ async def fetch_standings(db, season_id: str) -> list[dict]:
             "goals_against": goals_against,
             "matches_played": matches_played,
             "points": points,
-            "goal_difference": gd
+            "goal_difference": gd,
+            "form": compute_form(pid, fixtures),
         })
-        
-    standings.sort(key=lambda x: (x["points"], x["goal_difference"], x["goals_for"], -x["discord_id"]), reverse=True)
-    return standings
+
+    return sort_standings(standings, fixtures)
 
 
 # --- AUTO SIMULATION OF EXPIRED MATCHDAY WINDOWS ---
@@ -123,91 +172,11 @@ async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> in
         logger.warning(f"Guild {guild_id} not found/cached by bot.")
         return 0
         
-    # Resolve thread (with concurrency lock)
-    logger.info(f"[Trace] [auto_sim_expired_fixtures] Auto-sim match checking/creation requested for guild {guild_id}. Requesting lock...")
-    
-    lock = await get_guild_thread_lock(guild_id)
-    async with lock:
-        logger.info(f"[Trace] [auto_sim_expired_fixtures] Lock acquired for guild {guild_id}.")
-        config_res = await db.table("guild_config").select("*").eq("guild_id", guild_id).maybe_single().execute()
-        config = config_res.data if config_res else None
-        
-        league_channel_id = config.get("league_channel_id") if config else None
-        league_updates_thread_id = config.get("league_updates_thread_id") if config else None
-        
-        logger.info(f"[Trace] [auto_sim_expired_fixtures] DB thread check: league_updates_thread_id={league_updates_thread_id}")
-
-        if not league_channel_id:
-            logger.warning(f"league_channel_id not configured for guild {guild_id}")
-            return 0
-            
-        announcement_channel = guild.get_channel(league_channel_id)
-        if not announcement_channel:
-            logger.warning(f"announcement_channel {league_channel_id} not found in guild {guild_id}")
-            return 0
-            
-        thread = None
-        if league_updates_thread_id:
-            thread = guild.get_thread(league_updates_thread_id)
-            logger.info(f"[Trace] [auto_sim_expired_fixtures] Cache check for thread {league_updates_thread_id}: thread_found={thread is not None}")
-            if not thread:
-                try:
-                    thread = await guild.fetch_channel(league_updates_thread_id)
-                    logger.info(f"[Trace] [auto_sim_expired_fixtures] API fetch check for thread {league_updates_thread_id}: thread_found={thread is not None}")
-                except discord.NotFound:
-                    logger.warning(f"[Trace] [auto_sim_expired_fixtures] API fetch failed: thread {league_updates_thread_id} NotFound.")
-                    thread = None
-                except Exception as e:
-                    logger.error(f"[Trace] [auto_sim_expired_fixtures] API fetch failed with error: {e}")
-                    thread = None
-
-        if not thread:
-            logger.info(f"[Trace] [auto_sim_expired_fixtures] Thread is missing or invalid. Initiating thread creation in channel {league_channel_id}...")
-            try:
-                thread = await announcement_channel.create_thread(
-                    name="📰 league-journal",
-                    type=discord.ChannelType.public_thread,
-                    auto_archive_duration=60
-                )
-                logger.info(f"[Trace] [auto_sim_expired_fixtures] Thread created successfully with ID {thread.id}. Posting intro rules...")
-                info_embed = discord.Embed(
-                    title="🏆 ElevenBoss League Journal",
-                    description=(
-                        "Welcome to the official League Journal! Here you will find live match tickers, "
-                        "results, and season summaries.\n\n"
-                        "**League Rules & Info:**\n"
-                        "• Play matches using `/league hub` before the matchday window ends.\n"
-                        "• Unplayed matches will be auto-simulated at the end of the window.\n"
-                        "• Win = 3 pts, Draw = 1 pt, Loss = 0 pts."
-                    ),
-                    color=0x00FF87
-                )
-                first_msg = await thread.send(embed=info_embed)
-                try:
-                    await first_msg.pin()
-                except Exception as pe:
-                    logger.warning(f"Failed to pin introductory message in thread {thread.id}: {pe}")
-                
-                try:
-                    everyone_role = announcement_channel.guild.default_role
-                    overwrites = announcement_channel.overwrites_for(everyone_role)
-                    if overwrites.add_reactions != True:
-                        overwrites.add_reactions = True
-                        await announcement_channel.set_permissions(everyone_role, overwrite=overwrites)
-                        logger.info(f"Enabled add_reactions permissions for @everyone on parent channel {announcement_channel.id}")
-                except Exception as pe:
-                    logger.warning(f"Could not adjust parent channel reaction permissions: {pe}")
-
-                logger.info(f"[Trace] [auto_sim_expired_fixtures] Saving thread ID {thread.id} to guild_config...")
-                await db.table("guild_config").update({"league_updates_thread_id": thread.id}).eq("guild_id", guild_id).execute()
-                logger.info(f"[Trace] [auto_sim_expired_fixtures] Thread ID {thread.id} successfully confirmed in DB.")
-            except Exception as e:
-                logger.exception("Failed to create League Journal thread in auto-sim.")
-                return 0
-        else:
-            logger.info(f"[Trace] [auto_sim_expired_fixtures] Reusing existing thread {thread.id}.")
-
-    logger.info(f"[Trace] [auto_sim_expired_fixtures] Released lock for guild {guild_id}.")
+    # Resolve threads (dual_v2 or legacy)
+    season_threads = await resolve_season_threads(bot, db, guild, season_id)
+    if not season_threads:
+        logger.warning("Could not resolve league threads for guild %s", guild_id)
+        return 0
 
     from apps.discord_bot.cogs.battle_cog import run_league_match_simulation, LeagueMatchHandler
     from apps.discord_bot.core.match_runs import get_active_fixture_run
@@ -223,7 +192,13 @@ async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> in
                 logger.info("Skipping auto-sim for fixture %s — active match run", f["id"])
                 continue
             try:
-                handler = LeagueMatchHandler(thread, fixture_id=f["id"], season_id=f["season_id"])
+                handler = LeagueMatchHandler(
+                    commentary_thread=season_threads.commentary_thread,
+                    fixture_id=f["id"],
+                    season_id=f["season_id"],
+                    journal_thread=season_threads.journal_thread,
+                    journal_standings_msg_id=season_threads.journal_standings_message_id,
+                )
                 await run_league_match_simulation(
                     bot=bot,
                     db=db,
@@ -238,17 +213,22 @@ async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> in
                 logger.exception(f"Failed to auto-simulate fixture {f['id']}: {e}")
                 
     if simulated_count > 0:
-        await update_current_matchday(db, season_id)
+        completed_md = await update_current_matchday(db, season_id)
+        if completed_md:
+            from apps.discord_bot.core.league_journal import notify_matchday_complete
+            await notify_matchday_complete(bot, guild, db, season_id, completed_md)
         
     return simulated_count
 
-async def update_current_matchday(db, season_id: str):
-    """Checks if all fixtures of current matchday are played, and increments current_matchday."""
+async def update_current_matchday(db, season_id: str) -> int | None:
+    """Advance season matchday when all fixtures in the current week are played.
+
+    Returns the completed matchday number when advanced, else ``None``.
+    """
     season_res = await db.table("league_seasons").select("*").eq("id", season_id).maybe_single().execute()
     season = season_res.data if season_res else None
     if not season:
-        return
-        
+        return None
     curr = season["current_matchday"]
     total = season["total_matchdays"]
     
@@ -257,6 +237,7 @@ async def update_current_matchday(db, season_id: str):
         if curr < total:
             await db.table("league_seasons").update({"current_matchday": curr + 1}).eq("id", season_id).execute()
             logger.info(f"Season {season_id} advanced to matchday {curr + 1}")
+            return curr
         else:
             await db.table("league_seasons").update({
                 "status": "completed",
@@ -267,6 +248,8 @@ async def update_current_matchday(db, season_id: str):
             if league_res and league_res.data:
                 await db.table("guild_config").update({"league_status": "inactive"}).eq("guild_id", league_res.data["guild_id"]).execute()
             logger.info(f"Season {season_id} has been fully completed!")
+            return curr
+    return None
 
 
 # --- VIEWS ---
@@ -320,6 +303,11 @@ class LeagueHubView(BaseLeagueView):
     async def season_stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         await self.cog.show_stats(interaction, self)
+
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="🔍 Scout Opponent", custom_id="hub_scout_btn", row=1)
+    async def scout_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await self.cog.show_opponent_scout(interaction, self)
 
     @discord.ui.button(style=discord.ButtonStyle.primary, label="📺 Match Center", custom_id="hub_match_center_btn", row=1)
     async def match_center_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -418,6 +406,7 @@ class LeagueCog(commands.Cog):
 
     @league_group.command(name="hub", description="Open the Server League Hub dashboard.")
     @app_commands.guild_only()
+    @app_commands.check(ensure_registered)
     async def league_hub(self, interaction: discord.Interaction) -> None:
         """Slash command to open the Seasonal League Hub."""
         await interaction.response.defer(ephemeral=True)
@@ -438,7 +427,9 @@ class LeagueCog(commands.Cog):
         
         season = None
         if league:
-            season_res = await db.table("league_seasons").select("*").eq("league_id", league["id"]).eq("status", "active").maybe_single().execute()
+            season_res = await db.table("league_seasons").select("*").eq("league_id", league["id"]).in_(
+                "status", ["active", "registration", "paused"]
+            ).order("created_at", desc=True).limit(1).maybe_single().execute()
             season = season_res.data if season_res else None
             
         if season:
@@ -459,7 +450,9 @@ class LeagueCog(commands.Cog):
         league = league_res.data if league_res else None
         season = None
         if league:
-            season_res = await db.table("league_seasons").select("*").eq("league_id", league["id"]).eq("status", "active").maybe_single().execute()
+            season_res = await db.table("league_seasons").select("*").eq("league_id", league["id"]).in_(
+                "status", ["active", "registration", "paused"]
+            ).order("created_at", desc=True).limit(1).maybe_single().execute()
             season = season_res.data if season_res else None
             
         if season:
@@ -616,26 +609,15 @@ class LeagueCog(commands.Cog):
             return
 
         standings = await fetch_standings(db, season["id"])
-        
+        fixtures_res = await db.table("league_fixtures").select("*").eq("season_id", season["id"]).execute()
+        all_fixtures = fixtures_res.data or []
+
         embed = discord.Embed(
             title=f"📊 League Standings — Season {season['season_number']}",
             color=0x00FF87
         )
-        
-        table_str = "Pos  Club                  P   W  D  L   GD  PTS\n"
-        table_str += "-----------------------------------------------\n"
-        for idx, row in enumerate(standings, 1):
-            club = row["club_name"]
-            if row.get("is_ai"):
-                club += " (AI)"
-            if not row.get("is_active"):
-                club += " 💤"
-            club = (club[:17] + "...") if len(club) > 20 else club
-            
-            line = f"{idx:<4} {club:<20} {row['matches_played']:<3} {row['wins']:<2} {row['draws']:<2} {row['losses']:<2} {row['goal_difference']:+3} {row['points']:>3}\n"
-            table_str += line
-            
-        embed.description = f"```\n{table_str}```\n*💤 = Inactive Manager (Ghost Club)*"
+        table_str = format_standings_table(standings, all_fixtures)
+        embed.description = f"```\n{table_str}\n```\n*{tie_breaker_footer()}*"
         
         view = StandingsView(self, interaction.user.id, hub_view)
         await interaction.edit_original_response(embed=embed, view=view)
@@ -775,6 +757,28 @@ class LeagueCog(commands.Cog):
         if not player or player.get("is_ai"):
             await interaction.followup.send(embed=error_embed("❌ You do not have a club yet! Run `/register` to create one first."), ephemeral=True)
             return
+
+        min_matches, min_days = await _league_join_limits(db)
+        played = int(player.get("matches_played") or 0)
+        if played < min_matches:
+            await interaction.followup.send(
+                embed=error_embed(
+                    f"❌ League registration requires **{min_matches}** career matches "
+                    f"(you have **{played}**). Play bot or friendly matches first."
+                ),
+                ephemeral=True,
+            )
+            return
+        age_days = _account_age_days(player.get("created_at"))
+        if age_days < min_days:
+            await interaction.followup.send(
+                embed=error_embed(
+                    f"❌ League registration requires a club at least **{min_days}** days old "
+                    f"({min_days - age_days} day(s) remaining)."
+                ),
+                ephemeral=True,
+            )
+            return
             
         # 2. Check if already registered for this guild league
         reg_res = await db.table("league_members").select("*").eq("guild_id", guild_id).eq("player_id", user_id).maybe_single().execute()
@@ -808,70 +812,178 @@ class LeagueCog(commands.Cog):
     # --- HELPERS ---
     async def build_hub_embed(self, interaction: discord.Interaction, league: dict | None, season: dict | None) -> discord.Embed:
         guild = interaction.guild
+        user_id = interaction.user.id
         embed = discord.Embed(
             title=f"🏆 {guild.name} Seasonal League Hub",
             color=0x00FF87
         )
-        
-        # Count registered managers
+
         db = await get_client()
         regs_res = await db.table("league_members").select("player_id", count="exact").eq("guild_id", guild.id).execute()
         reg_count = regs_res.count if regs_res else 0
-        
+        max_size = 8
+        if season and season.get("config_json"):
+            max_size = season["config_json"].get("max_clubs", 8)
+
+        if season and season.get("status") == "registration":
+            deadline = season.get("end_time")
+            deadline_str = ""
+            if deadline:
+                dt = datetime.fromisoformat(deadline.replace("Z", "+00:00"))
+                deadline_str = f"\n⏳ **Registration closes**: <t:{int(dt.timestamp())}:R>"
+            min_matches, min_days = await _league_join_limits(db)
+            p_res = await db.table("players").select("division").eq("discord_id", user_id).maybe_single().execute()
+            division = (p_res.data or {}).get("division", "Grassroots") if p_res else "Grassroots"
+            fee_str = await _display_entry_fee(db, season, division)
+            embed.description = (
+                f"📝 **Registration Open** — Season #{season.get('season_number', '?')}\n\n"
+                f"Registered: **{reg_count}/{max_size}** managers{deadline_str}\n\n"
+                f"💰 Entry fee: {fee_str}\n"
+                f"📋 Requires: **{min_matches}** matches played, club **{min_days}**+ days old\n\n"
+                "Click **Register** to join the upcoming season roster."
+            )
+            embed.set_footer(text="ElevenBoss League • Registration phase")
+            return embed
+
         if not season:
             embed.description = (
                 "Welcome to the Seasonal League Hub!\n\n"
                 "💤 **Status**: No active season.\n\n"
-                "Click **`[ 📝 Register ]`** below to join the roster for the upcoming league season!\n"
+                "Click **`[ 📝 Register ]`** to join the roster for the upcoming league season!\n"
                 f"Current Registered Managers: **{reg_count}**\n\n"
-                "*Server admins can start the season from the administrative /admin dashboard in DMs.*"
+                "*Server admins can start the season from `/admin` → League Management.*"
             )
             return embed
-            
+
+        if season.get("status") == "paused":
+            embed.description = "⏸️ **Season Paused** — matchdays are frozen until an admin resumes."
+            return embed
+
         standings = await fetch_standings(db, season["id"])
-        
+        fixtures_res = await db.table("league_fixtures").select("*").eq("season_id", season["id"]).execute()
+        all_fixtures = fixtures_res.data or []
+
         curr = season["current_matchday"]
         total = season["total_matchdays"]
-        
-        embed.description = f"🟢 **Matchday {curr}/{total} Active**"
-        
-        standings_preview = "Pos  Club                  PTS   GD\n"
-        standings_preview += "----------------------------------\n"
-        for idx, row in enumerate(standings[:5], 1):
-            club = row["club_name"]
-            if row.get("is_ai"):
-                club += " (AI)"
-            if not row.get("is_active"):
-                club += " 💤"
-            club = (club[:17] + "...") if len(club) > 20 else club
-            standings_preview += f"{idx:<4} {club:<20} {row['points']:>3}  {row['goal_difference']:+3}\n"
-            
-        embed.add_field(
-            name="📊 Standings (Top 5)",
-            value=f"```\n{standings_preview}```",
-            inline=False
-        )
-        
-        fixtures_res = await db.table("league_fixtures").select("window_end").eq("season_id", season["id"]).eq("matchday", curr).limit(1).execute()
+
+        my_rank = "—"
+        my_row = next((r for r in standings if r["discord_id"] == user_id), None)
+        if my_row:
+            my_rank = str(standings.index(my_row) + 1)
+
+        embed.description = f"🟢 **Matchday {curr}/{total}** — Season #{season['season_number']}"
+
+        if my_row:
+            embed.add_field(
+                name="📍 Your Club",
+                value=(
+                    f"**{my_row['club_name']}** — #{my_rank}\n"
+                    f"Pts: **{my_row['points']}** | GD: **{my_row['goal_difference']:+d}** | Form: `{my_row.get('form', '—')}`"
+                ),
+                inline=False,
+            )
+
+        # Next fixture for user
+        user_fixture = None
+        for f in all_fixtures:
+            if not f.get("is_played") and f.get("matchday") == curr:
+                if user_id in (f["home_team_id"], f["away_team_id"]):
+                    user_fixture = f
+                    break
+        if user_fixture:
+            opp_id = user_fixture["away_team_id"] if user_fixture["home_team_id"] == user_id else user_fixture["home_team_id"]
+            opp_row = next((r for r in standings if r["discord_id"] == opp_id), None)
+            opp_name = opp_row["club_name"] if opp_row else "TBD"
+            ha = "Home" if user_fixture["home_team_id"] == user_id else "Away"
+            embed.add_field(name="⚔️ Next Match", value=f"**{opp_name}** ({ha}) — Matchday {curr}", inline=False)
+
+        table_preview = format_standings_table(standings, all_fixtures, limit=5)
+        embed.add_field(name="📊 Standings (Top 5)", value=f"```\n{table_preview}\n```", inline=False)
+
+        fixtures_md = await db.table("league_fixtures").select("window_end").eq("season_id", season["id"]).eq("matchday", curr).limit(1).execute()
         window_end_str = ""
-        if fixtures_res.data:
-            window_end = datetime.fromisoformat(fixtures_res.data[0]["window_end"].replace("Z", "+00:00"))
-            window_end_str = f"\n⏳ **Matchday Window Ends**: <t:{int(window_end.timestamp())}:F> (<t:{int(window_end.timestamp())}:R>)"
-            
+        if fixtures_md.data:
+            window_end = datetime.fromisoformat(fixtures_md.data[0]["window_end"].replace("Z", "+00:00"))
+            window_end_str = f"⏳ **Window closes**: <t:{int(window_end.timestamp())}:R>\n"
+
         embed.add_field(
             name="📅 Season Progress",
-            value=(
-                f"🟢 **Status**: Matchday {curr}/{total} Active\n"
-                f"🏆 **Season**: #{season['season_number']}\n"
-                f"{window_end_str}"
-            ),
-            inline=False
+            value=f"{window_end_str}🏆 Matchday **{curr}** of **{total}**",
+            inline=False,
         )
-        
-        embed.set_footer(text=f"ElevenBoss League System • Active Season • Registered Managers: {reg_count}")
+        embed.set_footer(text=f"{tie_breaker_footer()} • Registered: {reg_count}")
         return embed
 
-async def send_league_announcement(guild: discord.Guild, channel_id: int, embed: discord.Embed, message_body: str = "") -> None:
+    async def show_opponent_scout(self, interaction: discord.Interaction, hub_view: LeagueHubView):
+        db = await get_client()
+        user_id = interaction.user.id
+        league_res = await db.table("leagues").select("id").eq("guild_id", hub_view.guild_id).maybe_single().execute()
+        if not league_res or not league_res.data:
+            await interaction.edit_original_response(embed=error_embed("No league configured."), view=hub_view)
+            return
+        season_res = await db.table("league_seasons").select("*").eq("league_id", league_res.data["id"]).eq("status", "active").maybe_single().execute()
+        season = season_res.data if season_res else None
+        if not season:
+            await interaction.edit_original_response(embed=error_embed("No active season."), view=hub_view)
+            return
+
+        curr = season["current_matchday"]
+        fix_res = await db.table("league_fixtures").select(
+            "*, home:players!league_fixtures_home_team_id_fkey(*), away:players!league_fixtures_away_team_id_fkey(*)"
+        ).eq("season_id", season["id"]).eq("matchday", curr).eq("is_played", False).execute()
+        my_fix = None
+        for f in fix_res.data or []:
+            if user_id in (f["home_team_id"], f["away_team_id"]):
+                my_fix = f
+                break
+        if not my_fix:
+            await interaction.edit_original_response(embed=error_embed("No upcoming fixture this matchday."), view=hub_view)
+            return
+
+        is_home = my_fix["home_team_id"] == user_id
+        opp = my_fix["away"] if is_home else my_fix["home"]
+        opp_id = my_fix["away_team_id"] if is_home else my_fix["home_team_id"]
+
+        # H2H record
+        h2h_res = await db.table("league_fixtures").select("*").eq("season_id", season["id"]).eq("is_played", True).execute()
+        h2h_w = h2h_d = h2h_l = 0
+        for f in h2h_res.data or []:
+            if {f["home_team_id"], f["away_team_id"]} != {user_id, opp_id}:
+                continue
+            if f["home_score"] == f["away_score"]:
+                h2h_d += 1
+            elif (f["home_score"] > f["away_score"] and f["home_team_id"] == user_id) or (f["away_score"] > f["home_score"] and f["away_team_id"] == user_id):
+                h2h_w += 1
+            else:
+                h2h_l += 1
+
+        opp_ovr = "AI"
+        if not opp.get("is_ai"):
+            sa_res = await db.table("squad_assignments").select("player_cards(overall)").eq("discord_id", opp_id).execute()
+            ovrs = [a["player_cards"]["overall"] for a in (sa_res.data or []) if a.get("player_cards")]
+            opp_ovr = f"{sum(ovrs) / len(ovrs):.1f}" if ovrs else "N/A"
+
+        embed = discord.Embed(
+            title=f"🔍 Opponent Scout — {opp.get('club_name', 'Unknown')}",
+            description=(
+                f"**Manager:** {opp.get('manager_name', 'AI')}\n"
+                f"**Avg XI OVR:** {opp_ovr}\n"
+                f"**H2H:** {h2h_w}W-{h2h_d}D-{h2h_l}L\n"
+                f"**Venue:** {'Home' if is_home else 'Away'}"
+            ),
+            color=0x3498DB,
+        )
+        view = StandingsView(self, interaction.user.id, hub_view)
+        await interaction.edit_original_response(embed=embed, view=view)
+
+async def send_league_announcement(
+    guild: discord.Guild,
+    channel_id: int,
+    embed: discord.Embed | None = None,
+    message_body: str = "",
+    *,
+    files: list[discord.File] | None = None,
+) -> discord.Message | None:
     """
     Sends a league announcement with a split-payload structure:
     Role mentions reside in message content to trigger pings,
@@ -880,7 +992,7 @@ async def send_league_announcement(guild: discord.Guild, channel_id: int, embed:
     db = await get_client()
     config_res = await db.table("guild_config").select("announcement_role_id").eq("guild_id", guild.id).maybe_single().execute()
     role_id = config_res.data.get("announcement_role_id") if config_res and config_res.data else None
-    
+
     content = ""
     if role_id:
         role = guild.get_role(role_id)
@@ -892,16 +1004,21 @@ async def send_league_announcement(guild: discord.Guild, channel_id: int, embed:
             content = message_body
     elif message_body:
         content = message_body
-        
+
     channel = guild.get_channel(channel_id)
-    if channel:
-        await channel.send(content=content if content else None, embed=embed)
-    else:
+    if not channel:
         logger.warning(
             "League announcement channel %s not found in guild %s — message skipped.",
             channel_id,
             guild.id,
         )
+        return None
+    return await channel.send(
+        content=content if content else None,
+        embed=embed,
+        files=files or [],
+        allowed_mentions=discord.AllowedMentions(roles=True),
+    )
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(LeagueCog(bot))

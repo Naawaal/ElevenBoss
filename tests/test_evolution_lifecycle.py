@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from player_engine import (
-    EVOLUTION_START_COIN_MULTIPLIER,
+    EVOLUTION_START_FLAT,
+    EVOLUTION_START_OVR_MULT,
     EVOLUTION_START_COOLDOWN_HOURS,
     EVOLUTION_START_ENERGY,
     EVOLUTION_TRACKS,
@@ -29,12 +30,13 @@ def test_pacing_constants() -> None:
     assert MAX_ACTIVE_EVOLUTIONS == 3
     assert EVOLUTION_START_COOLDOWN_HOURS == 10
     assert EVOLUTION_START_ENERGY == 25
-    assert EVOLUTION_START_COIN_MULTIPLIER == 10
+    assert EVOLUTION_START_FLAT == 500
+    assert EVOLUTION_START_OVR_MULT == 5
 
 
 def test_evolution_start_cost() -> None:
-    assert evolution_start_cost(78) == (25, 780)
-    assert evolution_start_cost(0) == (25, 0)
+    assert evolution_start_cost(78) == (25, 500 + 5 * 78)
+    assert evolution_start_cost(0) == (25, 500)
 
 
 def test_format_cooldown_remaining() -> None:

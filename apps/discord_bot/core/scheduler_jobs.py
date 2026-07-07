@@ -10,16 +10,6 @@ logger = logging.getLogger(__name__)
 
 DIVISIONS = ["Grassroots", "Amateur", "Semi-Pro", "Professional", "Elite", "Legendary"]
 
-async def energy_regen_job() -> None:
-    """APScheduler interval job to regenerate player energy by +2 every 5 minutes."""
-    logger.info("Executing passive energy regeneration tick...")
-    try:
-        db = await get_client()
-        await db.rpc("regen_energy_tick", {}).execute()
-        logger.info("Energy regeneration tick complete.")
-    except Exception as e:
-        logger.error(f"Failed to execute energy regeneration tick: {e}", exc_info=True)
-
 async def weekly_league_reset_job(bot: commands.Bot) -> None:
     """
     APScheduler cron job (Monday 00:00 UTC) to:
@@ -136,3 +126,48 @@ async def auto_sim_expired_fixtures_job(bot: commands.Bot) -> None:
                 logger.info(f"Auto-simulated {count} fixtures for season {s['id']}")
     except Exception as e:
         logger.error(f"Failed to execute auto simulation job: {e}", exc_info=True)
+
+
+async def league_matchday_reminder_job(bot: commands.Bot) -> None:
+    """DM managers ~6h before matchday window closes (US-26, US-29f dedup)."""
+    from datetime import datetime, timezone, timedelta
+    try:
+        db = await get_client()
+        now = datetime.now(timezone.utc)
+        warn_by = now + timedelta(hours=6)
+        seasons_res = await db.table("league_seasons").select("id, current_matchday, league_id").eq("status", "active").execute()
+        for season in seasons_res.data or []:
+            fix_res = await db.table("league_fixtures").select("window_end, home_team_id, away_team_id").eq(
+                "season_id", season["id"]
+            ).eq("matchday", season["current_matchday"]).eq("is_played", False).limit(1).execute()
+            if not fix_res.data:
+                continue
+            window_end = datetime.fromisoformat(fix_res.data[0]["window_end"].replace("Z", "+00:00"))
+            if not (now < window_end <= warn_by):
+                continue
+            league_res = await db.table("leagues").select("guild_id").eq("id", season["league_id"]).maybe_single().execute()
+            if not league_res or not league_res.data:
+                continue
+            parts_res = await db.table("league_participants").select("player_id, players(is_ai)").eq("season_id", season["id"]).execute()
+            for p in parts_res.data or []:
+                pl = p.get("players") or {}
+                if pl.get("is_ai"):
+                    continue
+                pid = p["player_id"]
+                existing = await db.table("league_matchday_reminders").select("player_id").eq(
+                    "season_id", season["id"]
+                ).eq("matchday", season["current_matchday"]).eq("player_id", pid).maybe_single().execute()
+                if existing and existing.data:
+                    continue
+                await _send_dm(
+                    bot, pid,
+                    f"⏰ **Matchday {season['current_matchday']}** closes in under 6 hours! "
+                    f"Play your fixture via `/league hub` before auto-sim kicks in.",
+                )
+                await db.table("league_matchday_reminders").insert({
+                    "season_id": season["id"],
+                    "matchday": season["current_matchday"],
+                    "player_id": pid,
+                }).execute()
+    except Exception as e:
+        logger.error("league_matchday_reminder_job failed: %s", e, exc_info=True)

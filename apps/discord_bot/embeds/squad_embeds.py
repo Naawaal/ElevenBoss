@@ -37,14 +37,38 @@ def starting_11_embed(formation: str, assignments: dict[int, dict]) -> discord.E
 
     return embed
 
-def roster_embed(cards: list[dict], current_page: int, total_pages: int) -> discord.Embed:
-    """Visually stunning roster embed for manager's player collection."""
+def roster_embed(
+    cards: list[dict],
+    current_page: int,
+    total_pages: int,
+    *,
+    per_page: int = 8,
+) -> discord.Embed:
+    """Roster embed with OVR text list for the current page plus grid image."""
+    start = current_page * per_page
+    page_cards = cards[start : start + per_page]
+    rarity_emojis = {"Common": "⚪", "Rare": "🔵", "Epic": "🟣", "Legendary": "🟡"}
+
     embed = discord.Embed(
         title="🗂️ Club Player Roster",
-        description=f"Showing page {current_page + 1} of {total_pages} ({len(cards)} total cards)",
-        color=0x00FF87
+        description=f"Page **{current_page + 1}** of **{total_pages}** · **{len(cards)}** total cards",
+        color=0x00FF87,
     )
-    
+
+    if page_cards:
+        for card in page_cards:
+            ovr = card.get("overall", "?")
+            pos = card.get("position", "???")
+            name = card.get("name", "Unknown")
+            rarity = rarity_emojis.get(card.get("rarity", "Common"), "⚪")
+            embed.add_field(
+                name=f"{rarity} **{ovr} OVR** · {pos}",
+                value=f"**{name}** · Lvl {card.get('level', 1)}",
+                inline=True,
+            )
+    else:
+        embed.description += "\n\n_No players on this page._"
+
     embed.set_image(url="attachment://roster_grid.png")
     embed.set_footer(text="Use /squad to configure your starting 11.")
     return embed

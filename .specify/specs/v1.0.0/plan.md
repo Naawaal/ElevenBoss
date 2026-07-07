@@ -17,7 +17,6 @@ ElevenBoss/
 │       ├── cogs/
 │       │   ├── __init__.py
 │       │   ├── onboarding_cog.py    # /register command + guard check
-│       │   ├── gacha_cog.py
 │       │   ├── squad_cog.py
 │       │   ├── match_cog.py
 │       │   ├── player_cog.py
@@ -225,7 +224,7 @@ class StarterSquad(BaseModel):
 
 ### `middleware/guard.py` — Registration Gatekeeper
 
-Unregistered users are blocked from executing core gameplay commands (such as `/match play`, `/gacha claim`, `/squad view`, etc.) by a middleware check:
+Unregistered users are blocked from executing core gameplay commands (such as `/match play`, `/store`, `/squad view`, etc.) by a middleware check:
 - **`ensure_registered(interaction: discord.Interaction) -> bool`**: Implemented using discord.py's `@app_commands.check` decorator on commands/cogs.
 - **Verification Logic**: Queries the `players` table using the user's `discord_id`.
 - **Response**: If unregistered, intercepts the interaction and returns an ephemeral error embed directing them to run `/register`. It returns `False`, blocking execution. No database rows are created during this check.
@@ -537,7 +536,8 @@ CREATE TABLE public.player_xp_log (
 ---
 
 ### C. Pure Logic Player Engine Package (`packages/player_engine/`)
-* **`calculate_level(xp)`**: Returns the level given current XP based on the exponential curve: `100 * 1.12^level`.
+* **`calculate_level(xp)`**: Returns the level given current XP based on the exponential curve: `floor(100 × 1.12^(L−1))` per level step. *(v1.9: use `progression.level_from_xp` with `L_MAX` cap.)*
+* **`progression.py`** *(v1.9)*: XP curve, fusion/match/drill XP formulas, skill-point math, drill catalog, level gates.
 * **`roll_dynamic_potential(age, recent_ratings)`**: Calculates dynamic potential improvements for young players (age 16-21).
 * **`calculate_contract_renewal_cost(ovr, config)`**: Computes coin renewal fees.
 
@@ -572,7 +572,7 @@ CREATE TABLE public.player_xp_log (
 ### B. Cross-cog Route integration
 * **`player_cog.py` / `/player-profile`**:
   * Button `[Start Evolution]` spawns the `EvolutionsSubView` directly, pre-filtered for the selected player ID.
-  * Button `[Level Up]` spawns the `SkillsSubView` directly, pre-filtered for the selected player ID.
+  * Button `[Allocate Skill Points]` spawns the `SkillsSubView` directly, pre-filtered for the selected player ID. *(v1.9 — US-23; shown only when `skill_points > 0`.)*
 
 ---
 
@@ -903,7 +903,9 @@ Challenger: /battle friendly [Opponent]
 | `recalculate_card_ovr` | Shared weighted OVR from stats + playstyles + potential |
 | `swap_squad_players` | Atomic bench swap with GK slot rule |
 | `set_formation_and_assignments` | Atomic formation + XI replace |
-| `allocate_skill_point` | Atomic skill spend + recalc |
+| `allocate_skill_point` | Atomic skill spend + recalc + POT cap (v1.9) |
+| `apply_card_xp` | **v1.9** — single XP pipeline; level sync + skill point grant |
+| `claim_pending_level_rewards` | **v1.9** — retroactive catch-up claim |
 | `claim_evolution_reward` | Atomic evolution claim + stat cap |
 | `register_new_player` | Idempotent guard on `discord_id` |
 
@@ -943,9 +945,736 @@ Challenger: /battle friendly [Opponent]
 * League matches require 11 assigned players: **enforced**.
 * Season-end coin payouts: **deferred** to v1.1.
 
+---
 
+## 24. Dynamic Player Leveling System (v1.9 — US-23)
 
+### A. Problem & Root Cause
+* **Symptom:** Profile shows XP progress (`get_xp_progress` in `player_cog.py`) but `skill_points` never increase.
+* **Cause:** `process_match_result` writes `xp` only; no RPC syncs `level` or grants skill points. `train_with_fodder` mutates a legacy `level` column independently. `process_stat_drill` grants direct `+1` stat bypassing the level system.
+* **Fix:** Single atomic pipeline `apply_card_xp` — all XP sources funnel through it.
 
+### B. Constants (`packages/player_engine/player_engine/progression.py`)
 
+| Constant | Value | Notes |
+|----------|-------|-------|
+| `L_MAX` | 100 | Hard level cap |
+| `POINTS_PER_LEVEL` | 3 | Skill points per level gained |
+| `LEVEL_CURVE_BASE` | 100.0 | Existing `GameConfig` |
+| `LEVEL_CURVE_EXPONENT` | 1.12 | Existing `GameConfig` |
+| `FUSION_DAILY_LIMIT` | 3 | Per club per UTC day |
+| `FUSION_XP_BASE` | 50 | Fusion formula constant |
+| `FUSION_XP_LEVEL_MULT` | 8 | × sacrifice level |
+| `FUSION_XP_OVR_MULT` | 2 | × sacrifice overall |
+
+**XP curve (selected milestones):**
+
+| Level | Cumulative XP | Next level cost | Skill pts earned |
+|-------|---------------|-----------------|------------------|
+| 1 | 0 | 100 | 0 |
+| 5 | 477 | 157 | 12 |
+| 10 | 1,475 | 277 | 27 |
+| 25 | 11,806 | 1,517 | 72 |
+| 50 | 214,176 | 25,803 | 147 |
+| 100 | 62,143,660 | — | 297 |
+
+### C. Pure Logic Package (`packages/player_engine/`)
+
+**New module: `progression.py`**
+
+| Function | Purpose |
+|----------|---------|
+| `xp_needed_for_level(level)` | `floor(BASE × EXP^(L−1))` |
+| `cumulative_xp_for_level(level)` | Sum of costs to reach L |
+| `level_from_xp(xp, l_max=100)` | Wraps `calculate_level` with cap |
+| `xp_progress(xp)` | `(level, in_level, needed)` — move from `player_cog.py` |
+| `skill_points_earned_for_level(level)` | `(level − 1) × POINTS_PER_LEVEL` |
+| `fusion_xp_reward(sacrifice_level, sacrifice_ovr)` | Pure fusion XP |
+| `match_xp_reward(minutes, rating, match_type, goals, assists, motm, result)` | Composes `training_engine.calculate_match_development_xp` + bonuses |
+| `drill_xp_reward(tier, player_level)` | Base XP × diminishing returns |
+
+**Extend: `evolution_tracks.py`** — add `min_player_level` per track.
+
+**Extend: `progression_gates.py`** — `can_allocate_skill_point(overall, potential, stat, position, stats, playstyles)` for UI preview + RPC mirror.
+
+**New module: `drill_catalog.py`** — tier definitions, `min_level`, `xp_base`, drill_id → tier mapping.
+
+**Exports:** Add to `player_engine/__init__.py` public API.
+
+### D. Database Schema (`025_player_level_system.sql`)
+
+```sql
+-- player_cards extensions
+ALTER TABLE player_cards
+  ADD COLUMN IF NOT EXISTS skill_points_earned INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS skill_points_spent  INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS last_level_up_at   TIMESTAMPTZ;
+
+-- Backfill earned from existing available balance
+UPDATE player_cards SET skill_points_earned = skill_points
+WHERE skill_points_earned = 0 AND skill_points > 0;
+
+-- One-time level sync from xp
+UPDATE player_cards SET level = <sql_level_from_xp(xp)>;
+
+CREATE TABLE pending_level_rewards (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  club_id        BIGINT NOT NULL REFERENCES players(discord_id),
+  player_id      UUID NOT NULL REFERENCES player_cards(id) ON DELETE CASCADE,
+  missing_points INT NOT NULL CHECK (missing_points > 0),
+  claimed        BOOLEAN NOT NULL DEFAULT FALSE,
+  notified       BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  claimed_at     TIMESTAMPTZ,
+  UNIQUE (player_id)
+);
+
+CREATE TABLE fusion_daily_log (
+  club_id     BIGINT NOT NULL REFERENCES players(discord_id),
+  fusion_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  count       INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (club_id, fusion_date)
+);
+```
+
+**Guard block:** Extend `verify_required_schema.sql` with new columns/tables.
+
+### E. SQL Helper Functions (in migration 025)
+
+```sql
+CREATE OR REPLACE FUNCTION public.level_from_xp(p_xp INT) RETURNS INT;
+CREATE OR REPLACE FUNCTION public.cumulative_xp_for_level(p_level INT) RETURNS INT;
+CREATE OR REPLACE FUNCTION public.xp_needed_for_level(p_level INT) RETURNS INT;
+```
+
+Mirror Python formulas exactly (tested in `tests/test_progression.py`).
+
+### F. Core RPC: `apply_card_xp`
+
+```sql
+CREATE OR REPLACE FUNCTION public.apply_card_xp(
+  p_card_id   UUID,
+  p_xp_amount INT,
+  p_source    TEXT
+) RETURNS JSONB;
+```
+
+**Algorithm (single transaction, `FOR UPDATE` on card):**
+1. Read `xp`, `level`, `skill_points_earned`.
+2. `v_old_level := level_from_xp(xp)`.
+3. If `v_old_level >= L_MAX`: set `xp_wasted := p_xp_amount`, skip XP add.
+4. Else: `v_new_xp := LEAST(xp + p_xp_amount, cumulative_xp_for_level(L_MAX))`.
+5. `v_new_level := level_from_xp(v_new_xp)`.
+6. `v_levels_gained := v_new_level - v_old_level`.
+7. `v_points := v_levels_gained * POINTS_PER_LEVEL`.
+8. UPDATE card: `xp`, `level`, `skill_points += v_points`, `skill_points_earned += v_points`, `last_level_up_at`.
+9. INSERT `player_xp_log`.
+10. RETURN JSON summary.
+
+### G. RPC Refactors
+
+| RPC | Change |
+|-----|--------|
+| `process_match_result` | Per card: compute XP in bot or SQL, call `apply_card_xp` instead of raw `xp += N` |
+| `process_stat_drill` | Deduct costs; call `apply_card_xp` with drill XP; remove direct stat `+1` |
+| `train_with_fodder` | Check `fusion_daily_log` cap; DELETE fodder; `apply_card_xp(target, fusion_xp, 'fusion')`; remove `level+1` / stat bump |
+| `allocate_skill_point` | Add POT ceiling check; increment `skill_points_spent`; decrement `skill_points` |
+| `start_player_evolution` | Reject if `card.level < track.min_player_level` |
+| `claim_pending_level_rewards` | **New** — atomic idempotent claim for `p_owner_id` |
+
+### H. Discord Bot Integration
+
+| File | Changes |
+|------|---------|
+| `player_cog.py` | Import `xp_progress` from package; rename button to "Allocate Skill Points"; level-up notification after match |
+| `development_cog.py` | Drill tier UI (locked options); fusion XP preview; post-fusion level-up embed |
+| `tasks/level_reward_notifier.py` | **New** — on `on_ready`, DM clubs with unclaimed `pending_level_rewards` |
+| `views/level_reward_claim.py` | **New** — `ClaimAllLevelRewardsView` with idempotent button |
+
+**Level-up notification flow:**
+* Match/drill/fusion RPC returns `levels_gained > 0` → ephemeral embed: "🎉 {name} reached Level {N}! +{pts} skill points — [Allocate Now]".
+
+**Retroactive DM embed:**
+* Title: `🎁 Level-Up Rewards Available!`
+* Body: per-player lines `• {name} — Level {L} → {missing} skill points`
+* Button: `Claim All` → `claim_pending_level_rewards` → edit embed to success, disable button.
+
+### I. Match XP Formula
+
+```
+base = calculate_match_development_xp(minutes, rating)   # training_engine, clamp 1–20
+type_mult = {friendly: 0.8, bot: 1.0, league: 1.25}
+bonuses = goals×5 + assists×3 + (15 if motm) + result_bonus
+match_xp = clamp(floor(base × type_mult) + bonuses, 1, 35)
+```
+
+### J. Drill Catalog
+
+| drill_id | Tier | min_level | xp_base |
+|----------|------|-----------|---------|
+| pac_sprint, sho_finishing, pas_distribution, dri_dribble, def_tackling, phy_strength | basic | 1 | 25 |
+| *(future intermediate IDs)* | intermediate | 10 | 60 |
+| *(future advanced IDs)* | advanced | 25 | 120 |
+| *(future elite IDs)* | elite | 50 | 200 |
+
+*v1.9 ships with basic tier for all six existing drills; intermediate+ IDs added in follow-up or same migration if catalog expanded.*
+
+### K. Evolution Level Gates
+
+| track_id | min_player_level |
+|----------|------------------|
+| pace_boost | 5 |
+| shooting_star | 10 |
+| def_wall | 8 |
+
+### L. Anti-Exploit Checklist
+
+| Threat | Mitigation |
+|--------|------------|
+| XP past L100 | Clamp to `cumulative_xp_for_level(100)` |
+| Double skill points | Only `apply_card_xp` grants on `levels_gained` |
+| Fusion spam | `fusion_daily_log` max 3/day |
+| Drill stat bypass | Remove stat mutation from `process_stat_drill` |
+| Skill over POT | `allocate_skill_point` POT check |
+| Double retroactive claim | `claimed` flag + `FOR UPDATE` |
+| `skill_points` drift | `skill_points = skill_points_earned - skill_points_spent` invariant in allocate/claim RPCs |
+
+### M. Implementation Phases
+
+| Phase | Deliverable |
+|-------|-------------|
+| **0** | SDD docs (this section + spec US-23 + tasks) |
+| **1** | `progression.py` + tests; migration 025 schema + SQL helpers + `apply_card_xp` |
+| **2** | Refactor `process_match_result`, `process_stat_drill`, `train_with_fodder` |
+| **3** | POT-aware `allocate_skill_point`; evolution level gates |
+| **4** | UI: gating, fusion preview, profile buttons, level-up notifications |
+| **5** | `pending_level_rewards` backfill + DM claim flow |
+| **6** | `verify_required_schema.sql`; integration tests |
+
+### N. Test Plan
+
+**`tests/test_progression.py`:**
+* XP curve matches existing `test_calculate_level` thresholds
+* Level capped at 100; excess XP wasted
+* Fusion XP monotonic in sacrifice level/OVR
+* Drill diminishing returns
+* `skill_points_earned_for_level(10) == 27`
+
+**`tests/test_progression_caps.py` (extend):**
+* `can_allocate_skill_point` rejects at POT
+
+**Manual smoke:**
+
+| # | Action | Expected |
+|---|--------|----------|
+| 1 | Play bot match | XP applied; level-up grants 3 skill points |
+| 2 | Run basic drill | XP only; no direct stat change |
+| 3 | Fuse bench card | Keeper gains XP; sacrifice deleted |
+| 4 | Allocate skill point at POT | Rejected |
+| 5 | Claim retroactive DM | Points credited once |
+| 6 | 4th fusion same day | Rejected |
+
+### O. Design Decisions (v1.9)
+* Coin `/player level-up` (US-06): **deprecated** — redirect to `/development`.
+* Direct stat drills (pre-024 behavior): **replaced** by XP drills + skill allocation.
+* Legacy `level` column: **kept** but always synced from `xp` (no independent increments).
+* Daily match XP cap: **deferred** — curve is slow enough; revisit if grinding emerges.
+* Async training slots (AC-07): remain deprecated; stat drills are instant RPC actions.
+
+---
+
+## 25. Progression Hardening (v1.9.1 — US-24)
+
+### A. Audit-Driven Fixes
+
+| Finding | Severity | Fix (migration 027) |
+|---------|----------|---------------------|
+| `club_id` stale on `pending_level_rewards` | Critical | Claim by `player_cards.owner_id`; sync `club_id` |
+| DM blocked → `notified` anyway | High | Notifier: notify only on success; claim via `/development` hub |
+| 297 pt veteran spike | High | Scale unclaimed: 75%, cap 18/player |
+| No allocation pacing | High | 15 pts/card/day for 30 days post-deploy |
+| Match XP grind | Medium | 100 match XP/card/day via `player_xp_log` sum |
+| 20 drills → one player | Medium | `player_drill_daily_log` max 5/card/day |
+| allocate post-update raise | Low | Pre-check POT before stat mutation |
+
+### B. Constants (SQL + `progression.py`)
+
+| Constant | Value |
+|----------|-------|
+| `RETRO_SCALE_PCT` | 75 |
+| `RETRO_MAX_PER_PLAYER` | 18 |
+| `ALLOCATION_DAILY_CAP` | 15 |
+| `ALLOCATION_PACING_UNTIL` | deploy date + 30 days (UTC) |
+| `MATCH_XP_DAILY_CAP` | 100 |
+| `DRILL_PER_PLAYER_DAILY_CAP` | 5 |
+
+### C. Schema Additions (`027_progression_hardening.sql`)
+
+```sql
+ALTER TABLE player_cards
+  ADD COLUMN daily_alloc_count INT NOT NULL DEFAULT 0,
+  ADD COLUMN alloc_reset_date DATE;
+
+CREATE TABLE player_drill_daily_log (
+  card_id    UUID NOT NULL REFERENCES player_cards(id) ON DELETE CASCADE,
+  drill_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  count      INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (card_id, drill_date)
+);
+```
+
+**One-time data fix:**
+```sql
+UPDATE pending_level_rewards pr
+SET club_id = c.owner_id,
+    missing_points = LEAST(18, GREATEST(1, (missing_points * 75) / 100))
+FROM player_cards c
+WHERE c.id = pr.player_id AND NOT pr.claimed;
+```
+
+### D. RPC Changes
+
+* **`claim_pending_level_rewards`:** Join `player_cards`; credit when `owner_id = p_owner_id`; update `club_id`.
+* **`allocate_skill_point`:** Reset/increment `daily_alloc_count`; enforce pacing window; pre-check POT; then mutate.
+* **`apply_card_xp`:** If `p_source = 'match_simulation'`, clamp `p_xp_amount` to remaining daily match allowance.
+* **`process_stat_drill`:** Upsert `player_drill_daily_log`; reject if count > 5.
+* **`count_unclaimed_level_rewards(p_owner_id)`:** Helper for bot UI.
+
+### E. Bot Changes
+
+* **`player_cog.py`:** *(no claim slash command — use development hub fallback).*
+* **`development_cog.py`:** `DevelopmentHubView` shows **Claim Level Rewards** when pending count > 0.
+* **`level_reward_notifier.py`:** Group by `player_cards.owner_id`; do not mark notified on DM failure.
+* **`level_reward_claim.py`:** Pending check via `count_unclaimed_level_rewards` RPC.
+
+### F. Test Plan
+
+* `tests/test_progression_hardening.py` — retro scale formula, cap constants exported.
+* Manual: claim after ownership sync; 16th allocation in pacing window rejected; 6th drill on same card rejected.
+
+### G. Implementation Phases
+
+| Phase | Deliverable |
+|-------|-------------|
+| 0 | SDD US-24 + this section + tasks T20 |
+| 1 | Migration 027 + verify script |
+| 2 | Package constants + tests |
+| 3 | Bot development hub claim + notifier fix |
+
+---
+
+## 26. Economy v2 Foundation (US-25)
+
+### A. Schema (`028_economy_foundation.sql`)
+
+| Object | Purpose |
+|--------|---------|
+| `game_config` | Hot-reloadable economy tunables (`key` → `value_json`) |
+| `players.action_energy` | Unified action pool (max 100) |
+| `players.action_energy_updated_at` | Lazy regen timestamp |
+| `players.last_daily_login` | UTC date of last login claim |
+| `players.login_streak` | Consecutive login days |
+| `economy_ledger.idempotency_key` | UNIQUE — replay-safe mutations |
+| `economy_ledger.reason_meta` | JSONB audit context |
+| `agent_sale_daily_log` | Per-club daily agent sale counter |
+| `energy_refill_daily_log` | Per-club daily refill counter (max 3) |
+
+**Seed `game_config` keys:** `economy_v2_enabled`, `match_bot_win`, `match_bot_draw`, `match_bot_loss`, `match_friendly_win`, `match_league_win_min`, `match_league_win_max`, `daily_login_base`, `daily_login_streak_bonus`, `daily_login_streak_cap`, `agent_sale_daily_cap`, `drill_basic_flat`, `drill_basic_ovr_mult`, `drill_basic_energy`, `drill_basic_xp`, `drill_advanced_flat`, `drill_advanced_ovr_mult`, `drill_advanced_energy`, `drill_advanced_xp`, `evolution_start_flat`, `evolution_start_ovr_mult`, `evolution_start_energy`, `fusion_coins`, `energy_regen_per_min`, `energy_max`, `energy_refill_amount`, `energy_refill_costs` (JSON array), `match_energy_bot`, `match_energy_friendly`, `match_energy_league`.
+
+### B. Core RPCs
+
+| RPC | Signature | Role |
+|-----|-----------|------|
+| `get_game_config` | `(TEXT) → JSONB` | Read config with default fallback |
+| `sync_action_energy` | `(BIGINT) → JSONB` | Lazy regen; returns current/max |
+| `apply_club_economy` | `(BIGINT, BIGINT, INT, TEXT, TEXT, JSONB) → JSONB` | Single coin+energy write path + ledger |
+| `claim_daily_login` | `(BIGINT) → JSONB` | Daily coin faucet with streak |
+| `purchase_energy_refill` | `(BIGINT) → JSONB` | Escalating coin sink for +50 energy |
+
+**Refactored RPCs:** `process_stat_drill`, `start_player_evolution`, `train_with_fodder`, `process_agent_sale` — call `sync_action_energy` + `apply_club_economy` or read `get_game_config`.
+
+### C. Package Layer
+
+| File | Role |
+|------|------|
+| `packages/economy/economy/flows.py` | Pure `drill_cost`, `match_reward`, `daily_budget` for tests/sim |
+| `packages/economy/economy/config.py` | Extend `GameConfig` with v2 defaults mirroring seed rows |
+| `tests/test_economy_flows.py` | Archetype budget assertions |
+| `scripts/simulate_economy.py` | 30-day supply simulation |
+
+### D. Bot Integration
+
+| File | Changes |
+|------|---------|
+| `apps/discord_bot/core/economy_rpc.py` | Helpers: `apply_match_economy`, `sync_action_energy`, `format_energy_status` |
+| `battle_cog.py` | Replace direct `players.update` coin/energy with `apply_club_economy`; idempotency = `match_run_id` |
+| `development_cog.py` | Action energy display; drill cost from package |
+| `profile_cog.py` | Unified energy + gems label |
+| `economy_cog.py` | Remove misleading wage warning; show gems |
+| `store_cog.py` | `/store` hub — daily login + energy refill |
+| `main.py` | Load `store_cog` |
+
+### E. Match Reward Formulas (v2)
+
+```
+bot_win   = floor(match_bot_win × division.win_coins / 100)
+bot_draw  = match_bot_draw
+bot_loss  = match_bot_loss
+league    = lerp(match_league_win_min, match_league_win_max, division_tier_index / 5)
+friendly  = match_friendly_win if win else 0
+```
+
+### F. Migration Rollout
+
+1. Apply `028` + extend `verify_required_schema.sql`
+2. Deploy bot with v2 RPC wiring (`economy_v2_enabled = true` in seed)
+3. Monitor via `economy_ledger` SQL or `scripts/simulate_economy.py` for 7 days
+4. Optional: `scripts/soft_rebalance_coins.py` if p95 > 250k (not auto-run)
+
+### G. Implementation Phases
+
+| Phase | Deliverable |
+|-------|-------------|
+| 0 | SDD US-25 + tasks |
+| 1 | Migration 028 + verify |
+| 2 | `flows.py` + tests + simulate script |
+| 3 | `battle_cog` + sink RPC refactors |
+| 4 | UI + `store_cog` + rollout flag |
+
+---
+
+## 25. League Economy Hardening (US-27)
+
+**Audit source:** [`.specify/specs/v1.0.0/league-economy-calibration.md`](league-economy-calibration.md)  
+**Depends on:** US-26 (migration 032), US-25 (`apply_club_economy` pipe)
+
+### A. Problem Statement
+
+| ID | Gap | Severity |
+|----|-----|----------|
+| E1 | Auto-sim grants full match coins with 0 energy | High |
+| E2 | `entry_fee_coins` in `config_json` never charged | High |
+| E3 | Triple faucet (match + prize + milestone) untuned | Medium |
+| E4 | No join eligibility (alt/smurf) | Medium |
+
+Champion injection today: **~7,150 coins/season** (Grassroots). Target after US-27: **~3,900 net** (manual champion).
+
+### B. Schema & RPC (`033_league_economy_calibration.sql`)
+
+**`game_config` seed / UPDATE defaults:**
+
+```sql
+INSERT INTO game_config (key, value_json) VALUES
+  ('league_entry_fee_coins', '1500'),
+  ('league_entry_fee_per_division', '250'),
+  ('league_auto_sim_coin_mult', '0.5'),
+  ('league_join_min_matches', '10'),
+  ('league_join_min_account_days', '7')
+ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json;
+
+-- Retune existing keys (see AC-27d)
+UPDATE game_config SET value_json = '3500' WHERE key = 'league_season_prize_pool_base';
+-- ... participation, milestone, match_league_win_min/max
+```
+
+**New RPC: `charge_league_entry_fees(p_season_id UUID) → JSONB`**
+
+- Reads `league_seasons.config_json.entry_fee_coins` OR global `league_entry_fee_coins`.
+- Per human in `league_participants`: `fee = base + tier × per_division` from `players.division`.
+- Calls `apply_club_economy(-fee, 0, 'league_entry', idempotency_key, meta)`.
+- Returns `{charged: [...], skipped: [{player_id, reason}]}`.
+- **Called from bot** after bulk `league_participants` insert (or inline in single RPC if we refactor season start).
+
+**Extend `distribute_season_prizes`:**
+
+- After prize loop, refund active humans: `apply_club_economy(+fee, 0, 'league_entry_refund', ...)`.
+- Store original fee in `league_participants` or derive from ledger `league_entry` row.
+
+**Optional column (preferred over ledger lookup):**
+
+```sql
+ALTER TABLE league_participants
+  ADD COLUMN IF NOT EXISTS entry_fee_paid INTEGER NOT NULL DEFAULT 0;
+```
+
+Enables refund without scanning ledger. Guard in migration + `verify_required_schema.sql`.
+
+### C. Pure Logic (`packages/economy/economy/flows.py`)
+
+```python
+def league_entry_fee(division: str, cfg: EconomyConfig) -> int:
+    tier = league_division_tier(division)
+    return cfg.league_entry_fee_coins + tier * cfg.league_entry_fee_per_division
+
+def league_match_coins_adjusted(
+    result: str, division: str, *, auto_sim: bool, cfg: EconomyConfig
+) -> int:
+    base = league_match_coins_for_result(result, division, cfg)  # extract draw/loss
+    if auto_sim:
+        return int(base * cfg.league_auto_sim_coin_mult)
+    return base
+```
+
+Extend `EconomyConfig` + `DEFAULTS` with new keys. Update `scripts/simulate_league_economy.py` scenarios (manual vs auto-sim, entry fee net).
+
+### D. Bot Integration
+
+| File | Change |
+|------|--------|
+| `league_rewards.py` | `coin_mult` param when `deduct_energy=False`; read `league_auto_sim_coin_mult` from `get_game_config` |
+| `league_cog.py` | Join gate in `player_register_league`; hub embed shows fee + requirements |
+| `admin_cog.py` | After season start participant insert → `charge_league_entry_fees`; surface skipped list in embed |
+| `economy_rpc.py` | Helper `charge_league_entry` / `refund_league_entry` wrappers (thin) |
+
+**Auto-sim path:** `run_league_match_simulation(..., active_player_id=None)` already sets `deduct_energy=False` → pass `auto_sim=True` into `apply_league_human_rewards`.
+
+**Registration vs season start:** Fee charged at **season start** (participant lock-in), not `league_members` roster signup — avoids charging players who never get a season.
+
+### E. Tests
+
+| File | Coverage |
+|------|----------|
+| `tests/test_economy_flows.py` | `league_entry_fee`, `league_match_coins_adjusted` pure math |
+| `tests/test_league_economy.py` (new) | Entry fee idempotency, auto-sim mult, champion net ≤ target |
+| `scripts/simulate_league_economy.py` | Post-calibration table + manual vs auto-sim columns |
+
+### F. Rollout Phases
+
+| Phase | Deliverable | Exit criteria |
+|-------|-------------|---------------|
+| **0** | SDD US-27 + tasks (this section) | spec/plan/tasks aligned |
+| **1** | Migration `033` + verify schema | `verify_required_schema.sql` passes |
+| **2** | `flows.py` + simulate script + unit tests | `pytest tests/test_economy_flows.py tests/test_league_economy.py` green |
+| **3** | RPC entry charge + refund in `distribute_season_prizes` | Scratch apply + manual RPC smoke |
+| **4** | Bot wiring (rewards mult, gates, hub/admin copy) | Manual: register gate, start season debit, auto-sim half coins |
+| **5** | `change_log.md` player-facing notes | Ship |
+
+### G. Monitoring (ops — no code)
+
+Weekly ledger queries per calibration doc §7. Yellow/red triggers → edit `game_config` only.
+
+### H. Out of Scope (US-27)
+
+- OVR cap enforcement at match start (separate hardening ticket)
+- Gems / card prizes / season XP lump sum
+- Promotion-relegation prize pools
+- `league_energy` separate bar
+
+---
+
+## 26. League Season Announcement & Dual Threads (US-28)
+
+**Depends on:** US-26 (league mode), migration `034_league_season_threads.sql`
+
+### A. Schema (`league_seasons` columns)
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `announcement_message_id` | BIGINT NULL | Kickoff message in league channel |
+| `journal_thread_id` | BIGINT NULL | Official standings thread |
+| `matchday_thread_id` | BIGINT NULL | Live commentary thread |
+| `journal_standings_message_id` | BIGINT NULL | Edited standings embed |
+| `thread_format` | TEXT DEFAULT `'legacy'` | `'dual_v2'` for new seasons |
+
+### B. Modules
+
+| File | Role |
+|------|------|
+| `apps/discord_bot/core/league_announcement.py` | Banner embed + `background.png` file |
+| `apps/discord_bot/core/league_journal.py` | `create_season_threads`, `resolve_season_threads`, `archive_season_threads`, journal posts |
+| `apps/discord_bot/cogs/admin_cog.py` | Season start announcement + thread bootstrap; season end archive |
+| `apps/discord_bot/cogs/battle_cog.py` | `LeagueMatchHandler` dual-thread routing |
+| `apps/discord_bot/cogs/league_cog.py` | `send_league_announcement` files + return message |
+
+### C. Thread creation
+
+One thread per anchor message (Discord limit). Flow: announcement → anchor → Journal thread; anchor → MatchDay thread; both `locked=True`, `auto_archive_duration=10080`.
+
+### D. Legacy
+
+`thread_format='legacy'` seasons use `guild_config.league_updates_thread_id` until complete.
+
+---
+
+## 27. Match Loop Hardening & Dead Code Removal (US-29)
+
+**Audit source:** Jul 2026 codebase audit (bot/friendly regressions vs US-23/US-25, RPC schema drift, scheduler/UX gaps).  
+**Depends on:** US-23, US-25, US-26 (`league-mode-design.md`), US-28 (migration 034 applied).
+
+### A. Problem Statement
+
+| ID | Gap | Severity | Root cause |
+|----|-----|----------|------------|
+| H1 | Bot matches bypass `apply_club_economy` | **P0** | `battle_cog.execute_bot_battle` never migrated when league path was wired in US-26 |
+| H2 | Bot matches use flat `p_xp_amount: 15` | **P0** | Same — `build_process_match_result_rpc` only called from `league_rewards.py` |
+| H3 | Friendly matches skip match XP | **P1** | Only `tick_evolution_match_progress` called; no `process_match_result` |
+| H4 | `process_match_result` SELECTs `initial_potential`, `recent_match_ratings` | **P0** | RPC updated in 021/025/026; columns never added in migrations |
+| H5 | Store gacha non-atomic | **P1** | `store_cog` UPDATE then INSERT without RPC |
+| H6 | `/battle bot`, `/battle friendly` missing defer | **P0** | Slash handlers skip defer; hub button path defers |
+| H7 | Matchday reminder spam | **P1** | Hourly job, no sent-flag |
+| H8 | Debug `debug-*.log` in cogs | **P1** | Leftover agent instrumentation |
+| H9 | Legacy economy fallback code | **P2** | `league_rewards.py` v2=false branch; inline bot coin math |
+| H10 | Dead `energy_regen_job` | **P2** | `regen_energy_tick` no-op since migration 028 |
+| H11 | `verify_required_schema.sql` incomplete | **P1** | Missing `process_match_result`, 034 columns, `recent_match_ratings` |
+| H12 | `test_training.py` broken import | **P2** | Imports removed `training` module at repo root |
+
+**Intentional (not bugs):** Weekly `league_points` reset + `players.division` promotions (bot ladder only). Guild seasons use `league_fixtures` — see `league-mode-design.md`. **Real confusion:** bot matches also write `global_lp` (Bronze/Silver ladder) alongside `league_points` (Grassroots ladder); profile copy must distinguish them.
+
+### B. Target Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Match conclusion (all types)                 │
+├─────────────┬──────────────────────┬──────────────────────────┤
+│ Match type  │ Economy pipe         │ XP pipe                    │
+├─────────────┼──────────────────────┼──────────────────────────┤
+│ bot         │ apply_match_economy    │ build_process_match_result │
+│             │ idempotency=run_id   │ match_type='bot'           │
+│ friendly    │ apply_match_economy    │ build_process_match_result │
+│             │ (winner coins only)    │ match_type='friendly' ×2   │
+│ league      │ league_rewards.py ✓    │ league_rewards.py ✓        │
+└─────────────┴──────────────────────┴──────────────────────────┘
+                              │
+                              ▼
+              RPC process_match_result(p_xp_amounts, p_card_ratings)
+                              │
+                              ▼
+                    apply_card_xp (per card, daily cap)
+```
+
+**Refactor strategy:** Extract shared `apply_bot_match_rewards()` / `apply_friendly_match_rewards()` in `apps/discord_bot/core/match_rewards.py` (new thin module) mirroring `league_rewards.py` — avoid duplicating payout logic inside `battle_cog`.
+
+### C. Schema & RPC (`035_match_result_schema_fix.sql`)
+
+```sql
+-- 1. Missing column for rating history (potential boost logic in RPC)
+ALTER TABLE public.player_cards
+  ADD COLUMN IF NOT EXISTS recent_match_ratings JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- 2. Fix process_match_result: use base_potential instead of initial_potential
+--    DROP old overloads first; recreate body with:
+--      SELECT age, potential, base_potential, recent_match_ratings ...
+--      v_init_pot := COALESCE(v_init_pot, v_pot);  -- v_init_pot from base_potential
+
+-- 3. Atomic daily pack
+CREATE OR REPLACE FUNCTION public.claim_daily_pack(p_club_id BIGINT) RETURNS JSONB ...
+
+-- 4. Matchday reminder dedup
+CREATE TABLE IF NOT EXISTS public.league_matchday_reminders (
+    season_id UUID NOT NULL REFERENCES league_seasons(id) ON DELETE CASCADE,
+    matchday INTEGER NOT NULL,
+    player_id BIGINT NOT NULL REFERENCES players(discord_id) ON DELETE CASCADE,
+    reminded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (season_id, matchday, player_id)
+);
+-- RLS: SELECT/INSERT for anon, authenticated, service_role (same pattern as 030)
+```
+
+Extend `verify_required_schema.sql`:
+
+| Entry | Reason |
+|-------|--------|
+| `column:player_cards.recent_match_ratings` | RPC dependency |
+| `column:league_seasons.announcement_message_id` | US-28 bot dependency |
+| `function:process_match_result` | All match XP |
+| `function:claim_daily_pack` | Store atomic claim |
+| `table:league_matchday_reminders` | Reminder dedup |
+| RLS policies for `league_matchday_reminders` | Data API access |
+
+### D. Bot Integration
+
+| File | Change |
+|------|--------|
+| `apps/discord_bot/core/match_rewards.py` | **New.** `apply_bot_match_rewards()`, `apply_friendly_human_rewards()` — parallel to `league_rewards.py` |
+| `apps/discord_bot/cogs/battle_cog.py` | Bot path: defer at command entry; call `match_rewards`; remove direct `players.update` coins/energy; remove flat XP; remove debug log block |
+| `apps/discord_bot/cogs/battle_cog.py` | Friendly path: defer; grant XP via `match_rewards`; remove standalone `tick_evolution_match_progress` (RPC handles it) |
+| `apps/discord_bot/cogs/store_cog.py` | Replace UPDATE+INSERT with `claim_daily_pack` RPC |
+| `apps/discord_bot/cogs/onboarding_cog.py` | Defer before DB on `/register` new-user path |
+| `apps/discord_bot/cogs/league_cog.py` | Remove debug log; add `@app_commands.check(ensure_registered)` on hub |
+| `apps/discord_bot/core/league_journal.py` | Remove `_DEBUG_LOG` |
+| `apps/discord_bot/cogs/development_cog.py`, `squad_cog.py` | Remove debug log helpers |
+| `apps/discord_bot/core/league_rewards.py` | Delete `economy_v2_enabled == false` coin/energy fallback |
+| `apps/discord_bot/core/scheduler_jobs.py` | Reminder dedup insert; remove or repurpose `energy_regen_job` |
+| `apps/discord_bot/main.py` | Drop `energy_regen_job` schedule if removed |
+| `README.md` | `/store` for gacha; remove `gacha_cog` |
+| `change_log.md` | Bot energy 20⚡, per-card XP, friendly XP |
+
+### E. Bot Match Reward Flow (reference implementation)
+
+```python
+# match_rewards.py — pseudocode
+async def apply_bot_match_rewards(db, *, player_row, cards, result_str, ...):
+    v2 = await economy_v2_enabled(db)
+    await sync_action_energy(db, player_id)
+    coins = compute_bot_match_coins(result_str, division_win_coins, v2=v2)
+    energy = match_energy_cost("bot", v2=v2)
+    await apply_match_economy(db, player_id, coins, energy, "bot", run_id, result_str)
+    # Weekly ladder stats only (NOT guild season):
+    await db.table("players").update({
+        "league_points": ..., "global_lp": ..., "goal_difference": ...,
+        "matches_played": ..., "wins": ..., "draws": ..., "losses": ...,
+    }).eq("discord_id", player_id).execute()
+    await db.table("match_history").insert({...}).execute()
+    xp_payload = build_process_match_result_rpc(cards, match_type="bot", ...)
+    await db.rpc("process_match_result", xp_payload).execute()
+```
+
+**Energy/coins** go through RPC; **ladder stat columns** remain direct UPDATE (display/ladder only, not economy pipe — same pattern as `league_rewards` career W/D/L).
+
+### F. Dead Code Removal Checklist
+
+| Remove | Location | Replacement |
+|--------|----------|-------------|
+| `debug-74c668.log` writes | `battle_cog`, `league_cog`, `league_journal` | None |
+| `debug-4aa967.log` writes | `development_cog`, `squad_cog` | None |
+| `p_xp_amount: 15` | `battle_cog` | `build_process_match_result_rpc` |
+| Direct coin/energy UPDATE | `battle_cog` bot path | `apply_match_economy` |
+| `tick_evolution_match_progress` alone | friendly path | inside `process_match_result` |
+| v2=false economy fallback | `league_rewards.py` | assume v2 always on |
+| `energy_regen_job` + no-op RPC call | `scheduler_jobs`, `main.py` | lazy `sync_action_energy` only |
+| "Ranked (Soon)" disabled button | `battle_cog` ArenaHubView | delete until feature exists |
+| `gacha_cog` README entry | `README.md` | `store_cog` |
+
+**Keep (not dead):** `weekly_league_reset_job` (bot Division Rank ladder), `global_lp` / `global_divisions` (separate cosmetic progression track), `league-mode-design.md` dual-system model.
+
+### G. Tests
+
+| File | Coverage |
+|------|----------|
+| `tests/test_match_loop_hardening.py` (new) | `build_process_match_result_rpc` for bot/friendly types; bot coin helper with v2 |
+| `tests/test_match_xp.py` | Extend if needed for match_type multipliers |
+| `tests/test_economy_flows.py` | Bot energy cost 20, friendly winner coins |
+| `tests/test_training.py` | Fix import: `from training.training.engine import ...` or delete if redundant |
+| `tests/test_league_announcement.py` | Unchanged |
+
+### H. Rollout Phases
+
+| Phase | Deliverable | Exit criteria |
+|-------|-------------|---------------|
+| **0** | SDD US-29 (this section + spec + tasks) | Docs approved before code |
+| **1** | Migration `035` + verify schema | `verify_required_schema.sql` passes on fresh DB |
+| **2** | `match_rewards.py` + `process_match_result` fix in migration | Unit tests green |
+| **3** | `battle_cog` bot + friendly wiring + defer fixes | Grep: no flat XP 15, no coin UPDATE in bot path |
+| **4** | `store_cog` RPC + reminder dedup + debug removal | Manual smoke: pack claim, one matchday DM |
+| **5** | Dead code purge + README + `change_log.md` | Full `pytest tests/` (incl. fixed training test) |
+
+### I. Manual Smoke (post-deploy)
+
+| # | Action | Expected |
+|---|--------|----------|
+| 1 | `/battle bot` via slash (not just hub button) | Responds within 3s; deducts 20⚡; coins in ledger |
+| 2 | Play bot match to completion | Per-card XP varies; no flat 15 in logs |
+| 3 | `/battle friendly` challenge + play | Both managers get XP; winner gets friendly coins |
+| 4 | `/store` claim pack | 5 cards; double-click does not burn cooldown on failure |
+| 5 | League matchday within 6h | One DM per manager per matchday |
+| 6 | Monday 00:00 UTC (or admin trigger) | `league_points` reset; `global_lp` unchanged |
+| 7 | `pytest tests/ -q` | All pass including `test_training` |
+
+### J. Out of Scope (US-29)
+
+- Per-card `match_rating` from live stats (team average remains — ponytail ceiling documented in `match_xp.py`)
+- Merging `global_lp` and `players.division` into one ladder
+- Pydantic v2 `ConfigDict` migration (separate hygiene ticket)
+- Ranked PvP mode implementation
 
 

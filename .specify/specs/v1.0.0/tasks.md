@@ -598,8 +598,8 @@ Implement `error_embed()`, `success_embed()`.
 ### T9.2 — `apps/discord_bot/cogs/profile_cog.py` (US-08)
 `/profile`: Check guard → fetch player row → build stat embed including `club_name` and `manager_name`.
 
-### T9.3 — `apps/discord_bot/cogs/gacha_cog.py` (US-02)
-`/gacha claim`: Guard check → cooldown check → `generate_pack()` → insert cards + update timestamp (transactional).
+### T9.3 — `apps/discord_bot/cogs/store_cog.py` (US-02)
+`🎫 Claim Free Pack` button in `/store`: Guard check → cooldown check → `generate_pack()` → insert cards + update timestamp (transactional).
 
 ### T9.4 — `apps/discord_bot/cogs/squad_cog.py` (US-03)
 `/squad view`, `/squad set-formation`, `/squad set-player`. All with guard check.
@@ -645,7 +645,7 @@ python -m apps.discord_bot.main
 
 | Command / Action | Expected |
 |---|---|
-| `/gacha claim` (unregistered) | Ephemeral: "You don't have a club yet! Run `/register`" |
+| `/store` (unregistered) | Ephemeral: "You don't have a club yet! Run `/register`" |
 | `/register` (new user) | Ephemeral link to new thread; thread created in channel |
 | Click **"Begin Setup →"** | `ClubSetupModal` appears |
 | Submit Modal | Confirmation embed with ✅ / ✏️ buttons |
@@ -655,10 +655,10 @@ python -m apps.discord_bot.main
 | Registration complete | Countdown embed shown; thread deleted after 10s |
 | `/register` (already registered) | Ephemeral: already registered message |
 | `/profile` (after registration) | Shows Club Name + Manager Name in embed |
-| `/gacha claim` (after registration) | 5 cards reveal embed |
-| `/gacha claim` (immediate) | Cooldown timer embed |
+| `/store` -> Click **"Claim Free Pack"** | 5 cards reveal embed |
+| Click **"Claim Free Pack"** again (immediate) | Cooldown timer embed |
 | `/match play` (squad full, energy ok) | Result embed with score |
-| `/player level-up <id>` | Level up success |
+| `/player level-up <id>` | Deprecated — redirect to `/development` (v1.9) |
 | Other user clicks wizard button | Ephemeral: "This setup wizard belongs to another player." |
 
 ---
@@ -752,7 +752,69 @@ python -m apps.discord_bot.main
 - League window check; friendly accept lock re-validation; energy deduct at end; ticker 429 backoff; 11-player league guard.
 
 ### T17.6 — `league_cog.py`
-- Log when announcement channel missing.
+- US-26 immersive league hub, opponent scout, form standings, journal integration.
+
+### T26 — Immersive League Mode v2 (US-26)
+- [x] T26.1 — SDD `league-mode-design.md` + spec AC-26
+- [x] T26.2 — Migration `032_league_mode_v2.sql` (RLS, prizes, config_json)
+- [x] T26.3 — Economy v2 + match XP pipe for league matches; decouple league_points
+- [x] T26.4 — Hub dashboard, scout, live table, pitch pre-match, reactions
+- [x] T26.5 — Admin registration/config/pause; `distribute_season_prizes`
+- [x] T26.6 — Tests + `scripts/simulate_league_season.py`
+
+### T27 — League Economy Hardening (US-27)
+
+> **Depends on:** T26 (US-26). **SDD first** — [league-economy-calibration.md](league-economy-calibration.md) + spec US-27 + plan §25.
+
+#### Phase 0 — SDD
+- [x] T27.0 — Audit doc `league-economy-calibration.md` + `simulate_league_economy.py`
+- [x] T27.1 — Add US-27 to `spec.md`, plan §25, this task group
+
+#### Phase 1 — Migration
+- [x] T27.2 — `supabase/migrations/033_league_economy_calibration.sql`
+- [x] T27.3 — `scratch/apply_migration_033.py` + apply remote + `verify_schema_full.py`
+
+#### Phase 2 — Pure logic & simulation
+- [x] T27.4 — `packages/economy/economy/flows.py`: `league_entry_fee`, `league_match_coins_for_result`, extend `EconomyConfig`
+- [x] T27.5 — Update `scripts/simulate_league_economy.py` (entry fee, auto-sim mult, calibrated defaults)
+- [x] T27.6 — `tests/test_league_economy.py` + extend `tests/test_economy_flows.py`
+
+#### Phase 3 — Bot wiring
+- [x] T27.7 — `league_rewards.py`: apply `league_auto_sim_coin_mult` when `deduct_energy=False`
+- [x] T27.8 — `league_cog.py`: join eligibility gate + hub embed (fee, requirements)
+- [x] T27.9 — `admin_cog.py`: call `charge_league_entry_fees` after season start; show charged/skipped in embed
+- [x] T27.10 — `economy_rpc.py`: `compute_league_match_coins` auto-sim path
+
+#### Phase 4 — Ship
+- [x] T27.11 — `change_log.md` — entry fee, auto-sim coin reduction, retuned prizes
+- [x] T27.12 — Manual smoke: register gate → start season → play manual vs auto-sim → end season refund (`scratch/smoke_league_economy_t27.py`)
+
+**Verify:**
+```bash
+pytest tests/test_economy_flows.py tests/test_league_economy.py tests/test_league_standings.py -q
+python scripts/simulate_league_economy.py
+```
+
+### T28 — League Season Announcement & Dual Threads (US-28)
+
+> **Depends on:** T26 (US-26). SDD US-28 in spec/plan §26.
+
+- [x] T28.1 — Migration `034_league_season_threads.sql` + verify guard
+- [x] T28.2 — `league_announcement.py` + extend `send_league_announcement`
+- [x] T28.3 — `league_journal.py` thread bootstrap (create/resolve/archive)
+- [x] T28.4 — `admin_start_season` banner + dual threads + initial standings
+- [x] T28.5 — Split `LeagueMatchHandler`; update battle/league cogs + recovery
+- [x] T28.6 — `admin_end_season` archive dual threads
+- [x] T28.7 — `tests/test_league_announcement.py` + `change_log.md`
+
+**Manual Discord smoke (US-28):**
+1. Configure `league_channel_id` + `announcement_role_id` in admin.
+2. Start season with 2+ clubs → gold embed, `background.png`, club list, role ping in content.
+3. Two locked threads; users cannot post in either.
+4. Play one league match → commentary in MatchDay, standings + result line in Journal.
+5. Auto-sim fixture → same split.
+6. End season → summary in Journal, both threads archived.
+7. Fresh server new season → dual format from step 1.
 
 ---
 
@@ -774,3 +836,146 @@ pytest tests/test_hardening_rpcs.py tests/test_fodder_training.py -q
 | 5 | Play league fixture past window | Server rejection |
 | 6 | `/development` Run Drill | RPC succeeds |
 | 7 | Pitch image on Linux path | Renders without error |
+
+---
+
+## Task Group 19: Dynamic Player Leveling (US-23 — v1.9)
+
+> **Depends on:** Task Groups 14–18 (hardening + POT caps migration 024). **SDD first** — spec US-23 and plan §24 must be approved before code.
+
+### T19.1 — Pure logic: `packages/player_engine/player_engine/progression.py`
+- [ ] Implement `xp_needed_for_level`, `cumulative_xp_for_level`, `level_from_xp`, `xp_progress`, `skill_points_earned_for_level`.
+- [ ] Implement `fusion_xp_reward`, `match_xp_reward` (wraps `training_engine`), `drill_xp_reward`.
+- [ ] Add `drill_catalog.py` with tier definitions and `min_level` gates.
+- [ ] Extend `evolution_tracks.py` with `min_player_level`.
+- [ ] Extend `progression_gates.py` with `can_allocate_skill_point`.
+- [ ] Export public API from `player_engine/__init__.py`.
+- [ ] Write `tests/test_progression.py` (curve, cap, fusion, drill diminishing returns).
+
+### T19.2 — Migration `025_player_level_system.sql`
+- [ ] Add `skill_points_earned`, `skill_points_spent`, `last_level_up_at` to `player_cards`.
+- [ ] Create `pending_level_rewards` and `fusion_daily_log` tables.
+- [ ] SQL helpers: `level_from_xp`, `cumulative_xp_for_level`, `xp_needed_for_level`.
+- [ ] RPC `apply_card_xp(p_card_id, p_xp_amount, p_source)`.
+- [ ] Backfill: sync `level` from `xp`; populate `pending_level_rewards` for deficit cards.
+- [ ] RPC `claim_pending_level_rewards(p_owner_id)`.
+- [ ] Extend `verify_required_schema.sql` guard lists.
+- [ ] Grant privileges; schema guard `DO` block at end of migration.
+
+### T19.3 — Refactor progression RPCs (migration 025 continued or 026)
+- [ ] `process_match_result` → per-card `apply_card_xp` (remove raw `xp += N`).
+- [ ] `process_stat_drill` → XP only via `apply_card_xp`; tier/level gate; remove direct stat bump.
+- [ ] `train_with_fodder` → fusion daily cap; `apply_card_xp`; remove `level+1`/stat bump.
+- [ ] `allocate_skill_point` → POT ceiling; `skill_points_spent` tracking.
+- [ ] `start_player_evolution` → `min_player_level` gate.
+
+### T19.4 — Discord bot UI (`apps/discord_bot/`)
+- [ ] `player_cog.py`: use package `xp_progress`; rename "Level Up" → "Allocate Skill Points"; level-up notification hook.
+- [ ] `development_cog.py`: drill tier locking in select; fusion XP preview; post-action level-up embed.
+- [ ] `tasks/level_reward_notifier.py`: startup DM for unclaimed rewards.
+- [ ] `views/level_reward_claim.py`: Claim All button + idempotent edit.
+- [ ] Deprecate `/player level-up` with redirect ephemeral (if command still exists).
+
+### T19.5 — Integration & smoke
+- [ ] `tests/test_progression_caps.py` — extend for `can_allocate_skill_point`.
+- [ ] Manual smoke per plan §24.N table.
+- [ ] Run `supabase/scripts/verify_required_schema.sql` after migration.
+
+### T19.6 — Admin script (optional)
+- [ ] `scripts/backfill_level_rewards.py` — re-run pending rewards backfill for ops (idempotent).
+
+---
+
+## Task Group 20: Progression Hardening (US-24 — v1.9.1)
+
+> **Depends on:** Task Group 19 (migration 025/026 applied). **SDD first** — US-24 and plan §25.
+
+### T20.1 — SDD
+- [x] `spec.md` US-24 acceptance criteria (AC-24a–h).
+- [x] `plan.md` §25 technical architecture.
+- [x] `tasks.md` Task Group 20 (this section).
+
+### T20.2 — Migration `027_progression_hardening.sql`
+- [x] Scale unclaimed `missing_points` (75%, cap 18); sync `club_id` to current owner.
+- [x] Add `daily_alloc_count`, `alloc_reset_date` on `player_cards`.
+- [x] Create `player_drill_daily_log`.
+- [x] Fix `claim_pending_level_rewards` (current owner only).
+- [x] Add `count_unclaimed_level_rewards(p_owner_id)`.
+- [x] `allocate_skill_point`: pacing + POT check.
+- [x] `apply_card_xp`: match XP daily cap.
+- [x] `process_stat_drill`: per-player daily cap.
+- [x] Extend `verify_required_schema.sql`.
+
+### T20.3 — Pure logic
+- [x] Export hardening constants from `progression.py`.
+- [x] `tests/test_progression_hardening.py`.
+
+### T20.4 — Discord bot
+- [x] Claim fallback on `/development` hub (`DevelopmentHubView` button).
+- [x] Fix `level_reward_notifier.py` (notify only on success; group by owner).
+- [x] Fix `level_reward_claim.py` pending check RPC + shared claim helpers.
+
+### T20.5 — Verify
+- [x] Apply migration 027; run `verify_schema_full.py` and unit tests.
+
+---
+
+## Task Group 29: Match Loop Hardening & Dead Code Removal (US-29)
+
+> **Depends on:** T26 (US-26), T27 (US-27), T28 (US-28), economy/progression migrations 025–028 applied.  
+> **SDD first** — spec US-29 and plan §27 must be approved before code.  
+> **Audit reference:** Jul 2026 codebase audit (H1–H12 in `plan.md` §27.A).
+
+### Phase 0 — SDD approval
+- [x] T29.0.1 — Review US-29 acceptance criteria in `spec.md`
+- [x] T29.0.2 — Review technical plan `plan.md` §27
+- [x] T29.0.3 — Confirm weekly bot ladder (`league_points` + Monday reset) stays per `league-mode-design.md`
+
+### Phase 1 — Schema (`035_match_result_schema_fix.sql`)
+- [x] T29.1.1 — Add `player_cards.recent_match_ratings JSONB DEFAULT '[]'`
+- [x] T29.1.2 — Recreate `process_match_result`: `base_potential` replaces `initial_potential` in SELECT/UPDATE
+- [x] T29.1.3 — RPC `claim_daily_pack(p_club_id)` — atomic cooldown + card insert (22h gate)
+- [x] T29.1.4 — Table `league_matchday_reminders` + RLS policies
+- [x] T29.1.5 — Extend `verify_required_schema.sql` (035 objects + `process_match_result`, `announcement_message_id`)
+- [x] T29.1.6 — `scratch/apply_migration_035.py` + apply remote + `verify_schema_full.py`
+
+### Phase 2 — Shared reward module
+- [x] T29.2.1 — Create `apps/discord_bot/core/match_rewards.py`
+- [x] T29.2.2 — `tests/test_match_loop_hardening.py` — bot/friendly payload + coin helpers
+
+### Phase 3 — `battle_cog` wiring
+- [x] T29.3.1 — Add `defer` to `/battle bot` and `/battle friendly` slash commands
+- [x] T29.3.2 — Replace bot payout block (~1382–1424) with `apply_bot_match_rewards()`
+- [x] T29.3.3 — Friendly path: `build_process_match_result_rpc` for both XIs; remove duplicate `tick_evolution_match_progress`
+- [x] T29.3.4 — Energy pre-check: `sync_action_energy` + `match_energy_cost('bot')` on bot path
+- [x] T29.3.5 — Remove debug `debug-74c668.log` instrumentation from `battle_cog.py`
+- [x] T29.3.6 — Remove disabled "Ranked (Soon)" button stub
+
+### Phase 4 — Store, scheduler, onboarding
+- [x] T29.4.1 — `store_cog.py` → `claim_daily_pack` RPC (remove UPDATE+INSERT)
+- [x] T29.4.2 — `scheduler_jobs.py` — matchday reminder dedup via `league_matchday_reminders`
+- [x] T29.4.3 — Remove `energy_regen_job` from `main.py` + `scheduler_jobs.py`
+- [x] T29.4.4 — `onboarding_cog.py` — defer before DB on `/register` new-user path
+
+### Phase 5 — Dead code & hygiene
+- [x] T29.5.1 — Delete v2=false coin/energy fallback in `league_rewards.py`
+- [x] T29.5.2 — Remove debug logs: `league_cog.py`, `league_journal.py`, `development_cog.py`, `squad_cog.py`
+- [x] T29.5.3 — `league_cog.py` — add `@app_commands.check(ensure_registered)` on hub
+- [x] T29.5.5 — `change_log.md` — bot 20⚡, per-card XP, friendly XP, pack claim fix
+- [x] T29.5.4 — `README.md` — replace `gacha_cog` with `store_cog` / `/store`
+
+### Phase 6 — Tests & verify
+- [x] T29.6.1 — Fix `tests/test_training.py` import (`packages/training`)
+- [x] T29.6.2 — Grep gate: no `p_xp_amount": 15` in `apps/discord_bot/`; no direct coin UPDATE in `battle_cog` bot path
+- [x] T29.6.3 — `pytest tests/ -q` full suite green
+- [ ] T29.6.4 — Manual smoke per `plan.md` §27.I
+
+**Verify:**
+```bash
+pytest tests/test_match_loop_hardening.py tests/test_match_xp.py tests/test_economy_flows.py -q
+python scratch/verify_schema_full.py
+# Grep gates (PowerShell):
+rg 'p_xp_amount": 15' apps/discord_bot/
+rg '\.update\(\{[^}]*coins' apps/discord_bot/cogs/battle_cog.py
+```
+

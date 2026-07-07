@@ -134,9 +134,13 @@ async def show_league_management(interaction: discord.Interaction, guild_id: int
     league = league_res.data if league_res else None
 
     season = None
+    reg_season = None
     if league:
         season_res = await db.table("league_seasons").select("*").eq("league_id", league["id"]).eq("status", "active").maybe_single().execute()
         season = season_res.data if season_res else None
+        if not season:
+            reg_res = await db.table("league_seasons").select("*").eq("league_id", league["id"]).eq("status", "registration").maybe_single().execute()
+            reg_season = reg_res.data if reg_res else None
 
     # Fetch registered league members count
     regs_res = await db.table("league_members").select("player_id", count="exact").eq("guild_id", guild_id).execute()
@@ -148,12 +152,21 @@ async def show_league_management(interaction: discord.Interaction, guild_id: int
         color=0x00FF87
     )
     embed.add_field(name="Registered Managers", value=f"**{reg_count}**", inline=True)
-    embed.add_field(name="Active Season", value=f"Yes (Season #{season['season_number']})" if season else "No", inline=True)
     if season:
+        embed.add_field(name="Active Season", value=f"Yes (Season #{season['season_number']})", inline=True)
         embed.add_field(name="Matchday", value=f"{season['current_matchday']} / {season['total_matchdays']}", inline=True)
         embed.add_field(name="Duration Set", value=f"{season['duration_days']} days", inline=True)
+        cfg = season.get("config_json") or {}
+        if cfg:
+            embed.add_field(name="Config", value=f"Size **{cfg.get('max_clubs', 8)}** | OVR cap **{cfg.get('ovr_cap') or 'none'}**", inline=False)
+    elif reg_season:
+        embed.add_field(name="Status", value=f"📝 Registration (Season #{reg_season['season_number']})", inline=True)
+        cfg = reg_season.get("config_json") or {}
+        embed.add_field(name="Target Size", value=str(cfg.get("max_clubs", 8)), inline=True)
+    else:
+        embed.add_field(name="Active Season", value="No", inline=True)
 
-    view = LeagueManagementView(owner_id, guild_id, season is not None)
+    view = LeagueManagementView(owner_id, guild_id, has_active_season=season is not None, has_registration=reg_season is not None)
     if interaction.response.is_done():
         msg = await interaction.edit_original_response(embed=embed, view=view)
     else:
@@ -563,17 +576,33 @@ class RoleSelectView(BaseAdminView):
 
 
 class LeagueManagementView(BaseAdminView):
-    def __init__(self, owner_id: int, guild_id: int, has_active_season: bool) -> None:
+    def __init__(self, owner_id: int, guild_id: int, has_active_season: bool, has_registration: bool = False) -> None:
         super().__init__(owner_id)
         self.guild_id = guild_id
-        
+
         if has_active_season:
             self.remove_item(self.start_btn)
+            self.remove_item(self.open_reg_btn)
+            self.remove_item(self.config_btn)
         else:
             self.remove_item(self.end_btn)
             self.remove_item(self.kick_btn)
             self.remove_item(self.force_sim_btn)
             self.remove_item(self.duration_btn)
+            self.remove_item(self.pause_btn)
+            if has_registration:
+                self.remove_item(self.open_reg_btn)
+            else:
+                self.remove_item(self.config_btn)
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="📝 Open Registration", custom_id="league_admin_open_reg", row=0)
+    async def open_reg_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        await admin_open_registration(interaction, self.guild_id, self.owner_id)
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="⚙️ Configure Season", custom_id="league_admin_config", row=0)
+    async def config_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await admin_season_config_modal(interaction, self)
 
     @discord.ui.button(style=discord.ButtonStyle.success, label="🚀 Start Season", custom_id="league_admin_start", row=0)
     async def start_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -598,6 +627,11 @@ class LeagueManagementView(BaseAdminView):
     @discord.ui.button(style=discord.ButtonStyle.primary, label="⏱️ Set Duration", custom_id="league_admin_duration", row=1)
     async def duration_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await admin_duration_modal(interaction, self)
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="⏸️ Pause / Resume", custom_id="league_admin_pause", row=1)
+    async def pause_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        await admin_toggle_pause(interaction, self.guild_id, self.owner_id)
 
     @discord.ui.button(style=discord.ButtonStyle.secondary, label="⬅️ Back to Admin Hub", custom_id="league_admin_back", row=2)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -653,6 +687,37 @@ class KickManagerSelectView(BaseAdminView):
         await admin_execute_kick(interaction, kicked_id, self.parent_view.guild_id, self.owner_id, self.parent_view)
 
 
+class SeasonConfigModal(discord.ui.Modal, title="Configure League Season"):
+    max_clubs = discord.ui.TextInput(label="Max clubs (8, 12, or 16)", default="8", max_length=2)
+    duration_days = discord.ui.TextInput(label="Season duration (days)", default="28", max_length=3)
+    ovr_cap = discord.ui.TextInput(label="OVR cap (optional)", required=False, placeholder="e.g. 75", max_length=3)
+    entry_fee = discord.ui.TextInput(label="Entry fee coins (0=free)", default="0", max_length=5)
+
+    def __init__(self, view: LeagueManagementView) -> None:
+        super().__init__()
+        self.admin_view = view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            size = int(self.max_clubs.value)
+            if size not in (8, 12, 16):
+                raise ValueError("size")
+            days = int(self.duration_days.value)
+            fee = int(self.entry_fee.value or "0")
+            cap = int(self.ovr_cap.value) if self.ovr_cap.value.strip() else None
+        except ValueError:
+            await interaction.followup.send(embed=error_embed("Invalid config values."), ephemeral=True)
+            return
+        await admin_save_season_config(interaction, self.admin_view.guild_id, {
+            "max_clubs": size,
+            "duration_days": days,
+            "ovr_cap": cap,
+            "entry_fee_coins": fee,
+            "bot_fill": True,
+        })
+
+
 class DurationModal(discord.ui.Modal, title="Set Season Duration"):
     days = discord.ui.TextInput(
         label="Duration (in days)",
@@ -681,6 +746,76 @@ class DurationModal(discord.ui.Modal, title="Set Season Duration"):
 
 # --- LEAGUE ADMIN HELPER FUNCTIONS ---
 
+async def admin_open_registration(interaction: discord.Interaction, guild_id: int, owner_id: int):
+    db = await get_client()
+    guild = interaction.client.get_guild(guild_id)
+    await db.table("leagues").upsert({"guild_id": guild_id, "name": guild.name if guild else "League"}, on_conflict="guild_id").execute()
+    league_res = await db.table("leagues").select("id").eq("guild_id", guild_id).maybe_single().execute()
+    league_id = league_res.data["id"]
+
+    existing = await db.table("league_seasons").select("id").eq("league_id", league_id).in_("status", ["active", "registration"]).execute()
+    if existing.data:
+        await interaction.followup.send(embed=error_embed("A season is already active or in registration."), ephemeral=True)
+        return
+
+    seasons_res = await db.table("league_seasons").select("season_number").eq("league_id", league_id).order("season_number", desc=True).limit(1).execute()
+    next_num = (seasons_res.data[0]["season_number"] + 1) if seasons_res.data else 1
+    reg_hours = 72
+    deadline = datetime.now(timezone.utc) + timedelta(hours=reg_hours)
+
+    await db.table("league_seasons").insert({
+        "league_id": league_id,
+        "season_number": next_num,
+        "status": "registration",
+        "current_matchday": 0,
+        "total_matchdays": 0,
+        "duration_days": 28,
+        "end_time": deadline.isoformat(),
+        "config_json": {"max_clubs": 8, "duration_days": 28, "bot_fill": True, "entry_fee_coins": 0},
+    }).execute()
+    await interaction.followup.send(embed=success_embed(f"📝 Registration open for Season #{next_num}. Closes <t:{int(deadline.timestamp())}:R>."))
+    await show_league_management(interaction, guild_id, owner_id)
+
+
+async def admin_save_season_config(interaction: discord.Interaction, guild_id: int, config: dict):
+    db = await get_client()
+    league_res = await db.table("leagues").select("id").eq("guild_id", guild_id).maybe_single().execute()
+    if not league_res or not league_res.data:
+        await interaction.followup.send(embed=error_embed("No league found."), ephemeral=True)
+        return
+    season_res = await db.table("league_seasons").select("*").eq("league_id", league_res.data["id"]).eq("status", "registration").maybe_single().execute()
+    if not season_res or not season_res.data:
+        await interaction.followup.send(embed=error_embed("Open registration first."), ephemeral=True)
+        return
+    await db.table("league_seasons").update({
+        "config_json": config,
+        "duration_days": config.get("duration_days", 28),
+    }).eq("id", season_res.data["id"]).execute()
+    await interaction.followup.send(embed=success_embed("⚙️ Season configuration saved."))
+
+
+async def admin_season_config_modal(interaction: discord.Interaction, view: LeagueManagementView):
+    await interaction.response.send_modal(SeasonConfigModal(view))
+
+
+async def admin_toggle_pause(interaction: discord.Interaction, guild_id: int, owner_id: int):
+    db = await get_client()
+    league_res = await db.table("leagues").select("id").eq("guild_id", guild_id).maybe_single().execute()
+    if not league_res or not league_res.data:
+        return
+    season_res = await db.table("league_seasons").select("*").eq("league_id", league_res.data["id"]).eq("status", "active").maybe_single().execute()
+    if not season_res or not season_res.data:
+        season_res = await db.table("league_seasons").select("*").eq("league_id", league_res.data["id"]).eq("status", "paused").maybe_single().execute()
+    season = season_res.data if season_res else None
+    if not season:
+        await interaction.followup.send(embed=error_embed("No active/paused season."), ephemeral=True)
+        return
+    new_status = "paused" if season["status"] == "active" else "active"
+    await db.table("league_seasons").update({"status": new_status}).eq("id", season["id"]).execute()
+    await interaction.followup.send(embed=success_embed(f"Season {'paused' if new_status == 'paused' else 'resumed'}."))
+    await show_league_management(interaction, guild_id, owner_id)
+
+
 async def admin_start_season(interaction: discord.Interaction, guild_id: int, owner_id: int, view: LeagueManagementView):
     db = await get_client()
     guild = interaction.client.get_guild(guild_id)
@@ -704,25 +839,7 @@ async def admin_start_season(interaction: discord.Interaction, guild_id: int, ow
         )
         return
 
-    # Determine target league size (8, 10, 12, 16)
     h_count = len(guild_members)
-    if h_count <= 8:
-        target_size = 8
-    elif h_count <= 10:
-        target_size = 10
-    elif h_count <= 12:
-        target_size = 12
-    else:
-        target_size = 16
-
-    # Warning if we exceed 16
-    warning_str = ""
-    if h_count > 16:
-        guild_members = guild_members[:16]
-        h_count = 16
-        warning_str = "⚠️ **Note**: Guild has more than 16 registered managers. Limiting to the first 16.\n\n"
-
-    ai_needed = target_size - h_count
 
     # Create league row if not exists
     await db.table("leagues").upsert({
@@ -736,6 +853,42 @@ async def admin_start_season(interaction: discord.Interaction, guild_id: int, ow
         return
     league_id = league_res.data["id"]
 
+    # Determine target league size from config or headcount
+    reg_season_res = await db.table("league_seasons").select("*").eq("league_id", league_id).eq("status", "registration").maybe_single().execute()
+    reg_season = reg_season_res.data if reg_season_res else None
+    cfg = (reg_season or {}).get("config_json") or {}
+    if cfg.get("max_clubs"):
+        target_size = int(cfg["max_clubs"])
+    elif h_count <= 8:
+        target_size = 8
+    elif h_count <= 10:
+        target_size = 10
+    elif h_count <= 12:
+        target_size = 12
+    else:
+        target_size = 16
+
+    duration_days = int(cfg.get("duration_days", 28))
+    bot_fill = cfg.get("bot_fill", True)
+
+    # Warning if we exceed 16
+    warning_str = ""
+    if h_count > 16:
+        guild_members = guild_members[:16]
+        h_count = 16
+        warning_str = "⚠️ **Note**: Guild has more than 16 registered managers. Limiting to the first 16.\n\n"
+
+    ai_needed = target_size - h_count if bot_fill else 0
+    if h_count + ai_needed < 2:
+        await interaction.followup.send(embed=error_embed("Need at least 2 clubs to start."), ephemeral=True)
+        return
+    if not bot_fill and h_count < target_size:
+        await interaction.followup.send(embed=error_embed(f"Need **{target_size}** registered managers (have {h_count}). Enable bot fill or wait."), ephemeral=True)
+        return
+
+    if reg_season:
+        await db.table("league_seasons").delete().eq("id", reg_season["id"]).execute()
+
     # Determine season number
     seasons_res = await db.table("league_seasons").select("season_number").eq("league_id", league_id).order("season_number", desc=True).limit(1).execute()
     next_season_num = 1
@@ -744,7 +897,6 @@ async def admin_start_season(interaction: discord.Interaction, guild_id: int, ow
 
     # Insert season record
     total_weeks = (target_size - 1) * 2
-    duration_days = 7  # default 7 days
 
     season_insert = await db.table("league_seasons").insert({
         "league_id": league_id,
@@ -753,7 +905,8 @@ async def admin_start_season(interaction: discord.Interaction, guild_id: int, ow
         "current_matchday": 1,
         "total_matchdays": total_weeks,
         "duration_days": duration_days,
-        "start_time": datetime.now(timezone.utc).isoformat()
+        "start_time": datetime.now(timezone.utc).isoformat(),
+        "config_json": cfg or {"max_clubs": target_size, "duration_days": duration_days, "bot_fill": bot_fill},
     }).execute()
 
     season_id = season_insert.data[0]["id"]
@@ -793,6 +946,44 @@ async def admin_start_season(interaction: discord.Interaction, guild_id: int, ow
             "player_id": pid
         }).execute()
 
+    # US-27: charge entry fees — removes humans who cannot pay
+    fee_res = await db.rpc("charge_league_entry_fees", {"p_season_id": season_id}).execute()
+    fee_data = fee_res.data or {}
+    skipped = fee_data.get("skipped") or []
+    charged = fee_data.get("charged") or []
+
+    parts_res = await db.table("league_participants").select("player_id, players(is_ai)").eq(
+        "season_id", season_id
+    ).execute()
+    remaining_humans = [
+        p for p in (parts_res.data or [])
+        if not (p.get("players") or {}).get("is_ai")
+    ]
+    if len(remaining_humans) < 2:
+        await db.table("league_seasons").delete().eq("id", season_id)
+        skip_note = ""
+        if skipped:
+            skip_note = f"\nSkipped ({len(skipped)}): insufficient coins for entry fee."
+        await interaction.followup.send(
+            embed=error_embed(
+                "Season aborted: fewer than **2** managers remain after entry fee collection."
+                + skip_note
+            ),
+            ephemeral=True,
+        )
+        return
+
+    participant_ids = [int(p["player_id"]) for p in (parts_res.data or [])]
+    h_count = len(remaining_humans)
+    ai_needed = len(participant_ids) - h_count
+    target_size = len(participant_ids)
+
+    fee_lines = ""
+    if charged:
+        fee_lines += f"\n💰 Entry fees collected from **{len(charged)}** manager(s)."
+    if skipped:
+        fee_lines += f"\n⚠️ **{len(skipped)}** manager(s) skipped (insufficient coins)."
+
     # Scale AI OVRs
     await db.rpc("scale_season_ai_opponents", {"p_season_id": season_id}).execute()
 
@@ -825,25 +1016,53 @@ async def admin_start_season(interaction: discord.Interaction, guild_id: int, ow
             f"{warning_str}🏆 **Season {next_season_num} Started!**\n"
             f"Total Teams: **{target_size}** (Humans: {h_count}, AIs: {ai_needed})\n"
             f"Matchdays: **{total_weeks}** (each lasting {duration_days * 24 / total_weeks:.1f} hours)\n"
-            "Fixtures and standings generated successfully."
+            f"Fixtures and standings generated successfully.{fee_lines}"
         )
     )
 
-    # Post Announcement
+    # Post Announcement + dual threads (US-28)
     config_res = await db.table("guild_config").select("league_channel_id").eq("guild_id", guild_id).maybe_single().execute()
     chan_id = config_res.data.get("league_channel_id") if config_res.data else None
     if chan_id:
-        ann_embed = discord.Embed(
-            title=f"🏆 ElevenBoss League: Season {next_season_num} Begins!",
-            description=(
-                f"The seasonal league has officially started! **{target_size} teams** will battle over "
-                f"**{total_weeks} matchdays** for glory.\n\n"
-                f"Check `/league hub` to view standings and play your fixtures!"
-            ),
-            color=0x00FF87
+        league_name = guild.name
+        league_row = await db.table("leagues").select("name").eq("guild_id", guild_id).maybe_single().execute()
+        if league_row and league_row.data:
+            league_name = league_row.data.get("name") or league_name
+
+        from apps.discord_bot.core.league_announcement import (
+            build_season_start_message,
         )
-        from apps.discord_bot.cogs.league_cog import send_league_announcement
-        await send_league_announcement(guild, chan_id, ann_embed, "A new league season has begun!")
+        from apps.discord_bot.cogs.league_cog import fetch_standings, send_league_announcement
+        from apps.discord_bot.core.league_journal import create_season_threads
+        from leagues import format_standings_table
+
+        ann_body = build_season_start_message(league_name, next_season_num, total_weeks)
+        ann_msg = await send_league_announcement(guild, chan_id, None, ann_body)
+
+        channel = guild.get_channel(chan_id)
+        if channel and ann_msg:
+            fixtures_res = await db.table("league_fixtures").select("*").eq("season_id", season_id).execute()
+            all_fixtures = fixtures_res.data or []
+            standings = await fetch_standings(db, season_id)
+            table_text = format_standings_table(standings, all_fixtures, limit=10)
+            threads = await create_season_threads(
+                interaction.client,
+                db,
+                guild,
+                channel,
+                season_id=season_id,
+                league_name=league_name,
+                initial_table_text=table_text,
+                announcement_message_id=ann_msg.id,
+            )
+            if not threads:
+                logger.error(
+                    "US-28: dual threads failed for guild %s season %s — legacy journal fallback on first match",
+                    guild_id,
+                    season_id,
+                )
+        elif not ann_msg:
+            logger.warning("Season announcement not sent — channel %s unavailable", chan_id)
 
     await show_league_management(interaction, guild_id, owner_id)
 
@@ -870,17 +1089,24 @@ async def admin_end_season(interaction: discord.Interaction, guild_id: int, owne
         "end_time": datetime.now(timezone.utc).isoformat()
     }).eq("id", season["id"]).execute()
 
+    # Distribute season prizes (US-26)
+    try:
+        prize_res = await db.rpc("distribute_season_prizes", {"p_season_id": season["id"]}).execute()
+        logger.info("Season prizes distributed: %s", prize_res.data)
+    except Exception:
+        logger.exception("distribute_season_prizes failed for season %s", season["id"])
+
     # Reset thread ID and status
     config_res = await db.table("guild_config").select("*").eq("guild_id", guild_id).maybe_single().execute()
     config = config_res.data if config_res else None
-    
+
     league_updates_thread_id = config.get("league_updates_thread_id") if config else None
     chan_id = config.get("league_channel_id") if config else None
 
-    await db.table("guild_config").update({
-        "league_status": "inactive",
-        "league_updates_thread_id": None
-    }).eq("guild_id", guild_id).execute()
+    guild_config_update: dict = {"league_status": "inactive"}
+    if season.get("thread_format") != "dual_v2" and league_updates_thread_id:
+        guild_config_update["league_updates_thread_id"] = None
+    await db.table("guild_config").update(guild_config_update).eq("guild_id", guild_id).execute()
 
     standings = await fetch_standings(db, season["id"])
     winner = standings[0]["club_name"] if standings else "N/A"
@@ -910,9 +1136,16 @@ async def admin_end_season(interaction: discord.Interaction, guild_id: int, owne
     for idx, row in enumerate(standings[:5], 1):
         summary_embed.description += f"**{idx}. {row['club_name']}** — {row['points']} pts (GD: {row['goal_difference']})\n"
 
-    # Post Season Summary to Journal thread
+    # Post Season Summary to Journal thread (dual_v2 or legacy)
     thread = None
-    if league_updates_thread_id:
+    if season.get("thread_format") == "dual_v2" and season.get("journal_thread_id"):
+        thread = guild.get_thread(season["journal_thread_id"])
+        if not thread:
+            try:
+                thread = await guild.fetch_channel(season["journal_thread_id"])
+            except Exception:
+                thread = None
+    elif league_updates_thread_id:
         thread = guild.get_thread(league_updates_thread_id)
         if not thread:
             try:
@@ -923,21 +1156,24 @@ async def admin_end_season(interaction: discord.Interaction, guild_id: int, owne
     if thread:
         try:
             await thread.send(embed=summary_embed)
-            
-            # Archive/rename thread after 30s delay in background
-            async def archive_thread_after_delay(t: discord.Thread, s_num: int):
-                await asyncio.sleep(30.0)
-                try:
-                    await t.edit(
-                        name=f"🏆-season-{s_num}-concluded",
-                        locked=True,
-                        archived=True
-                    )
-                except Exception as err:
-                    logger.warning(f"Failed to lock and archive thread {t.id}: {err}")
-            
-            asyncio.create_task(archive_thread_after_delay(thread, season["season_number"]))
-        except Exception as e:
+
+            if season.get("thread_format") == "dual_v2":
+                from apps.discord_bot.core.league_journal import archive_season_threads
+                await archive_season_threads(guild, season, season_number=season["season_number"])
+            else:
+                async def archive_thread_after_delay(t: discord.Thread, s_num: int):
+                    await asyncio.sleep(30.0)
+                    try:
+                        await t.edit(
+                            name=f"🏆-season-{s_num}-concluded",
+                            locked=True,
+                            archived=True,
+                        )
+                    except Exception as err:
+                        logger.warning(f"Failed to lock and archive thread {t.id}: {err}")
+
+                asyncio.create_task(archive_thread_after_delay(thread, season["season_number"]))
+        except Exception:
             logger.exception("Failed to send final summary to League Journal thread.")
 
     if chan_id:

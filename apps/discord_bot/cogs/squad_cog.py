@@ -1,8 +1,6 @@
 # apps/discord_bot/cogs/squad_cog.py
 from __future__ import annotations
-import json
 import logging
-import time
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -17,26 +15,6 @@ from apps.discord_bot.core.select_helpers import rebuild_select_options
 from apps.discord_bot.middleware.match_lock import assert_not_in_match
 
 logger = logging.getLogger(__name__)
-
-_DEBUG_LOG = "debug-4aa967.log"
-
-
-def _agent_debug_log(location: str, message: str, data: dict, hypothesis_id: str) -> None:
-    # #region agent log
-    try:
-        with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "sessionId": "4aa967",
-                "runId": "swap-confirm",
-                "hypothesisId": hypothesis_id,
-                "timestamp": int(time.time() * 1000),
-                "location": location,
-                "message": message,
-                "data": data,
-            }) + "\n")
-    except OSError:
-        pass
-    # #endregion
 
 
 def _swap_selection_ready(starter_id: str | None, reserve_id: str | None) -> bool:
@@ -389,19 +367,6 @@ class SquadSwapView(discord.ui.View):
             emoji="✅",
             disabled=not can_confirm,
         )
-        # #region agent log
-        _agent_debug_log(
-            "squad_cog.py:setup_components",
-            "confirm button state",
-            {
-                "starter_id": self.selected_starter_id,
-                "reserve_id": self.selected_reserve_id,
-                "can_confirm": can_confirm,
-                "disabled": not can_confirm,
-            },
-            "A",
-        )
-        # #endregion
         self.confirm_btn.callback = self.on_confirm
         self.add_item(self.confirm_btn)
         

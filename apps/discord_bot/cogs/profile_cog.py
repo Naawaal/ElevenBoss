@@ -7,7 +7,7 @@ from discord.ext import commands
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed
-from energy import minutes_to_full
+from apps.discord_bot.core.economy_rpc import format_action_energy_status, sync_action_energy
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +32,12 @@ class ProfileCog(commands.Cog):
                 )
                 return
 
-            # Compute energy recovery time
-            curr_energy = player["energy"]
-            max_energy = player["max_energy"]
-            min_to_full = minutes_to_full(curr_energy, max_energy, regen_per_tick=2, minutes_per_tick=5)
-            
-            if min_to_full > 0:
-                hours = min_to_full // 60
-                mins = min_to_full % 60
-                energy_status = f"{curr_energy}/{max_energy} (Full in {hours}h {mins}m)"
-            else:
-                energy_status = f"{curr_energy}/{max_energy} (Full)"
+            # Sync unified action energy
+            energy_row = await sync_action_energy(db, interaction.user.id)
+            curr_energy = energy_row.get("action_energy", player.get("action_energy", player.get("energy", 0)))
+            max_energy = energy_row.get("max_energy", player.get("max_energy", 100))
+            energy_status = format_action_energy_status(curr_energy, max_energy)
+            gems = player.get("tokens", 0)
 
             # Fetch global divisions sorted by min_lp ascending
             div_res = await db.table("global_divisions").select("*").order("min_lp").execute()
@@ -91,8 +86,9 @@ class ProfileCog(commands.Cog):
             )
             embed.add_field(name="👔 Manager Name", value=player["manager_name"], inline=True)
             embed.add_field(name="👤 Username", value=interaction.user.name, inline=True)
-            embed.add_field(name="🪙 Coins", value=f"{player['coins']} coins", inline=True)
-            embed.add_field(name="⚡ Energy Status", value=energy_status, inline=False)
+            embed.add_field(name="🪙 Coins", value=f"{player['coins']:,} coins", inline=True)
+            embed.add_field(name="💎 Gems", value=f"{gems:,}", inline=True)
+            embed.add_field(name="⚡ Action Energy", value=energy_status, inline=False)
             
             # Global Arena Stats
             embed.add_field(name="🌍 Global Division", value=current_div["name"], inline=True)
@@ -100,12 +96,29 @@ class ProfileCog(commands.Cog):
 
             # Weekly League Stats
             embed.add_field(name="⚔️ Server Division", value=player["division"], inline=True)
-            embed.add_field(name="📊 Server League Points", value=f"{player['league_points']} pts (GD: {player['goal_difference']})", inline=True)
+            embed.add_field(name="📊 Division Rank Points", value=f"{player['league_points']} pts (GD: {player['goal_difference']})", inline=True)
+            embed.add_field(
+                name="ℹ️ Division Rank",
+                value="Weekly ladder from **bot battles** only. Guild season table is in `/league hub`.",
+                inline=False,
+            )
             
             w, d, l = player["wins"], player["draws"], player["losses"]
             record = f"{w}W - {d}D - {l}L"
             embed.add_field(name="⚽ Match Record", value=f"{record} ({player['matches_played']} played)", inline=True)
-            embed.set_footer(text="ElevenBoss Football Manager")
+
+            # Trophy cabinet (US-26)
+            hist_res = await db.table("player_league_history").select("*").eq("player_id", interaction.user.id).order("created_at", desc=True).limit(5).execute()
+            history = hist_res.data or []
+            if history:
+                trophy_lines = []
+                for h in history:
+                    awards = h.get("awards_json") or []
+                    award_label = awards[0].get("type", "participant") if awards else "participant"
+                    trophy_lines.append(f"Season #{h.get('season_id', '')[:8]}… — **#{h['finish_position']}** ({award_label})")
+                embed.add_field(name="🏆 Trophy Cabinet", value="\n".join(trophy_lines), inline=False)
+
+            embed.set_footer(text="Use /store for daily bonus and energy refills")
 
             await interaction.followup.send(embed=embed, ephemeral=True)
         except Exception as e:

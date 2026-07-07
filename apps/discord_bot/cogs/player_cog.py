@@ -6,7 +6,13 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from player_engine import GameConfig, calculate_contract_renewal_cost, format_potential_display, EVOLUTION_TRACKS
+from player_engine import (
+    GameConfig,
+    calculate_contract_renewal_cost,
+    format_potential_display,
+    EVOLUTION_TRACKS,
+    xp_progress,
+)
 from apps.discord_bot.cogs.development_cog import (
     make_match_progress_bar,
     _evo_played,
@@ -37,18 +43,7 @@ async def player_id_autocomplete(interaction: discord.Interaction, current: str)
 
 def get_xp_progress(total_xp: int) -> tuple[int, int, int]:
     """Returns (current_level, current_xp_in_level, xp_needed_for_next_level)."""
-    lvl = 1
-    accumulated_xp = 0
-    while True:
-        needed = int(100 * (1.12 ** (lvl - 1)))
-        if total_xp >= accumulated_xp + needed:
-            accumulated_xp += needed
-            lvl += 1
-        else:
-            break
-    current_xp = total_xp - accumulated_xp
-    needed = int(100 * (1.12 ** (lvl - 1)))
-    return lvl, current_xp, needed
+    return xp_progress(total_xp)
 
 def make_xp_bar(current: int, needed: int) -> str:
     total_bars = 10
@@ -95,7 +90,7 @@ class PlayerProfileView(discord.ui.View):
         if card_data.get("skill_points", 0) > 0:
             self.lvl_btn = discord.ui.Button(
                 style=discord.ButtonStyle.success,
-                label=f"Level Up ({card_data['skill_points']} pts)",
+                label=f"Allocate Skills ({card_data['skill_points']} pts)",
                 custom_id="level_up_profile"
             )
             self.lvl_btn.callback = self.level_up_callback
