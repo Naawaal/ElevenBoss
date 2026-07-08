@@ -8,6 +8,7 @@ import logging
 import discord
 from discord.ext import commands
 
+from apps.discord_bot.core.guild_resolver import resolve_bot_guild
 from apps.discord_bot.core.match_runs import abandon_run
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.embeds.common_embeds import error_embed
@@ -20,7 +21,7 @@ async def _resolve_thread(bot: commands.Bot, run: dict) -> discord.Thread | None
     thread_id = run.get("thread_id")
     if not guild_id or not thread_id:
         return None
-    guild = bot.get_guild(int(guild_id))
+    guild = (await resolve_bot_guild(bot, int(guild_id)))[0]
     if not guild:
         return None
     thread = guild.get_thread(int(thread_id))
@@ -96,7 +97,7 @@ async def _recover_league_run(bot: commands.Bot, db, run: dict) -> None:
         return
 
     guild_id = run.get("guild_id")
-    guild = bot.get_guild(int(guild_id)) if guild_id else None
+    guild = (await resolve_bot_guild(bot, int(guild_id)))[0] if guild_id else None
     if not guild:
         logger.warning("Cannot recover league run %s — guild %s unavailable", run["id"], guild_id)
         return

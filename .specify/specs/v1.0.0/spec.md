@@ -443,6 +443,16 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **GIVEN** background auto-simulation is run (via the 10-minute interval job or admin force-sim command),
 - **THEN** all unplayed matches that have exceeded their window end must be simulated sequentially to prevent rate limits and ensure Commentary is delivered correctly.
 
+### AC-16e: Unreachable Guild & Season Pause
+- **GIVEN** an active or registration league season whose Discord guild the bot cannot reach (removed from server or confirmed absent via API),
+- **THEN** background auto-simulation must pause that season (`status = paused`) instead of logging a warning every 10 minutes.
+- **AND** when the bot leaves a guild (`on_guild_remove`), any active/registration season for that guild's league must be paused automatically.
+- **AND** transient Discord errors (HTTP 429/5xx while resolving the guild) must skip auto-sim for that run without pausing the season.
+
+### AC-16f: Slash-Command Rate-Limit Resilience
+- **GIVEN** a registered manager invokes a guarded slash command while Discord/Cloudflare returns HTTP 429 during interaction defer,
+- **THEN** the bot must retry defer with backoff and, if still blocked, send an ephemeral user-facing retry message instead of failing silently.
+
 ### AC-16d: Season End Summary & Archival Flow
 - **GIVEN** the admin ends the season via the `/admin` control panel,
 - **THEN** the bot must calculate final season statistics including:

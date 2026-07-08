@@ -167,10 +167,38 @@ async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> in
     if not league_data:
         return 0
     guild_id = league_data["guild_id"]
-    
-    guild = bot.get_guild(guild_id)
+
+    from apps.discord_bot.core.guild_resolver import (
+        pause_season_if_guild_unreachable,
+        resolve_bot_guild,
+    )
+
+    guild, unreachable = await resolve_bot_guild(bot, guild_id)
     if not guild:
-        logger.warning(f"Guild {guild_id} not found/cached by bot.")
+        if unreachable:
+            await pause_season_if_guild_unreachable(
+                db, season_id, guild_id, "guild_unreachable"
+            )
+        else:
+            season_status_res = await (
+                db.table("league_seasons")
+                .select("status")
+                .eq("id", season_id)
+                .maybe_single()
+                .execute()
+            )
+            status = (season_status_res.data or {}).get("status") if season_status_res else None
+            if status == "paused":
+                logger.debug(
+                    "Guild %s transiently unreachable; season %s already paused",
+                    guild_id,
+                    season_id,
+                )
+            else:
+                logger.warning(
+                    "Guild %s temporarily unreachable; skipping auto-sim this run",
+                    guild_id,
+                )
         return 0
         
     # Resolve threads (dual_v2 or legacy)

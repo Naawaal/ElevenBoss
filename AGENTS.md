@@ -93,6 +93,7 @@ Not lazy about: understanding the problem (read it fully and trace the real flow
 * Delete or rewrite already-applied migration files on the assumption remote matches
 * Add debug/agent instrumentation and leave it in cogs after the task is done
 * Create markdown docs the user did not ask for (`README` dumps, ADRs, etc.)
+* Add a new slash command, hub button, or table not called for in the approved spec — extend `/development`, `/store`, or the relevant existing hub unless the spec explicitly requires a new surface
 * Import `discord` into `packages/` or put business logic inside cogs when it belongs in `packages/`
 * Reference DB columns in Python/SQL that are not defined in `supabase/migrations/`
 * Loop `INSERT`/`UPDATE` per row when an RPC or batch upsert exists
@@ -165,7 +166,54 @@ When touching any progression or economy RPC, **grep all callers** in `apps/disc
 
 ---
 
-## 10. Verification Checklist (before saying “done”)
+## 10. Wiring, Cleanup & Scope Discipline (do not ship gaps)
+
+Working code and *complete* code aren't the same thing. Migration 025's rollback bug and the friendly-match double-tick bug both got shipped as code that "did what it said" but wasn't fully wired or fully cleaned up. This section makes that check explicit instead of relying on the agent to remember it.
+
+**Wiring check — every new function must have a real call site:**
+* For every new function, RPC call, or cog handler added, trace it back to an actual entry point: a command handler, a persistent view callback, a scheduled sweeper, or `process_match_result`'s call chain. If you can't name the exact call site, it's dead code — wire it in or delete it.
+* If the function is meant to run from a specific trigger (weekly training tick, season-advance resolution, a sweeper), confirm the *call* was added, not just the function definition. A formula sitting unused in `packages/player_engine/` is a shipped no-op.
+
+**Cleanup check — superseded code must actually go away:**
+* If this change replaces an RPC, formula, or handler (e.g. swapping which function computes `match_xp_reward`, or retiring an old coin-mutation path), grep every caller of the old one across `apps/discord_bot/` and `supabase/migrations/` and confirm zero remain — same standard Section 7 already sets for progression/economy RPCs, applied repo-wide.
+* A migration or refactor where 2 of 3 callers were updated is worse than none, because it fails silently (old path still runs, new path is half-live) instead of loudly.
+* If an old path is intentionally kept (e.g. `/claim-rewards` DM fallback), say so explicitly — don't leave it ambiguous whether it's dead or deliberate.
+
+**Schema completeness ties back to Section 3b/8:** don't treat this as a separate check — it's the same "no column without a migration, no RPC drop without checking peers" discipline, just re-confirmed at the end of the diff, not only at migration-authoring time.
+
+**Scope discipline:**
+* No new slash command, hub button, or table beyond what `.specify/specs/v1.0.0/spec.md` actually calls for (this is Section 6's "never do without explicit user request" bullet, restated as a final gate before calling anything done).
+* If a new command/table/endpoint seems genuinely needed beyond what was asked, propose it in the SDD docs — don't ship it silently as part of the diff.
+
+---
+
+## 11. User-Perspective Validation (persona walkthrough)
+
+Before calling a user-facing change done, trace it as the person actually experiencing it — not as the developer who just wrote it.
+
+**Name the persona concretely.** ElevenBoss has at least four, and they see different things:
+* The **manager** running the command (e.g. `/development` mid-week on mobile with a weak connection)
+* The **opposing manager**, affected by a match/economy result they didn't trigger
+* A **bot-controlled club** — no human behind it, but still subject to squad resets, `retire_squad()`, and economy RPCs
+* A **server admin**, who may have different permissions on hub commands than a regular manager
+
+**Assume the unhappy path first:**
+* Double-tap a hub button, or run the same command twice in a row
+* Fire the command while a matchday lock or season-advance transition is in progress
+* DMs disabled — does it actually fall back to the `/development` hub Claim button, or silently fail?
+* The persistent view is stale (bot restarted, view re-registered, user still looking at an old embed)
+* Two devices/sessions hitting the same action at once
+
+**Check what they actually see, not what the RPC returns:**
+* Does a failed RPC surface as a clear ephemeral message, or a raw exception in chat?
+* After a claim/drill/fusion action, can the manager tell it worked from the UI alone (updated embed, coin/XP reflected), or do they have to trust it silently happened?
+* Does the response arrive before Discord's 3-second interaction window closes, given the `defer` in Section 4 — not just "was defer called" but "did the user get a timely, legible result"?
+
+If any of this raises a real question, that's a gap — go fix it in code, don't rationalize it in the findings note.
+
+---
+
+## 12. Verification Checklist (before saying "done")
 
 * [ ] Migration applied and `verify_required_schema.sql` passes
 * [ ] New pure logic has a small test in `tests/` (or extends an existing file)
@@ -176,4 +224,7 @@ When touching any progression or economy RPC, **grep all callers** in `apps/disc
 * [ ] Grep confirms all callers of changed RPCs/helpers are updated
 * [ ] Debug instrumentation removed unless user is actively debugging
 * [ ] SDD updated if behavior diverged from spec
-
+* [ ] Every new function/RPC call has a traced, real call site — no dead code shipped
+* [ ] If old logic was superseded, it's deleted and grep confirms zero remaining callers
+* [ ] No new slash command/hub button/table beyond what the approved spec requires
+* [ ] Persona walkthrough done for user-facing changes (manager, opposing manager, bot-controlled club, admin as applicable), including matchday-lock, double-invoke, and stale-embed cases

@@ -1,8 +1,8 @@
 # apps/discord_bot/middleware/guard.py
 from __future__ import annotations
 import discord
-from discord import app_commands
 from apps.discord_bot.db.client import get_client
+from apps.discord_bot.core.view_helpers import safe_defer
 from apps.discord_bot.embeds.common_embeds import error_embed
 
 async def ensure_registered(interaction: discord.Interaction) -> bool:
@@ -17,7 +17,8 @@ async def ensure_registered(interaction: discord.Interaction) -> bool:
             is_public = True
 
     if not interaction.response.is_done():
-        await interaction.response.defer(ephemeral=not is_public)
+        if not await safe_defer(interaction, ephemeral=not is_public):
+            return False
 
     db = await get_client()
     try:

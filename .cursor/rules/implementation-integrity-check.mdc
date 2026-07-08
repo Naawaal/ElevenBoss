@@ -1,0 +1,70 @@
+---
+name: implementation-integrity-check
+description: Audits a just-implemented feature's diff for orphaned/unreachable code, missing wiring, missing schema or migration changes, and unrequested new surface area (commands, endpoints, tables). Use after implementing or modifying a feature, before considering it complete.
+---
+
+# Implementation Integrity Check
+
+Working code and *complete* code aren't the same thing. This skill catches
+the gap between "the function I wrote does what it says" and "the feature
+actually reaches that function, only that function, and only through the
+surface the user asked for."
+
+Run this **after** implementation, before telling the user the feature is done.
+
+## When to use this skill
+- Any feature that adds new functions, handlers, or modules
+- Any feature that touches or replaces existing logic
+- Any feature that reads or writes new data
+- Any feature that could plausibly need a new command/endpoint
+
+## How to use it
+
+### 1. Wiring check — is new code actually reachable?
+For every function/class/handler just added, trace it back to a real entry
+point (command handler, event listener, scheduled task, API route).
+- If there's no exact call site reaching it, it's dead code — wire it in
+  or remove it.
+- If it's meant to run from a specific trigger (e.g. season-advance
+  resolution, a weekly tick), confirm the actual call was added, not just
+  the function definition.
+- Check both directions: new code that's never called, and existing code
+  that was supposed to be updated to call it but wasn't touched.
+
+### 2. Cleanup check — did anything get left behind?
+If this feature replaces or supersedes existing logic:
+- Confirm the old function/handler/command was actually deleted, not left
+  running alongside the new one as a second, now-incorrect path to the
+  same result.
+- Search for remaining callers of the old function/command — a partial
+  migration where some call sites were updated and others weren't is
+  worse than no migration, because it's silent.
+- If something was intentionally kept for backward compatibility, say so
+  explicitly rather than leaving it ambiguous.
+
+### 3. Schema check — does the DB actually support this yet?
+- For every new read/write, confirm the table/column/index it depends on
+  exists in the schema *and* has a migration — don't assume it's already
+  there.
+- New constraints (uniqueness, FKs, partial indexes scoped to a status)
+  need an actual migration, not just application-level logic assuming the
+  DB will enforce it.
+- A new table or column is a schema change to call out explicitly, not
+  something to infer silently mid-implementation.
+
+### 4. Scope check — was this actually asked for?
+- Don't create a new slash command, endpoint, table, or other user-facing
+  surface unless it was explicitly requested or clearly required to
+  fulfill the request.
+- If a new command/table/endpoint seems needed beyond what was asked,
+  propose it — don't ship it silently as part of the diff.
+- Prefer extending or reusing an existing command/handler over adding a
+  new one, unless the request calls for a distinct one.
+
+## Output
+Before considering the feature complete, write a short **Implementation
+Integrity Findings** note:
+- New functions/handlers added → confirmed call site for each
+- Old code removed (if superseded) → confirmed no remaining callers
+- Schema/migration changes needed → confirmed present
+- New commands/endpoints/tables added → confirmed each was actually requested

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import logging
 import discord
+from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -55,6 +56,61 @@ class ElevenBossBot(commands.Bot):
 
         from apps.discord_bot.views.level_reward_claim import ClaimAllLevelRewardsView
         self.add_view(ClaimAllLevelRewardsView())
+
+        @self.tree.error
+        async def on_app_command_error(
+            interaction: discord.Interaction,
+            error: app_commands.AppCommandError,
+        ) -> None:
+            original = getattr(error, "original", error)
+            cmd_name = interaction.command.qualified_name if interaction.command else "unknown"
+            user_id = interaction.user.id if interaction.user else "?"
+
+            if isinstance(original, discord.HTTPException) and original.status == 429:
+                logger.warning(
+                    "Rate limited on /%s for user %s (HTTP 429)",
+                    cmd_name,
+                    user_id,
+                )
+                from apps.discord_bot.core.view_helpers import safe_defer
+                from apps.discord_bot.embeds.common_embeds import error_embed
+
+                try:
+                    if not interaction.response.is_done():
+                        await safe_defer(interaction, ephemeral=True)
+                    await interaction.followup.send(
+                        embed=error_embed(
+                            "Discord is temporarily rate-limiting requests. "
+                            "Please try again in a minute."
+                        ),
+                        ephemeral=True,
+                    )
+                except discord.HTTPException:
+                    pass
+                return
+
+            logger.error(
+                "Unhandled app command error on /%s for user %s: %s",
+                cmd_name,
+                user_id,
+                original,
+                exc_info=original if isinstance(original, BaseException) else error,
+            )
+            from apps.discord_bot.embeds.common_embeds import error_embed
+
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        embed=error_embed("Something went wrong. Please try again."),
+                        ephemeral=True,
+                    )
+                else:
+                    await interaction.followup.send(
+                        embed=error_embed("Something went wrong. Please try again."),
+                        ephemeral=True,
+                    )
+            except discord.HTTPException:
+                pass
 
         # Match recovery runs in on_ready once Discord is connected.
 
@@ -159,6 +215,23 @@ class ElevenBossBot(commands.Bot):
             await notify_pending_level_rewards(self)
         except Exception as e:
             logger.error(f"Level reward notification failed on startup: {e}", exc_info=True)
+
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        try:
+            from apps.discord_bot.db.client import get_client
+            from apps.discord_bot.core.guild_resolver import pause_seasons_for_guild
+
+            db = await get_client()
+            paused = await pause_seasons_for_guild(db, guild.id, "bot_removed")
+            if paused:
+                logger.info(
+                    "Paused %d league season(s) after leaving guild %s (%s)",
+                    paused,
+                    guild.id,
+                    guild.name,
+                )
+        except Exception:
+            logger.exception("Failed to pause seasons after leaving guild %s", guild.id)
 
 def main() -> None:
     token = os.environ.get("DISCORD_TOKEN")

@@ -646,6 +646,10 @@ CREATE TABLE public.player_xp_log (
 
 ### C. Sequential Auto-Simulation
 * **`auto_sim_expired_fixtures(...)`**: Scans for expired matches, resolves/creates the journal thread, and runs matches sequentially using the match engine (`run_league_match_simulation`) to avoid rate-limiting.
+* **`resolve_bot_guild(...)`** (`apps/discord_bot/core/guild_resolver.py`): Cache-first guild lookup with `fetch_guild` fallback; distinguishes confirmed unreachable (NotFound/Forbidden) from transient 429/5xx.
+* **`pause_season_if_guild_unreachable(...)`**: Sets `league_seasons.status = paused` for active/registration seasons when the bot cannot reach the guild; deduped logging per process boot.
+* **`on_guild_remove`**: Pauses active/registration seasons for the departed guild via `pause_seasons_for_guild`.
+* **`safe_defer(...)`** (`apps/discord_bot/core/view_helpers.py`): Interaction defer with 429 backoff; used by `ensure_registered` and surfaced via `@tree.error` for uncaught command failures.
 
 ### D. Conclude Season Flow (`admin_end_season(...)`)
 1. Marks the active season completed.
@@ -1542,7 +1546,7 @@ One thread per anchor message (Discord limit). Flow: announcement → anchor →
                     apply_card_xp (per card, daily cap)
 ```
 
-**Refactor strategy:** Extract shared `apply_bot_match_rewards()` / `apply_friendly_match_rewards()` in `apps/discord_bot/core/match_rewards.py` (new thin module) mirroring `league_rewards.py` — avoid duplicating payout logic inside `battle_cog`.
+**Refactor strategy:** `apply_bot_match_rewards()` lives in `apps/discord_bot/core/match_rewards.py` (parallel to `league_rewards.py`). **Jul 2026 update:** friendly matches reverted to US-18 sandbox — no `apply_friendly_human_rewards`; post-match writes `friendly_match_logs` only.
 
 ### C. Schema & RPC (`035_match_result_schema_fix.sql`)
 
@@ -1585,9 +1589,9 @@ Extend `verify_required_schema.sql`:
 
 | File | Change |
 |------|--------|
-| `apps/discord_bot/core/match_rewards.py` | **New.** `apply_bot_match_rewards()`, `apply_friendly_human_rewards()` — parallel to `league_rewards.py` |
+| `apps/discord_bot/core/match_rewards.py` | `apply_bot_match_rewards()` only (friendly sandbox — no payout helper) |
 | `apps/discord_bot/cogs/battle_cog.py` | Bot path: defer at command entry; call `match_rewards`; remove direct `players.update` coins/energy; remove flat XP; remove debug log block |
-| `apps/discord_bot/cogs/battle_cog.py` | Friendly path: defer; grant XP via `match_rewards`; remove standalone `tick_evolution_match_progress` (RPC handles it) |
+| `apps/discord_bot/cogs/battle_cog.py` | Friendly path: defer; **no** economy/XP/stats; `friendly_match_logs` + `complete_run` only |
 | `apps/discord_bot/cogs/store_cog.py` | Replace UPDATE+INSERT with `claim_daily_pack` RPC |
 | `apps/discord_bot/cogs/onboarding_cog.py` | Defer before DB on `/register` new-user path |
 | `apps/discord_bot/cogs/league_cog.py` | Remove debug log; add `@app_commands.check(ensure_registered)` on hub |
@@ -1664,7 +1668,7 @@ async def apply_bot_match_rewards(db, *, player_row, cards, result_str, ...):
 |---|--------|----------|
 | 1 | `/battle bot` via slash (not just hub button) | Responds within 3s; deducts 20⚡; coins in ledger |
 | 2 | Play bot match to completion | Per-card XP varies; no flat 15 in logs |
-| 3 | `/battle friendly` challenge + play | Both managers get XP; winner gets friendly coins |
+| 3 | `/battle friendly` challenge + play | Free — no energy; no coins/XP/stats; result in `friendly_match_logs` |
 | 4 | `/store` claim pack | 5 cards; double-click does not burn cooldown on failure |
 | 5 | League matchday within 6h | One DM per manager per matchday |
 | 6 | Monday 00:00 UTC (or admin trigger) | `league_points` reset; `global_lp` unchanged |

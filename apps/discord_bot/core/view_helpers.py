@@ -1,7 +1,51 @@
 # apps/discord_bot/core/view_helpers.py
 from __future__ import annotations
 
+import asyncio
+import logging
+
 import discord
+
+from apps.discord_bot.embeds.common_embeds import error_embed
+
+logger = logging.getLogger(__name__)
+
+_RATE_LIMIT_USER_MSG = (
+    "Discord is temporarily rate-limiting requests. Please try again in a minute."
+)
+
+
+async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = True) -> bool:
+    """Defer an interaction with 429 backoff; return False if ack could not be sent."""
+    if interaction.response.is_done():
+        return True
+
+    for attempt in range(3):
+        try:
+            await interaction.response.defer(ephemeral=ephemeral)
+            return True
+        except discord.HTTPException as exc:
+            if exc.status == 429 and attempt < 2:
+                await asyncio.sleep(float(getattr(exc, "retry_after", 2) or 2))
+                continue
+            logger.warning(
+                "defer failed for user %s (HTTP %s, attempt %s)",
+                getattr(interaction.user, "id", "?"),
+                exc.status,
+                attempt + 1,
+            )
+            break
+
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                embed=error_embed(_RATE_LIMIT_USER_MSG),
+                ephemeral=True,
+            )
+            return False
+    except discord.HTTPException:
+        logger.warning("Could not send rate-limit fallback to user %s", interaction.user.id)
+    return False
 
 
 def set_view_controls_disabled(view: discord.ui.View, *, disabled: bool) -> None:
