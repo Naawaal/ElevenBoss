@@ -1268,3 +1268,14 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **GIVEN** match result scoring,
 - **THEN** all W/D/L and LP formulas live in `packages/leagues/leagues/match_points.py` (single source of truth).
 
+### US-36: Energy Cost Visibility Transparency
+
+> **As a** football club manager,
+> **I want** a standardized, highly visible warning before executing any action that consumes energy,
+> **So that** I am never surprised when my action energy depletes.
+
+**Acceptance Criteria:**
+- **AC-36a:** Any embed that contains interactive buttons for an action that costs energy (e.g., Bot Matches, League Matches, Training Drills, Evolutions) must include a standardized footer text: \⚡ Energy cost applies\.
+- **AC-36b:** Where applicable, Discord UI buttons that trigger an energy-consuming action should append the ⚡ emoji to the button label (e.g., \[🤖 Bot Battle ⚡]\).
+- **AC-36c:** These UI indicators must pull the dynamic cost configuration from the game_config (via get_game_config_int) so the UI stays synchronized with any backend economy rebalancing.
+

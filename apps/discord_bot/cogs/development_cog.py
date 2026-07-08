@@ -261,6 +261,7 @@ async def show_training_menu(interaction: discord.Interaction, owner_id: int) ->
         ),
         color=0x00FF87,
     )
+    embed.set_footer(text="⚡ Energy cost applies")
     if not eligible_players:
         embed.add_field(
             name="No Eligible Players",
@@ -366,7 +367,7 @@ class StatDrillView(discord.ui.View):
             self.add_item(self.drill_select)
 
             self.run_btn = discord.ui.Button(
-                style=discord.ButtonStyle.success, label="Run Drill", disabled=True, row=2
+                style=discord.ButtonStyle.success, label="Run Drill ⚡", disabled=True, row=2
             )
             self.run_btn.callback = self.run_drill_callback
             self.add_item(self.run_btn)
@@ -840,6 +841,8 @@ async def show_club_evolutions_hub(interaction: discord.Interaction, owner_id: i
         ]
         embed.add_field(name="Recently Completed", value="\n".join(hist_lines), inline=False)
 
+    embed.set_footer(text="⚡ Energy cost applies")
+
     view = ClubEvolutionsHubView(owner_id, active, status)
     await edit_ephemeral_hub_message(interaction, embed, view)
 
@@ -854,7 +857,7 @@ class ClubEvolutionsHubView(discord.ui.View):
         can_start = bool(self.hub_status.get("can_start")) and len(active_evos) < MAX_ACTIVE_EVOLUTIONS
         start_btn = discord.ui.Button(
             style=discord.ButtonStyle.success,
-            label="Start New Evolution",
+            label="Start New Evolution ⚡",
             row=0,
             disabled=not can_start,
         )
@@ -995,6 +998,8 @@ async def show_evols_menu(interaction: discord.Interaction, owner_id: int, prese
         )
         if gate:
             embed.add_field(name="Cannot Start", value=gate, inline=False)
+
+    embed.set_footer(text="⚡ Energy cost applies")
 
     view = EvolutionsSubView(
         owner_id, card, evo, roster, completed_tracks, hub_status=hub_status, start_blocked=bool(gate)

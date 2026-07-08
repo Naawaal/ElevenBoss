@@ -250,12 +250,9 @@ class StarterSquad(BaseModel):
   - `apps/discord_bot/cogs/store_cog.py` (refill copy)
 - Ensure drill XP previews in `/development` use the same base XP values as the RPC (`drill_basic_xp`, `drill_advanced_xp`) so UI matches results.
 
-### C. Debugging tool: `/debug energy`
+### C. Ops tuning validation (no Discord command)
 
-- Add owner/admin-only command `/debug energy`:
-  - Shows effective `game_config` values for energy regen/max, match/drill costs, refill costs/cap.
-  - Includes “minutes-to-full” computations for a given current energy.
-  - Purpose is safe tuning validation; no mutation.
+- Operators validate rebalance values via Supabase `game_config` queries or `scratch/check_migration_046.py` — no `/debug` slash command.
 
 ### D. Test plan
 
@@ -1883,4 +1880,16 @@ See `spec.md` US-31 / US-32 for acceptance criteria.
 | `scheduler_jobs.py` | `regen_pool_job` Monday 00:00 UTC |
 
 **Terminology:** Division Rank (`league_points`), Global LP (`global_lp`), Season Pts (fixtures) — never "league pts" without qualifier.
+
+## 23. Energy Cost Visibility (US-36)
+
+### A. UI Standardization Updates
+- **Embed Footers:** Update the rror_embed, success_embed, and specific hub embeds (ArenaHubView, DevelopmentHubView, Match Ticket) in pps/discord_bot/embeds/common_embeds.py (or directly within the cogs) to append ⚡ Energy cost applies to the mbed.set_footer() text when rendering an actionable view that requires energy.
+- **Button Labels:** 
+  - In attle_cog.py (ArenaHubView): Update the Bot Battle button label to include ⚡.
+  - In development_cog.py (TrainingSubView, EvolutionsSubView): Ensure the Start Drill and Start Evolution buttons clearly feature the ⚡ emoji.
+  
+### B. Backend Synchronization
+- Ensure that the text components in development_cog.py and attle_cog.py continue to query get_game_config_int(db, \
+match_energy_bot\, ...) or get_game_config_int(db, \drill_basic_energy\, ...) so that the explicit text descriptions match the actual database configuration.
 

@@ -214,7 +214,7 @@ class ChallengeView(discord.ui.View):
 
 class IMatchOutputHandler(abc.ABC):
     @abc.abstractmethod
-    async def initialize(self, interaction: discord.Interaction | None, home_name: str, away_name: str, matchday: int = None) -> discord.abc.Messageable:
+    async def initialize(self, interaction: discord.Interaction | None, home_name: str, away_name: str, matchday: int = None, energy_cost: int | None = None) -> discord.abc.Messageable:
         """Post initial ticket, optional thread, and return the target channel/thread for posting commentary."""
         pass
 
@@ -241,7 +241,7 @@ class StandardMatchHandler(IMatchOutputHandler):
         self.thread = None
         self.ticker_msg = None
 
-    async def initialize(self, interaction: discord.Interaction | None, home_name: str, away_name: str, matchday: int = None) -> discord.abc.Messageable:
+    async def initialize(self, interaction: discord.Interaction | None, home_name: str, away_name: str, matchday: int = None, energy_cost: int | None = None) -> discord.abc.Messageable:
         if not interaction:
             raise ValueError("StandardMatchHandler requires an active interaction context.")
 
@@ -252,8 +252,13 @@ class StandardMatchHandler(IMatchOutputHandler):
         )
         if matchday:
             ticket_embed.add_field(name="Matchday", value=f"Matchday {matchday}", inline=True)
-        # ponytail: cost differs by match type; avoid hardcoded wrong value in shared handler.
-        ticket_embed.add_field(name="Cost", value="⚡ Energy cost applies", inline=True)
+            
+        if energy_cost is not None and energy_cost > 0:
+            ticket_embed.add_field(name="Cost", value=f"⚡ **{energy_cost}** Action Energy", inline=True)
+        elif energy_cost == 0:
+            ticket_embed.add_field(name="Cost", value="Free Match", inline=True)
+        else:
+            ticket_embed.add_field(name="Cost", value="⚡ Energy cost applies", inline=True)
 
         if interaction.response.is_done():
             self.ticket_msg = await interaction.channel.send(embed=ticket_embed)
@@ -434,7 +439,7 @@ class LeagueMatchHandler(IMatchOutputHandler):
         except Exception:
             logger.debug("Prematch pitch render skipped", exc_info=True)
 
-    async def initialize(self, interaction: discord.Interaction | None, home_name: str, away_name: str, matchday: int = None) -> discord.abc.Messageable:
+    async def initialize(self, interaction: discord.Interaction | None, home_name: str, away_name: str, matchday: int = None, energy_cost: int | None = None) -> discord.abc.Messageable:
         return self.commentary_thread
 
     async def start_match(self, target: discord.abc.Messageable, home_name: str, away_name: str, touchline_view: discord.ui.View | None) -> None:
@@ -1069,7 +1074,7 @@ class ArenaHubView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(style=discord.ButtonStyle.danger, label="🤖 Bot Battle", custom_id="arena_bot_battle")
+    @discord.ui.button(style=discord.ButtonStyle.danger, label="🤖 Bot Battle ⚡", custom_id="arena_bot_battle")
     async def bot_battle_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Defer ephemeral button click response
         await interaction.response.defer(ephemeral=True)
@@ -1112,6 +1117,7 @@ class BattleCog(commands.Cog):
             ),
             color=0x00FF87
         )
+        embed.set_footer(text="⚡ Energy cost applies")
         view = ArenaHubView(self, interaction.user.id)
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
@@ -1292,7 +1298,7 @@ class BattleCog(commands.Cog):
             handler = StandardMatchHandler(self.bot, league_mode=False)
 
             # Initialize target channel
-            target = await handler.initialize(interaction, player["club_name"], opp_name)
+            target = await handler.initialize(interaction, player["club_name"], opp_name, energy_cost=needed)
 
             sim_seed = generate_sim_seed()
             run_row = await create_ephemeral_run(
