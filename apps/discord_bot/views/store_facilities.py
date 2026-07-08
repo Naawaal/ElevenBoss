@@ -45,12 +45,6 @@ def _upgrade_blocked_reason(player: dict, facility_key: str) -> str | None:
     return None
 
 
-def facilities_embed(player: dict) -> discord.Embed:
-    youth_lv = int(player.get("youth_academy_level", 1))
-    tg_lv = int(player.get("training_ground_level", 1))
-    youth_tier = youth_academy_tier(youth_lv)
-    tg_bonus = training_ground_drill_xp_bonus(tg_lv)
-
 def _next_upgrade_line(player: dict, facility_key: str) -> str:
     level_key = "youth_academy_level" if facility_key == "youth_academy" else "training_ground_level"
     level = int(player.get(level_key, 1))
@@ -66,20 +60,47 @@ def _next_upgrade_line(player: dict, facility_key: str) -> str:
         line += f"\n⚠️ {block}"
     return line
 
+
+def _youth_next_preview(level: int) -> str:
+    if level >= FACILITY_MAX_LEVEL:
+        return ""
+    nxt = youth_academy_tier(level + 1)
+    return (
+        f"After upgrade: OVR **{nxt.ovr_min}–{nxt.ovr_max}** · POT cap **{nxt.pot_max}** · "
+        f"Gem **{int(nxt.gem_chance * 100)}%**\n"
+    )
+
+
+def _training_next_preview(level: int) -> str:
+    if level >= FACILITY_MAX_LEVEL:
+        return ""
+    bonus = training_ground_drill_xp_bonus(level + 1)
+    return f"After upgrade: **+{bonus}** bonus drill XP per drill\n"
+
+
+def facilities_embed(player: dict) -> discord.Embed:
+    youth_lv = int(player.get("youth_academy_level", 1))
+    tg_lv = int(player.get("training_ground_level", 1))
+    youth_tier = youth_academy_tier(youth_lv)
+    tg_bonus = training_ground_drill_xp_bonus(tg_lv)
+
     embed = discord.Embed(
         title="🏗️ Club Facilities",
         description=(
-            "Optional long-term coin investments. **Level 1 is free for everyone** — "
-            "upgrades improve future youth intake and drill XP.\n\n"
-            f"🪙 **Balance**: `{int(player.get('coins', 0)):,}` coins"
+            "Optional long-term coin investments. **Level 1 is free for everyone.**\n"
+            f"🪙 **Balance**: `{int(player.get('coins', 0)):,}` coins\n"
+            "Max **1 upgrade per UTC week** · costs **750 / 2k / 5k / 12k** per step"
         ),
         color=0x00FF87,
     )
     embed.add_field(
         name=f"🌱 Youth Academy — Level {youth_lv}/{FACILITY_MAX_LEVEL}",
         value=(
-            f"Intake POT cap **{youth_tier.pot_max}** · OVR **{youth_tier.ovr_min}–{youth_tier.ovr_max}** · "
+            "Improves your **weekly youth intake** (Monday UTC prospects join your roster). "
+            "Does **not** affect daily gacha packs.\n"
+            f"**Now:** OVR **{youth_tier.ovr_min}–{youth_tier.ovr_max}** · POT cap **{youth_tier.pot_max}** · "
             f"Gem chance **{int(youth_tier.gem_chance * 100)}%**\n"
+            + _youth_next_preview(youth_lv)
             + _next_upgrade_line(player, "youth_academy")
         ),
         inline=False,
@@ -87,10 +108,16 @@ def _next_upgrade_line(player: dict, facility_key: str) -> str:
     embed.add_field(
         name=f"🏋️ Training Ground — Level {tg_lv}/{FACILITY_MAX_LEVEL}",
         value=(
-            f"Drill XP bonus **+{tg_bonus}** per drill (L1 = today)\n"
+            "Adds flat **bonus XP** to every stat drill in `/development` "
+            "(L1 = baseline, no bonus).\n"
+            f"**Now:** **+{tg_bonus}** bonus drill XP per drill\n"
+            + _training_next_preview(tg_lv)
             + _next_upgrade_line(player, "training_ground")
         ),
         inline=False,
+    )
+    embed.set_footer(
+        text="OVR = current rating · POT = growth ceiling · Gem = rare high-potential prospect"
     )
     return embed
 
