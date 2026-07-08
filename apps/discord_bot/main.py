@@ -49,9 +49,24 @@ def _agent_debug(hypothesis_id: str, location: str, message: str, data: dict | N
 # does not kill the process while Cloudflare 1015 cools down on shared IPs.
 _render_health_site = None
 _render_health_runner = None
+_login_attempts_made = 0
 
-# Backoff seconds between Discord login attempts after Cloudflare 1015 / HTTP 429.
-_LOGIN_RETRY_DELAYS = (30, 60, 120, 180, 300, 300, 300, 300)
+# ponytail: Render shared IPs can stay Cloudflare-banned for 30+ min; short retries
+# extend the ban. Override via DISCORD_LOGIN_INITIAL_DELAY_SECONDS / DISCORD_LOGIN_RETRY_DELAYS_SECONDS.
+def _login_retry_delays() -> tuple[int, ...]:
+    raw = os.environ.get("DISCORD_LOGIN_RETRY_DELAYS_SECONDS")
+    if raw:
+        return tuple(int(part.strip()) for part in raw.split(",") if part.strip())
+    if os.environ.get("RENDER"):
+        return (600, 900, 1200, 1800, 1800, 3600)
+    return (30, 60, 120, 180, 300, 300, 300, 300)
+
+
+def _initial_login_delay() -> int:
+    raw = os.environ.get("DISCORD_LOGIN_INITIAL_DELAY_SECONDS")
+    if raw is not None and raw != "":
+        return max(0, int(raw))
+    return 600 if os.environ.get("RENDER") else 0
 
 
 async def _start_render_health_server(port: int) -> None:
@@ -107,10 +122,12 @@ def _is_login_rate_limit(exc: discord.HTTPException) -> bool:
         "1015" in body
         or "rate limited" in body.lower()
         or "cloudflare" in body.lower()
+        or body.lstrip().startswith("<!doctype html")
     )
 
 
 async def _run_bot_with_login_retry(token: str) -> None:
+    global _login_attempts_made
     try:
         port = os.environ.get("PORT")
         if port:
@@ -119,8 +136,26 @@ async def _run_bot_with_login_retry(token: str) -> None:
             except ValueError:
                 logger.error("Invalid PORT environment variable value: %s", port)
 
+        retry_delays = _login_retry_delays()
+        initial_delay = _initial_login_delay()
+        if initial_delay > 0:
+            logger.info(
+                "Waiting %ds before first Discord login (Render Cloudflare cooldown).",
+                initial_delay,
+            )
+            # #region agent log
+            _agent_debug(
+                "F",
+                "main.py:_run_bot_with_login_retry",
+                "initial_login_delay",
+                {"seconds": initial_delay},
+            )
+            # #endregion
+            await asyncio.sleep(initial_delay)
+
         last_exc: discord.HTTPException | None = None
-        for attempt, delay in enumerate(_LOGIN_RETRY_DELAYS, start=1):
+        for attempt, delay in enumerate(retry_delays, start=1):
+            _login_attempts_made = attempt
             bot = ElevenBossBot()
             try:
                 async with bot:
@@ -138,19 +173,19 @@ async def _run_bot_with_login_retry(token: str) -> None:
                     "discord_login_rate_limited",
                     {
                         "attempt": attempt,
-                        "max_attempts": len(_LOGIN_RETRY_DELAYS),
+                        "max_attempts": len(retry_delays),
                         "retry_in_seconds": delay,
                         "cloudflare_1015": "1015" in body_preview,
                     },
                 )
                 # #endregion
-                if attempt >= len(_LOGIN_RETRY_DELAYS):
+                if attempt >= len(retry_delays):
                     break
                 logger.warning(
                     "Discord login rate-limited (attempt %d/%d); retrying in %ds. "
                     "Health server stays up so Render does not restart-loop.",
                     attempt,
-                    len(_LOGIN_RETRY_DELAYS),
+                    len(retry_delays),
                     delay,
                 )
                 await asyncio.sleep(delay)
@@ -161,7 +196,7 @@ async def _run_bot_with_login_retry(token: str) -> None:
                 "B",
                 "main.py:_run_bot_with_login_retry",
                 "login_retries_exhausted",
-                {"attempts": len(_LOGIN_RETRY_DELAYS)},
+                {"attempts": len(retry_delays)},
             )
             # #endregion
             raise last_exc
@@ -333,6 +368,14 @@ class ElevenBossBot(commands.Bot):
 
     async def on_ready(self) -> None:
         logger.info(f"Logged in as {self.user.name} ({self.user.id})")
+        # #region agent log
+        _agent_debug(
+            "A",
+            "main.py:on_ready",
+            "discord_login_succeeded",
+            {"attempt": _login_attempts_made},
+        )
+        # #endregion
         
         # Check if we should sync to a specific guild for local development
         guild_id = os.environ.get("GUILD_ID")
