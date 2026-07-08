@@ -55,9 +55,9 @@ def test_rarity_caps_respected() -> None:
             assert pot <= cap
 
 
-def test_dynamic_boost_capped_at_base_plus_five() -> None:
-    assert apply_dynamic_potential_boost(80, 78, 5) == 83
-    assert apply_dynamic_potential_boost(82, 78, 10) == 83
+def test_dynamic_boost_capped_at_base_plus_ten() -> None:
+    assert apply_dynamic_potential_boost(80, 78, 5) == 85
+    assert apply_dynamic_potential_boost(82, 78, 10) == 88
 
 
 def test_potential_tier_labels() -> None:

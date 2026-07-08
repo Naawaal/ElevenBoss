@@ -23,6 +23,7 @@ class GachaPlayer(BaseModel):
     phy: int = Field(50, ge=0, le=99)
     potential: int = Field(..., ge=1, le=99)
     age: int = Field(25, ge=15, le=45)
+    date_of_birth: str | None = None
 
     class Config:
         populate_by_name = True

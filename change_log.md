@@ -2,6 +2,90 @@
 
 Hey Managers!
 
+## Stat Drills Hotfix
+
+Stat drills were failing for all managers immediately after the age system shipped.
+
+### What changed
+- **Fixed:** age-based XP multipliers now read correctly from game config.
+- **Action:** drills work again under **`/development` → Stat Drills**.
+
+---
+
+## Player Age & Lifecycle (US-31 — Phase A)
+
+Your squad now ages over time — plan around youth development and veteran decline.
+
+### What changed
+- **Date of birth** is stored on every player card; age updates from DOB (shown on `/player-profile` with lifecycle phase: Youth → Early Prime → Late Prime → Veteran → Retiring).
+- **Match & drill XP** scale with age — youth earn more, veterans less.
+- **Weekly aging** runs every **Monday 00:00 UTC**: veterans lose PAC/PHY (and PAS/DEF at 33+), players get a retirement warning at **35**, and auto-retire at **36** (removed from your starting XI).
+- **Contract renewal** blocked at age **35+**; agent sale offers factor in age and potential.
+
+### Age XP multipliers
+
+| Phase | Ages | Match & drill XP |
+|-------|------|------------------|
+| Youth | ≤21 | ×1.50 |
+| Early Prime | 22–26 | ×1.20 |
+| Late Prime | 27–30 | ×1.00 |
+| Veteran | 31–34 | ×0.70 |
+| Retiring | 35+ | ×0.40 |
+
+Training Ground bonus (+0 to +4 flat drill XP) stacks on top — see Club Facilities below.
+
+---
+
+## Youth Academy Intake (US-32 — Phase B)
+
+Every season brings fresh prospects — rebuild without relying only on daily packs.
+
+### What changed
+- **3 youth prospects** (default) arrive each **Monday 00:00 UTC** for every manager (ages 16–19).
+- **L1 Youth Academy baseline:** OVR 50–65, POT 72–82.
+- **Higher Youth Academy levels** (`/store` → Club Facilities) raise intake OVR/POT ceilings and add a small **gem prospect** chance from L2 upward.
+- New intake players join your **roster** — they are **not** auto-assigned to your starting XI.
+- You'll get a **DM** listing the new prospects when DMs are enabled.
+
+---
+
+## Club Facilities (US-33 — Phase C)
+
+Invest coins to improve your academy and training ground over time.
+
+### What changed
+- **`/store` → Club Facilities** — upgrade **Youth Academy** (better weekly intake) or **Training Ground** (flat drill XP bonus).
+- **Youth Academy:** L1 is the baseline band above; higher levels widen OVR/POT ceilings up to roughly **56–69 OVR / 72–94 POT** at L5, with rising gem-prospect odds.
+- **Training Ground:** **L1 +0 … L5 +4** flat bonus drill XP (shown on the Stat Drills hub).
+- **Costs:** 750 / 2,000 / 5,000 / 12,000 coins per level (same all divisions).
+- **Level 1 is free** — upgrades are optional; max **1 upgrade per UTC week**.
+- **L2** requires **5** career matches; **L4** requires **20**.
+
+---
+
+## Scouting Pool / Regen Market (US-34 — Phase D)
+
+When star players retire, youth regens hit the global market.
+
+### What changed
+- Veterans **75+ OVR** who retire each season spawn a **youth regen** on the scouting market (same position, ages 16–19).
+- **`/marketplace` → Search Market** — browse and sign available regens for coins.
+- **Sign cost** is roughly **40% above** what you'd receive selling a similar player to an agent.
+- Listings appear after the **Monday 00:00 UTC** season aging batch (retirements feed the pool).
+
+---
+
+## Monday 00:00 UTC — weekly batch
+
+Several systems fire at the same minute each Monday:
+
+- **Season aging** — stat decline, retirement warnings, auto-retire at 36 (feeds regen listings).
+- **Youth intake** — 3 prospects per manager (independent of aging).
+- **Regen scouting pool** — new Search Market listings from that week's retirements.
+- **Weekly league reset** — division promotions/relegations and Division Rank reset (separate from age).
+
+---
+
 ## Friendly Matches — Free Sandbox (US-18)
 
 Friendly matches are now pure sparring — no cost, no grind rewards.
@@ -63,12 +147,12 @@ Follow-up fixes from the security/economy audit — no player-facing feature cha
 
 ## Match Loop Hardening (US-29)
 
-Bot and friendly matches now use the same economy and XP systems as league play.
+Bot and league matches use economy v2 and per-card match XP. Friendlies are a free sandbox (see US-18 above).
 
 ### What changed
 - **Bot matches** cost **20** ⚡ action energy (was 10 legacy energy) and pay coins through the audited economy ledger.
-- **Per-card match XP** on bot and friendly matches — no more flat +15 XP for everyone.
-- **Friendly matches** grant match XP to both managers' squads; winners earn friendly match coins.
+- **Per-card match XP** on bot and league matches — no more flat +15 XP for everyone.
+- **Friendly matches** spend no energy and grant **no coins, XP, or career record updates**.
 - **Free pack** claims from `/store` are atomic — a failed insert no longer burns your 22h cooldown.
 - **Matchday reminders** send at most one DM per manager per matchday (no hourly spam).
 - Removed leftover debug logging and dead UI stubs from production code.
@@ -184,6 +268,8 @@ Drills grant **XP only** (skill points come from leveling).
 | Basic | Player level 1+ | 100 + 2×OVR | 10 | 30 |
 | Advanced | Player level 10+ | 300 + 3×OVR | 15 | 80 |
 
+*Final drill XP includes the age multiplier and Training Ground bonus (hub preview shows the total).*
+
 **Daily caps:** 5 drills per player card, 20 drills per club (UTC day).
 
 ---
@@ -229,12 +315,13 @@ Retroactive level rewards were scaled (75%, cap 18 per player) for veterans with
 
 | Command | Purpose |
 |---------|---------|
-| `/store` | Daily login bonus + energy refills |
-| `/development` | Drills, fusion, evolutions, skill allocation, claim level rewards |
-| `/profile` | Coins, gems, action energy, records |
-| `/club-finances` | Wallet + wage forecast (wages not auto-deducted) |
-| `/marketplace` | Sell to agent (10/day cap) |
-| `/battle how-it-works` | How NSS uses zone OVR, stats, and variance |
+| `/player-profile` | Card stats, age/lifecycle phase, contract renewal, evolutions |
+| `/store` | Daily login, energy refills, **Club Facilities** upgrades |
+| `/development` | Stat drills (age + TG bonus), fusion, evolutions, skills, claim rewards |
+| `/marketplace` | **Search Market** (regens), **Sell Player** (agent, 10/day) |
+| `/club-finances` | Wallet, wage forecast, facility level summary |
+| `/profile` | Club resources, records, weekly tier progress |
+| `/battle how-it-works` | Match engine transparency |
 
 ---
 

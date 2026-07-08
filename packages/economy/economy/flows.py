@@ -64,9 +64,11 @@ class EconomyConfig:
     daily_login_streak_cap: int = 50
     drill_basic_flat: int = 100
     drill_basic_ovr_mult: int = 2
+    drill_basic_energy: int = 10
     drill_advanced_min_level: int = 10
     drill_advanced_flat: int = 300
     drill_advanced_ovr_mult: int = 3
+    drill_advanced_energy: int = 15
     fusion_coins: int = 200
     energy_refill_costs: tuple[int, ...] = (200, 400, 600)
     match_energy_bot: int = 20
@@ -131,8 +133,8 @@ def drill_cost(ovr: int, player_level: int, cfg: EconomyConfig | None = None) ->
     """Returns (coin_cost, energy_cost)."""
     c = cfg or EconomyConfig()
     if player_level >= c.drill_advanced_min_level:
-        return c.drill_advanced_flat + c.drill_advanced_ovr_mult * ovr, 15
-    return c.drill_basic_flat + c.drill_basic_ovr_mult * ovr, 10
+        return c.drill_advanced_flat + c.drill_advanced_ovr_mult * ovr, c.drill_advanced_energy
+    return c.drill_basic_flat + c.drill_basic_ovr_mult * ovr, c.drill_basic_energy
 
 
 def evolution_start_cost(ovr: int, flat: int = 500, ovr_mult: int = 5, energy: int = 25) -> tuple[int, int]:

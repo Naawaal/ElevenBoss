@@ -1,6 +1,23 @@
 # packages/player_engine/player_engine/__init__.py
 from __future__ import annotations
 
+from .age_manager import (
+    DEFAULT_LIFECYCLE,
+    LifecyclePhase,
+    age_from_dob,
+    apply_xp_age_multiplier,
+    can_renew_contract,
+    dob_from_age,
+    format_lifecycle_display,
+    lifecycle_phase,
+    lifecycle_phase_emoji,
+    lifecycle_phase_label,
+    xp_multiplier,
+    yearly_stat_decline,
+)
+from .player_factory import create_player_card, roll_creation_age
+from .youth_intake import generate_youth_intake_cards
+from .regen_pool import generate_regen_from_retired
 from .config import GameConfig
 from .generated_player import GeneratedPlayer
 from .potential import (
@@ -77,6 +94,22 @@ from .evolution_tracks import (
 
 __all__ = [
     "GameConfig",
+    "DEFAULT_LIFECYCLE",
+    "LifecyclePhase",
+    "age_from_dob",
+    "apply_xp_age_multiplier",
+    "can_renew_contract",
+    "create_player_card",
+    "dob_from_age",
+    "format_lifecycle_display",
+    "lifecycle_phase",
+    "lifecycle_phase_emoji",
+    "lifecycle_phase_label",
+    "roll_creation_age",
+    "generate_youth_intake_cards",
+    "generate_regen_from_retired",
+    "xp_multiplier",
+    "yearly_stat_decline",
     "RARITY_POT_CAPS",
     "GeneratedPlayer",
     "apply_dynamic_potential_boost",

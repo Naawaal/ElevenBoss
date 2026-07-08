@@ -8,6 +8,7 @@ from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.core.api_errors import api_error_message
+from apps.discord_bot.core.card_payload import effective_card_age
 from apps.discord_bot.core.drill_rpc import parse_stat_drill_result
 from apps.discord_bot.core.select_helpers import rebuild_select_options
 from apps.discord_bot.core.view_helpers import (
@@ -40,7 +41,7 @@ from player_engine import (
 
 from apps.discord_bot.middleware.match_lock import assert_not_in_match
 from apps.discord_bot.views.level_reward_claim import claim_level_rewards, unclaimed_reward_count
-from apps.discord_bot.core.economy_rpc import format_action_energy_status, sync_action_energy
+from apps.discord_bot.core.economy_rpc import format_action_energy_status, sync_action_energy, get_game_config_int
 from economy.flows import drill_cost, EconomyConfig
 
 logger = logging.getLogger(__name__)
@@ -218,32 +219,45 @@ class DevelopmentHubView(discord.ui.View):
 
 async def show_training_menu(interaction: discord.Interaction, owner_id: int) -> None:
     db = await get_client()
-    player_res = await db.table("players").select("daily_drill_count").eq("discord_id", owner_id).maybe_single().execute()
+    player_res = await db.table("players").select("daily_drill_count, training_ground_level").eq("discord_id", owner_id).maybe_single().execute()
     energy_row = await sync_action_energy(db, owner_id)
     training_energy = energy_row.get("action_energy", energy_row.get("training_energy", 0))
+    regen_per_min = float(energy_row.get("regen_per_min") or (1 / 6))
     daily_count = player_res.data.get("daily_drill_count", 0) if player_res and player_res.data else 0
+    tg_level = int((player_res.data or {}).get("training_ground_level", 1))
     daily_limit = 20
+
+    # Config-driven drill tier values (mirror process_stat_drill).
+    adv_min_level = await get_game_config_int(db, "drill_advanced_min_level", 10)
+    basic_energy_cfg = await get_game_config_int(db, "drill_basic_energy", 10)
+    adv_energy_cfg = await get_game_config_int(db, "drill_advanced_energy", 15)
+    basic_xp_cfg = await get_game_config_int(db, "drill_basic_xp", 30)
+    adv_xp_cfg = await get_game_config_int(db, "drill_advanced_xp", 80)
 
     roster_res = await db.table("player_cards").select("*").eq("owner_id", owner_id).order("overall", desc=True).execute()
     roster = roster_res.data or []
 
     evo_res = await db.table("active_evolutions").select("card_id").eq("status", "active").execute()
     evo_ids = {e["card_id"] for e in (evo_res.data or [])}
-    eligible_players = [p for p in roster if p["id"] not in evo_ids]
+    eligible_players = [p for p in roster if p["id"] not in evo_ids and not p.get("is_retired")]
 
     cfg = EconomyConfig()
-    basic_coins, basic_energy = drill_cost(60, 5, cfg)
-    adv_coins, adv_energy = drill_cost(60, 12, cfg)
+    basic_coins, _basic_energy = drill_cost(60, 5, cfg)
+    adv_coins, _adv_energy = drill_cost(60, 12, cfg)
+    # Use config-driven energy in UI; package defaults may drift from DB.
+    basic_energy = basic_energy_cfg
+    adv_energy = adv_energy_cfg
 
     embed = discord.Embed(
         title="🏋️ Stat Training Drills",
         description=(
             "Spend **action energy** and coins to earn **player XP**. "
             "Level-ups grant **skill points** — allocate them under **Allocate Skills**.\n\n"
-            f"⚡ **Action Energy**: `{training_energy}/100` *(+1 per 6 min)*\n"
+            f"🏋️ **Training Ground L{tg_level}** — +{max(0, tg_level - 1)} bonus drill XP\n"
+            f"⚡ **Action Energy**: `{training_energy}/100` *(+1 per {int(round(1 / regen_per_min))} min)*\n"
             f"📅 **Daily Drills**: `{daily_count}/{daily_limit}`\n"
             f"💪 **Basic drill** (Lv 1+): `{basic_energy}⚡` + `{basic_coins}` coins @ 60 OVR\n"
-            f"💪 **Advanced drill** (Lv 10+): `{adv_energy}⚡` + `{adv_coins}` coins @ 60 OVR"
+            f"💪 **Advanced drill** (Lv {adv_min_level}+): `{adv_energy}⚡` + `{adv_coins}` coins @ 60 OVR"
         ),
         color=0x00FF87,
     )
@@ -254,16 +268,46 @@ async def show_training_menu(interaction: discord.Interaction, owner_id: int) ->
             inline=False,
         )
 
-    await edit_ephemeral_hub_message(interaction, embed, StatDrillView(owner_id, eligible_players[:25]))
+    await edit_ephemeral_hub_message(
+        interaction,
+        embed,
+        StatDrillView(
+            owner_id,
+            eligible_players[:25],
+            tg_level,
+            adv_min_level=adv_min_level,
+            basic_energy=basic_energy_cfg,
+            adv_energy=adv_energy_cfg,
+            basic_xp_base=basic_xp_cfg,
+            adv_xp_base=adv_xp_cfg,
+        ),
+    )
 
 
 class StatDrillView(discord.ui.View):
-    def __init__(self, owner_id: int, eligible_players: list[dict]) -> None:
+    def __init__(
+        self,
+        owner_id: int,
+        eligible_players: list[dict],
+        training_ground_level: int = 1,
+        *,
+        adv_min_level: int = 10,
+        basic_energy: int = 10,
+        adv_energy: int = 15,
+        basic_xp_base: int = 30,
+        adv_xp_base: int = 80,
+    ) -> None:
         super().__init__(timeout=900)
         self.owner_id = owner_id
         self.selected_card_id: str | None = None
         self.selected_drill: str | None = None
         self.eligible_players = eligible_players
+        self.training_ground_level = training_ground_level
+        self.adv_min_level = int(adv_min_level)
+        self.basic_energy = int(basic_energy)
+        self.adv_energy = int(adv_energy)
+        self.basic_xp_base = int(basic_xp_base)
+        self.adv_xp_base = int(adv_xp_base)
         self._build_items()
 
     def _build_items(self) -> None:
@@ -293,19 +337,20 @@ class StatDrillView(discord.ui.View):
 
             drill_options = []
             for drill_id, name in STAT_DRILLS.items():
-                spec = drill_spec(drill_id)
-                if not spec:
-                    continue
-                unlocked = drill_unlocked(drill_id, player_level)
-                xp_preview = drill_xp_reward(spec.xp_base, player_level)
+                tier_xp_base = self.adv_xp_base if player_level >= self.adv_min_level else self.basic_xp_base
+                tier_energy = self.adv_energy if player_level >= self.adv_min_level else self.basic_energy
+                xp_preview = drill_xp_reward(
+                    tier_xp_base,
+                    player_level,
+                    age=effective_card_age(selected or {}),
+                    training_ground_level=self.training_ground_level,
+                )
                 drill_options.append(
                     discord.SelectOption(
                         label=name,
                         value=drill_id,
                         description=(
-                            f"+{xp_preview} XP · {spec.energy}⚡"
-                            if unlocked
-                            else f"🔒 Requires Level {spec.min_level}"
+                            f"+{xp_preview} XP · {tier_energy}⚡"
                         ),
                         default=(self.selected_drill == drill_id),
                     )
@@ -384,6 +429,32 @@ class StatDrillView(discord.ui.View):
                 "dri_dribble": "dri", "def_tackling": "def", "phy_strength": "phy",
             }.get(self.selected_drill, "pac")
 
+            # #region agent log
+            import json as _json
+            import time as _time
+            _rpc_payload = {
+                "p_owner_id": self.owner_id,
+                "p_card_id": self.selected_card_id,
+                "p_drill_id": self.selected_drill,
+            }
+            try:
+                with open("debug-4da5fa.log", "a", encoding="utf-8") as _df:
+                    _df.write(_json.dumps({
+                        "sessionId": "4da5fa",
+                        "runId": "pre-fix",
+                        "hypothesisId": "A",
+                        "location": "development_cog.py:run_drill_callback",
+                        "message": "pre process_stat_drill rpc",
+                        "data": {
+                            "rpc_payload": {k: str(v) for k, v in _rpc_payload.items()},
+                            "card_age": effective_card_age(selected_p),
+                        },
+                        "timestamp": int(_time.time() * 1000),
+                    }) + "\n")
+            except Exception:
+                pass
+            # #endregion
+
             res = await db.rpc("process_stat_drill", {
                 "p_owner_id": self.owner_id,
                 "p_card_id": self.selected_card_id,
@@ -391,20 +462,6 @@ class StatDrillView(discord.ui.View):
             }).execute()
             result = res.data or {}
             parsed = parse_stat_drill_result(result)
-            # #region agent log
-            import json as _json
-            import time as _time
-            with open("debug-098b89.log", "a", encoding="utf-8") as _df:
-                _df.write(_json.dumps({
-                    "sessionId": "098b89",
-                    "runId": "drill-fix",
-                    "hypothesisId": "A",
-                    "timestamp": int(_time.time() * 1000),
-                    "location": "development_cog.py:run_drill_callback",
-                    "message": "stat_drill_rpc_parsed",
-                    "data": {"raw_keys": sorted(result.keys()), "parsed": parsed},
-                }) + "\n")
-            # #endregion
             xp_gained = parsed["xp_gained"]
             levels = parsed["levels_gained"]
             skill_pts = parsed["skill_points_granted"]
@@ -426,7 +483,40 @@ class StatDrillView(discord.ui.View):
             await interaction.followup.send(embed=success_embed(msg), ephemeral=True)
             await show_training_menu(interaction, self.owner_id)
 
+            # #region agent log
+            try:
+                with open("debug-4da5fa.log", "a", encoding="utf-8") as _df:
+                    _df.write(_json.dumps({
+                        "sessionId": "4da5fa",
+                        "runId": "pre-fix",
+                        "hypothesisId": "A",
+                        "location": "development_cog.py:run_drill_callback",
+                        "message": "process_stat_drill success",
+                        "data": {"xp_gained": xp_gained, "energy_spent": energy_spent},
+                        "timestamp": int(_time.time() * 1000),
+                    }) + "\n")
+            except Exception:
+                pass
+            # #endregion
+
         except Exception as exc:
+            # #region agent log
+            try:
+                import json as _json
+                import time as _time
+                with open("debug-4da5fa.log", "a", encoding="utf-8") as _df:
+                    _df.write(_json.dumps({
+                        "sessionId": "4da5fa",
+                        "runId": "pre-fix",
+                        "hypothesisId": "A",
+                        "location": "development_cog.py:run_drill_callback",
+                        "message": "process_stat_drill failed",
+                        "data": {"error": str(exc)[:200]},
+                        "timestamp": int(_time.time() * 1000),
+                    }) + "\n")
+            except Exception:
+                pass
+            # #endregion
             logger.exception("Failed running stat drill.")
             set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)

@@ -6,6 +6,7 @@ from typing import Any
 
 from player_engine import match_xp_reward
 
+from apps.discord_bot.core.card_payload import effective_card_age
 from apps.discord_bot.core.match_runs import mark_match_xp_applied
 
 MATCH_MINUTES = 90
@@ -54,6 +55,7 @@ def build_process_match_result_rpc(
             assists=assists,
             motm=(name == motm_name),
             result=result,
+            age=effective_card_age(card),
         )
         card_ids.append(card["id"])
         xp_amounts.append(xp)

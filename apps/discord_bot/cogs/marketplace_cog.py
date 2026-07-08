@@ -1,12 +1,11 @@
 # apps/discord_bot/cogs/marketplace_cog.py
 from __future__ import annotations
-import json
 import logging
-import time
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from apps.discord_bot.core.card_payload import effective_card_age
 from economy import GameConfig, generate_agent_offer
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
@@ -14,24 +13,6 @@ from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.middleware.match_lock import assert_not_in_match
 
 logger = logging.getLogger(__name__)
-
-
-def _agent_sale_dbg(location: str, message: str, data: dict, hypothesis_id: str, run_id: str = "pre-fix") -> None:
-    # #region agent log
-    try:
-        with open("debug-22137e.log", "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "sessionId": "22137e",
-                "runId": run_id,
-                "hypothesisId": hypothesis_id,
-                "location": location,
-                "message": message,
-                "data": data,
-                "timestamp": int(time.time() * 1000),
-            }) + "\n")
-    except Exception:
-        pass
-    # #endregion
 
 
 async def show_marketplace_hub(interaction: discord.Interaction, owner_id: int):
@@ -71,9 +52,9 @@ class MarketplaceHubView(discord.ui.View):
     async def sell_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await show_sell_menu(interaction, self.owner_id)
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="🔍 Search Market (Soon)", custom_id="market_search", disabled=True)
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="🔍 Search Market", custom_id="market_search")
     async def search_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        pass
+        await show_scouting_menu(interaction, self.owner_id)
 
     @discord.ui.button(style=discord.ButtonStyle.secondary, label="📋 My Listings (Soon)", custom_id="market_listings", disabled=True)
     async def listings_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -115,29 +96,11 @@ async def show_sell_menu(interaction: discord.Interaction, owner_id: int):
     # 4. Filter eligible players (exclude starting 11, evolutions, active training)
     eligible_players = [
         p for p in roster
-        if p["id"] not in starting_card_ids
+        if not p.get("is_retired")
+        and p["id"] not in starting_card_ids
         and p["id"] not in evo_card_ids
         and p["id"] not in training_card_ids
     ]
-
-    # #region agent log
-    owner_evo_res = await db.table("active_evolutions").select("card_id,status").eq("owner_id", owner_id).execute()
-    owner_evo_rows = owner_evo_res.data or []
-    _agent_sale_dbg(
-        "marketplace_cog.py:show_sell_menu",
-        "sell menu eligibility snapshot",
-        {
-            "owner_id": owner_id,
-            "roster_count": len(roster),
-            "eligible_count": len(eligible_players),
-            "starting_card_ids": sorted(starting_card_ids),
-            "ui_active_evo_card_ids": sorted(evo_card_ids),
-            "training_card_ids": sorted(training_card_ids),
-            "owner_evo_rows": owner_evo_rows,
-        },
-        "A",
-    )
-    # #endregion
 
     embed = discord.Embed(
         title="🤝 Sell Roster Player",
@@ -223,14 +186,21 @@ class SellPlayerSubView(discord.ui.View):
             return
 
         config = GameConfig()
-        offer = generate_agent_offer(selected_player["overall"], selected_player["rarity"], config)
+        card_age = effective_card_age(selected_player)
+        offer = generate_agent_offer(
+            selected_player["overall"],
+            selected_player["rarity"],
+            config,
+            age=card_age,
+            potential=selected_player.get("potential"),
+        )
 
         embed = discord.Embed(
             title="🤝 Transfer Agent Offer",
             description=(
                 f"An agent has made an offer to purchase **{selected_player['name']}**.\n\n"
                 f"**Position**: {selected_player['position']}\n"
-                f"**Rating**: **{selected_player['overall']} OVR**\n"
+                f"**Rating**: **{selected_player['overall']} OVR** · **{card_age} yrs**\n"
                 f"**Rarity**: {selected_player['rarity']}\n\n"
                 f"### Offer: 🪙 **{offer:,} coins**\n"
                 f"*Click the button below to finalize this transaction. This action is irreversible.*"
@@ -250,27 +220,6 @@ class SellPlayerSubView(discord.ui.View):
             if lock_msg:
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
-
-            card_id = self.selected_card["id"] if self.selected_card else None
-            # #region agent log
-            card_evo_res = await db.table("active_evolutions").select("card_id,status,owner_id").eq("card_id", card_id).execute()
-            card_evo_rows = card_evo_res.data or []
-            active_evo_res = await db.table("active_evolutions").select("card_id,status").eq("card_id", card_id).eq("status", "active").execute()
-            _agent_sale_dbg(
-                "marketplace_cog.py:confirm_sale_callback",
-                "confirm sale pre-rpc snapshot",
-                {
-                    "owner_id": self.owner_id,
-                    "card_id": card_id,
-                    "card_name": self.selected_card.get("name") if self.selected_card else None,
-                    "in_eligible_players": any(p["id"] == card_id for p in self.eligible_players),
-                    "eligible_ids": [p["id"] for p in self.eligible_players[:25]],
-                    "card_evo_rows_any_status": card_evo_rows,
-                    "card_active_evo_rows": active_evo_res.data or [],
-                },
-                "A",
-            )
-            # #endregion
 
             res = await db.rpc("process_agent_sale", {
                 "p_club_id": self.owner_id,
@@ -293,21 +242,131 @@ class SellPlayerSubView(discord.ui.View):
             await show_sell_menu(interaction, self.owner_id)
 
         except Exception as e:
-            # #region agent log
-            _agent_sale_dbg(
-                "marketplace_cog.py:confirm_sale_callback",
-                "confirm sale rpc failed",
-                {
-                    "owner_id": self.owner_id,
-                    "card_id": self.selected_card["id"] if self.selected_card else None,
-                    "error_type": type(e).__name__,
-                    "error_message": str(e),
-                },
-                "A",
-            )
-            # #endregion
             logger.exception("Failed executing process_agent_sale RPC.")
             await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
+
+
+# --- SCOUTING POOL / SEARCH MARKET (Phase D) ---
+
+async def show_scouting_menu(interaction: discord.Interaction, owner_id: int) -> None:
+    db = await get_client()
+    pool_res = await (
+        db.table("scouting_pool_players")
+        .select("*")
+        .is_("claimed_by", "null")
+        .order("overall", desc=True)
+        .limit(25)
+        .execute()
+    )
+    listings = pool_res.data or []
+
+    embed = discord.Embed(
+        title="🔍 Scouting Market",
+        description=(
+            "Youth regens listed when veteran players retire from the league.\n"
+            "Select a prospect below to review and sign them to your roster.\n\n"
+            + (f"**{len(listings)}** available listing(s)." if listings else "*No listings right now — check back after season aging.*")
+        ),
+        color=0x00FF87,
+    )
+    view = ScoutingSubView(owner_id, listings, None)
+    if interaction.response.is_done():
+        await interaction.edit_original_response(embed=embed, view=view)
+    else:
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class ScoutingSubView(discord.ui.View):
+    def __init__(self, owner_id: int, listings: list[dict], selected: dict | None) -> None:
+        super().__init__(timeout=900)
+        self.owner_id = owner_id
+        self.listings = listings
+        self.selected = selected
+
+        if listings:
+            options = []
+            for row in listings[:25]:
+                options.append(
+                    discord.SelectOption(
+                        label=row["name"][:100],
+                        description=f"{row['overall']} OVR · {row['position']} · 🪙 {int(row['list_price']):,}",
+                        value=row["id"],
+                        default=(selected and row["id"] == selected["id"]),
+                    )
+                )
+            sel = discord.ui.Select(placeholder="Choose prospect to sign...", options=options, row=0)
+            sel.callback = self.select_callback
+            self.add_item(sel)
+
+        if selected:
+            btn = discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                label=f"Sign Player (🪙 {int(selected['list_price']):,})",
+                row=1,
+            )
+            btn.callback = self.confirm_callback
+            self.add_item(btn)
+
+        back = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Back to Market", row=2)
+        back.callback = self.back_callback
+        self.add_item(back)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This belongs to another manager.", ephemeral=True)
+            return False
+        return True
+
+    async def back_callback(self, interaction: discord.Interaction) -> None:
+        await show_marketplace_hub(interaction, self.owner_id)
+
+    async def select_callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        pool_id = interaction.data["values"][0]
+        picked = next((r for r in self.listings if r["id"] == pool_id), None)
+        if not picked:
+            return
+        embed = discord.Embed(
+            title=f"🔍 {picked['name']}",
+            description=(
+                f"**Position:** {picked['position']}\n"
+                f"**Rating:** {picked['overall']} OVR · **{picked['age']} yrs**\n"
+                f"**Potential:** {picked['potential']} POT · {picked['rarity']}\n\n"
+                f"### Signing fee: 🪙 **{int(picked['list_price']):,} coins**"
+            ),
+            color=0x00FF87,
+        )
+        await interaction.edit_original_response(embed=embed, view=ScoutingSubView(self.owner_id, self.listings, picked))
+
+    async def confirm_callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        if not self.selected:
+            return
+        try:
+            db = await get_client()
+            lock_msg = await assert_not_in_match(db, self.owner_id)
+            if lock_msg:
+                await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
+                return
+
+            price = int(self.selected["list_price"])
+            res = await db.rpc("purchase_scouting_player", {
+                "p_buyer_id": self.owner_id,
+                "p_pool_id": self.selected["id"],
+                "p_expected_price": price,
+            }).execute()
+            data = res.data or {}
+            await interaction.followup.send(
+                embed=success_embed(
+                    f"Signed **{data.get('player_name', self.selected['name'])}** "
+                    f"for **🪙 {data.get('coins_spent', price):,}** coins."
+                ),
+                ephemeral=True,
+            )
+            await show_scouting_menu(interaction, self.owner_id)
+        except Exception as exc:
+            logger.exception("Scouting purchase failed.")
+            await interaction.followup.send(embed=error_embed(str(exc)), ephemeral=True)
 
 
 # --- COG INTERFACE ---

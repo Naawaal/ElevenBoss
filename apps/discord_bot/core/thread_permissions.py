@@ -12,29 +12,14 @@ logger = logging.getLogger(__name__)
 MATCH_THREAD_ARCHIVE_DELAY_SEC = 300.0
 
 
-async def restrict_thread_to_bot_and_reactions(thread: discord.Thread, guild: discord.Guild) -> None:
-    """Disable member messages; allow emoji reactions and bot posts."""
-    try:
-        everyone = guild.default_role
-        await thread.set_permissions(
-            everyone,
-            overwrite=discord.PermissionOverwrite(
-                send_messages=False,
-                send_messages_in_threads=False,
-                add_reactions=True,
-            ),
-        )
+async def restrict_thread_to_bot_and_reactions(thread: discord.Thread, _guild: discord.Guild) -> None:
+    """Lock thread (read-only) and swallow permission errors.
 
-        if guild.me:
-            await thread.set_permissions(
-                guild.me,
-                overwrite=discord.PermissionOverwrite(
-                    send_messages=True,
-                    send_messages_in_threads=True,
-                    add_reactions=True,
-                    manage_threads=True,
-                ),
-            )
+    ponytail: discord thread permission overwrites are inconsistent across API surfaces;
+    locking the thread is the reliable, low-diff behavior we test for.
+    """
+    try:
+        await thread.edit(locked=True)
     except discord.HTTPException:
         logger.debug("Could not set thread permission overwrites for %s", thread.id, exc_info=True)
 

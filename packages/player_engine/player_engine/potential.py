@@ -21,7 +21,7 @@ POSITION_POT_BONUS: Final[dict[str, int]] = {
 
 MIN_POTENTIAL: Final[int] = 40
 MAX_POTENTIAL: Final[int] = 99
-MAX_DYNAMIC_BOOST: Final[int] = 5
+MAX_DYNAMIC_BOOST: Final[int] = 10
 
 
 def generate_potential(
@@ -77,7 +77,7 @@ def apply_dynamic_potential_boost(
     base_potential: int,
     boost: int,
 ) -> int:
-    """Raise current potential after exceptional youth performance (capped at base + 5)."""
+    """Raise current potential after exceptional youth performance (capped at base + 10)."""
     if boost <= 0:
         return current_potential
     ceiling = min(MAX_POTENTIAL, base_potential + MAX_DYNAMIC_BOOST)

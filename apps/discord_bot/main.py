@@ -5,6 +5,7 @@ import json
 import os
 import logging
 import time
+import uuid
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -12,7 +13,7 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from apps.discord_bot.core.thread_manager import ThreadManager
-from apps.discord_bot.core.scheduler_jobs import weekly_league_reset_job, auto_sim_expired_fixtures_job, league_matchday_reminder_job
+from apps.discord_bot.core.scheduler_jobs import weekly_league_reset_job, auto_sim_expired_fixtures_job, league_matchday_reminder_job, season_aging_job, youth_intake_job, regen_pool_job
 
 # Configure logging
 logging.basicConfig(
@@ -43,6 +44,68 @@ def _agent_debug(hypothesis_id: str, location: str, message: str, data: dict | N
     except OSError:
         pass
     logger.info("[DEBUG690a24] %s", json.dumps(payload))
+# #endregion
+
+# #region agent log
+_DEBUG_3F48EC_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "debug-3f48ec.log",
+)
+
+
+def _debug_3f48ec(
+    hypothesis_id: str,
+    location: str,
+    message: str,
+    data: dict | None = None,
+    *,
+    run_id: str = "pre-fix",
+) -> None:
+    payload = {
+        "sessionId": "3f48ec",
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data or {},
+        "timestamp": int(time.time() * 1000),
+    }
+    try:
+        with open(_DEBUG_3F48EC_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload) + "\n")
+    except OSError:
+        pass
+# #endregion
+
+# #region agent log
+_DEBUG_8BE74E_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "debug-8be74e.log",
+)
+
+
+def _debug_8be74e(
+    hypothesis_id: str,
+    location: str,
+    message: str,
+    data: dict | None = None,
+    *,
+    run_id: str = "pre-fix",
+) -> None:
+    payload = {
+        "sessionId": "8be74e",
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data or {},
+        "timestamp": int(time.time() * 1000),
+    }
+    try:
+        with open(_DEBUG_8BE74E_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload) + "\n")
+    except OSError:
+        pass
 # #endregion
 
 # ponytail: module-level health server stays up across login retries so Render
@@ -157,6 +220,18 @@ async def _run_bot_with_login_retry(token: str) -> None:
         for attempt, delay in enumerate(retry_delays, start=1):
             _login_attempts_made = attempt
             bot = ElevenBossBot()
+            # #region agent log
+            _debug_3f48ec(
+                "B",
+                "main.py:_run_bot_with_login_retry",
+                "bot_instance_created",
+                {
+                    "instance_id": bot._instance_id,
+                    "attempt": attempt,
+                    "pid": os.getpid(),
+                },
+            )
+            # #endregion
             try:
                 async with bot:
                     await bot.start(token, reconnect=True)
@@ -213,6 +288,10 @@ intents.members = True  # Required to resolve user metadata / DM
 class ElevenBossBot(commands.Bot):
     def __init__(self) -> None:
         super().__init__(command_prefix="!", intents=intents)
+        self._instance_id = uuid.uuid4().hex[:8]
+        self._setup_hook_count = 0
+        self._ready_count = 0
+        self._commands_synced = False
         self.thread_manager: ThreadManager = ThreadManager(self)
         self.scheduler: AsyncIOScheduler = AsyncIOScheduler(timezone="UTC")
         self.cogs_list = [
@@ -225,18 +304,30 @@ class ElevenBossBot(commands.Bot):
             "apps.discord_bot.cogs.development_cog",
             "apps.discord_bot.cogs.marketplace_cog",
             "apps.discord_bot.cogs.battle_cog",
+            "apps.discord_bot.cogs.debug_cog",
             "apps.discord_bot.cogs.admin_cog",
             "apps.discord_bot.cogs.league_cog",
             "apps.discord_bot.cogs.leaderboard_cog",
         ]
 
     async def setup_hook(self) -> None:
+        self._setup_hook_count += 1
         # #region agent log
         _agent_debug(
             "E",
             "main.py:setup_hook",
             "setup_hook_reached",
             {"discord_login_succeeded": True},
+        )
+        _debug_3f48ec(
+            "D",
+            "main.py:setup_hook",
+            "setup_hook_entered",
+            {
+                "instance_id": self._instance_id,
+                "setup_hook_count": self._setup_hook_count,
+                "pid": os.getpid(),
+            },
         )
         # #endregion
 
@@ -309,6 +400,10 @@ class ElevenBossBot(commands.Bot):
         # Match recovery runs in on_ready once Discord is connected.
 
         # Register and start scheduler jobs
+        # 0. Season aging (Monday 00:00 UTC) — before division reset
+        self.scheduler.add_job(season_aging_job, "cron", day_of_week="mon", hour=0, minute=0, args=[self])
+        self.scheduler.add_job(youth_intake_job, "cron", day_of_week="mon", hour=0, minute=0, args=[self])
+        self.scheduler.add_job(regen_pool_job, "cron", day_of_week="mon", hour=0, minute=0, args=[self])
         # 1. Weekly league reset (Monday 00:00 UTC) — bot Division Rank ladder only
         self.scheduler.add_job(weekly_league_reset_job, "cron", day_of_week="mon", hour=0, minute=0, args=[self])
         # 2. Auto simulation of expired fixtures (every 10 minutes)
@@ -317,6 +412,35 @@ class ElevenBossBot(commands.Bot):
         self.scheduler.add_job(league_matchday_reminder_job, "interval", hours=1, args=[self])
         self.scheduler.start()
         logger.info("APScheduler initialized and jobs started.")
+
+        # #region agent log
+        local_cmds = sorted(
+            getattr(cmd, "qualified_name", getattr(cmd, "name", str(cmd)))
+            for cmd in self.tree.get_commands()
+        )
+        local_dupes = sorted({n for n in local_cmds if local_cmds.count(n) > 1})
+        _debug_3f48ec(
+            "E",
+            "main.py:setup_hook",
+            "local_tree_commands_after_cog_load",
+            {
+                "instance_id": self._instance_id,
+                "command_count": len(local_cmds),
+                "commands": local_cmds,
+            },
+        )
+        _debug_8be74e(
+            "E",
+            "main.py:setup_hook",
+            "local_tree_after_cog_load",
+            {
+                "instance_id": self._instance_id,
+                "setup_hook_count": self._setup_hook_count,
+                "command_count": len(local_cmds),
+                "duplicate_names": local_dupes,
+            },
+        )
+        # #endregion
 
     async def _start_web_server(self, port: int) -> None:
         from aiohttp import web
@@ -367,6 +491,7 @@ class ElevenBossBot(commands.Bot):
         logger.info("Shutdown sequence completed.")
 
     async def on_ready(self) -> None:
+        self._ready_count += 1
         logger.info(f"Logged in as {self.user.name} ({self.user.id})")
         # #region agent log
         _agent_debug(
@@ -375,11 +500,57 @@ class ElevenBossBot(commands.Bot):
             "discord_login_succeeded",
             {"attempt": _login_attempts_made},
         )
+        _debug_3f48ec(
+            "A",
+            "main.py:on_ready",
+            "on_ready_entered",
+            {
+                "instance_id": self._instance_id,
+                "ready_count": self._ready_count,
+                "commands_synced_flag": self._commands_synced,
+                "pid": os.getpid(),
+                "guild_id_env": os.environ.get("GUILD_ID"),
+            },
+        )
         # #endregion
         
         # Check if we should sync to a specific guild for local development
         guild_id = os.environ.get("GUILD_ID")
         try:
+            local_cmds = sorted(
+                getattr(cmd, "qualified_name", getattr(cmd, "name", str(cmd)))
+                for cmd in self.tree.get_commands()
+            )
+            # #region agent log
+            local_dupes = sorted({n for n in local_cmds if local_cmds.count(n) > 1})
+            _debug_3f48ec(
+                "C",
+                "main.py:on_ready",
+                "before_tree_sync",
+                {
+                    "instance_id": self._instance_id,
+                    "ready_count": self._ready_count,
+                    "sync_mode": "guild" if guild_id else "global",
+                    "local_command_count": len(local_cmds),
+                    "local_commands": local_cmds,
+                },
+            )
+            _debug_8be74e(
+                "A",
+                "main.py:on_ready",
+                "sync_decision",
+                {
+                    "instance_id": self._instance_id,
+                    "ready_count": self._ready_count,
+                    "commands_synced_flag": self._commands_synced,
+                    "will_sync": True,
+                    "sync_mode": "guild" if guild_id else "global",
+                    "guild_id_env": guild_id,
+                    "local_duplicate_names": local_dupes,
+                    "pid": os.getpid(),
+                },
+            )
+            # #endregion
             if guild_id:
                 guild = discord.Object(id=int(guild_id))
                 self.tree.copy_global_to(guild=guild)
@@ -389,7 +560,49 @@ class ElevenBossBot(commands.Bot):
                 logger.info("Synchronizing application command tree globally...")
                 synced = await self.tree.sync()
                 logger.info(f"Command tree synchronized globally with {len(synced)} commands.")
+            self._commands_synced = True
+            synced_names = sorted(getattr(cmd, "name", str(cmd)) for cmd in synced)
+            synced_dupes = sorted({n for n in synced_names if synced_names.count(n) > 1})
+            # #region agent log
+            _debug_3f48ec(
+                "A",
+                "main.py:on_ready",
+                "after_tree_sync",
+                {
+                    "instance_id": self._instance_id,
+                    "ready_count": self._ready_count,
+                    "sync_mode": "guild" if guild_id else "global",
+                    "synced_count": len(synced),
+                    "synced_commands": synced_names,
+                },
+            )
+            _debug_8be74e(
+                "C",
+                "main.py:on_ready",
+                "after_tree_sync",
+                {
+                    "instance_id": self._instance_id,
+                    "ready_count": self._ready_count,
+                    "sync_mode": "guild" if guild_id else "global",
+                    "synced_count": len(synced),
+                    "synced_duplicate_names": synced_dupes,
+                    "used_copy_global_to": bool(guild_id),
+                },
+            )
+            # #endregion
         except Exception as e:
+            # #region agent log
+            _debug_3f48ec(
+                "B",
+                "main.py:on_ready",
+                "tree_sync_failed",
+                {
+                    "instance_id": self._instance_id,
+                    "ready_count": self._ready_count,
+                    "error": str(e),
+                },
+            )
+            # #endregion
             logger.error(f"Failed to sync command tree: {e}", exc_info=True)
 
         try:
@@ -432,6 +645,28 @@ def main() -> None:
             "render_instance": os.environ.get("RENDER_INSTANCE_ID"),
             "port": os.environ.get("PORT"),
             "environment": os.environ.get("ENVIRONMENT"),
+        },
+    )
+    _debug_3f48ec(
+        "B",
+        "main.py:main",
+        "process_start",
+        {
+            "pid": os.getpid(),
+            "guild_id_env": os.environ.get("GUILD_ID"),
+            "environment": os.environ.get("ENVIRONMENT"),
+            "render": bool(os.environ.get("RENDER")),
+        },
+    )
+    _debug_8be74e(
+        "B",
+        "main.py:main",
+        "process_start",
+        {
+            "pid": os.getpid(),
+            "guild_id_env": os.environ.get("GUILD_ID"),
+            "environment": os.environ.get("ENVIRONMENT"),
+            "render": bool(os.environ.get("RENDER")),
         },
     )
     # #endregion

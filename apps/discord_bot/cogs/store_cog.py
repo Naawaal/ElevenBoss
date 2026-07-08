@@ -15,9 +15,8 @@ from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.embeds.gacha_embeds import gacha_cooldown_embed, gacha_claim_embed
 from apps.discord_bot.core.economy_rpc import format_action_energy_status, sync_action_energy
 from apps.discord_bot.core.view_helpers import disable_view_on_timeout, set_view_controls_disabled
+from apps.discord_bot.core.card_payload import card_rpc_payload
 from gacha import generate_pack
-
-logger = logging.getLogger(__name__)
 
 
 async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
@@ -83,6 +82,11 @@ async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
             "Claim a free pack of 5 random players. Claimable every 22 hours.\n"
             + ("🟢 Available now!" if gacha_ready else f"⏳ Cooldown: **{gacha_cooldown_str}** remaining.")
         ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🏗️ Club Facilities",
+        value="Upgrade Youth Academy (intake quality) and Training Ground (drill XP bonus).",
         inline=False,
     )
 
@@ -179,25 +183,7 @@ class StoreHubView(discord.ui.View):
         try:
             db = await get_client()
             pack = generate_pack(n=5)
-            cards_payload = [
-                {
-                    "name": p.name,
-                    "position": p.position,
-                    "rarity": p.rarity,
-                    "base_rating": p.base_rating,
-                    "overall": p.overall,
-                    "pac": p.pac,
-                    "sho": p.sho,
-                    "pas": p.pas,
-                    "dri": p.dri,
-                    "def": p.def_stat,
-                    "phy": p.phy,
-                    "potential": p.potential,
-                    "base_potential": p.potential,
-                    "age": p.age,
-                }
-                for p in pack.players
-            ]
+            cards_payload = [card_rpc_payload(p) for p in pack.players]
 
             await db.rpc("claim_daily_pack", {
                 "p_club_id": self.owner_id,
@@ -223,6 +209,12 @@ class StoreHubView(discord.ui.View):
                 embed=error_embed(f"An error occurred while claiming your pack: {err}"),
                 ephemeral=True,
             )
+
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="🏗️ Club Facilities", custom_id="store_facilities", row=1)
+    async def facilities_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        await interaction.response.defer(ephemeral=True)
+        from apps.discord_bot.views.store_facilities import show_facilities
+        await show_facilities(interaction, self.owner_id)
 
     async def on_timeout(self) -> None:
         await disable_view_on_timeout(self)

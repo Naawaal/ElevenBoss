@@ -12,6 +12,34 @@ logger = logging.getLogger(__name__)
 REGEN_PER_MIN = 1 / 6  # 1 energy per 6 minutes
 
 
+async def get_game_config_int(db: Any, key: str, default: int) -> int:
+    """Fetch int config from game_config via RPC, with safe fallback."""
+    try:
+        res = await db.rpc("get_game_config_int", {"p_key": key, "p_default": int(default)}).execute()
+        val = res.data
+        if isinstance(val, (int, float)):
+            return int(val)
+        if isinstance(val, str):
+            return int(val.strip('"'))
+    except Exception:
+        logger.debug("get_game_config_int(%s) failed — defaulting %s", key, default, exc_info=True)
+    return int(default)
+
+
+async def get_game_config_numeric(db: Any, key: str, default: float) -> float:
+    """Fetch numeric config from game_config via RPC, with safe fallback."""
+    try:
+        res = await db.rpc("get_game_config_numeric", {"p_key": key, "p_default": float(default)}).execute()
+        val = res.data
+        if isinstance(val, (int, float)):
+            return float(val)
+        if isinstance(val, str):
+            return float(val.strip('"'))
+    except Exception:
+        logger.debug("get_game_config_numeric(%s) failed — defaulting %s", key, default, exc_info=True)
+    return float(default)
+
+
 def compute_bot_match_coins(result: str, division_win_coins: int, v2: bool = True) -> int:
     if not v2:
         if result == "win":
@@ -38,7 +66,7 @@ def compute_league_match_coins(
         return 0
     # ponytail: auto_sim_mult override for tests; runtime reads game_config in league_rewards
     if auto_sim_mult is not None:
-        from economy.flows import EconomyConfig, league_match_coins
+        from economy.flows import league_match_coins
 
         win_c = league_match_coins(division)
         if result == "win":

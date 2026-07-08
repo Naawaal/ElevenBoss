@@ -222,6 +222,53 @@ class StarterSquad(BaseModel):
 - All commands via `app_commands.Group` or `@app_commands.command`
 - All commands `defer(ephemeral=True)` immediately
 
+---
+
+## 18. Progression & Energy Rebalance (US-35)
+
+**Design reference:** `.specify/specs/v1.0.0/rebalance_proposal.md`
+
+### A. Migration (Supabase)
+
+- Add a new numbered migration `supabase/migrations/NNN_progression_energy_rebalance.sql` that:
+  - Updates `game_config` seed defaults:
+    - `energy_regen_per_min` → `0.25` (1 per 4 minutes)
+    - `match_energy_bot` → `15`
+    - `drill_basic_xp` → `50`
+    - `drill_advanced_xp` → `120`
+  - Adds new config keys:
+    - `evolution_cooldown_hours` (default `6`)
+    - `evolution_max_active` (default `4`)
+  - Updates RPC `start_player_evolution` to read `evolution_cooldown_hours` and `evolution_max_active` from `game_config`.
+  - Extends schema guard / `verify_required_schema.sql` requirements if new RPC signature/keys are required.
+
+### B. Bot code changes
+
+- Replace all hardcoded energy cost strings in:
+  - `apps/discord_bot/cogs/battle_cog.py` (battle hub + match ticket embeds)
+  - `apps/discord_bot/cogs/development_cog.py` (drill and evolution menus)
+  - `apps/discord_bot/cogs/store_cog.py` (refill copy)
+- Ensure drill XP previews in `/development` use the same base XP values as the RPC (`drill_basic_xp`, `drill_advanced_xp`) so UI matches results.
+
+### C. Debugging tool: `/debug energy`
+
+- Add owner/admin-only command `/debug energy`:
+  - Shows effective `game_config` values for energy regen/max, match/drill costs, refill costs/cap.
+  - Includes “minutes-to-full” computations for a given current energy.
+  - Purpose is safe tuning validation; no mutation.
+
+### D. Test plan
+
+- Unit tests:
+  - Extend `tests/test_economy_flows.py` and/or add a small new test file to assert:
+    - downtime math for regen rates (derived minutes-to-regain X energy)
+    - drill XP diminishing returns remain monotonic with level
+- Manual smoke:
+  - `/battle hub` shows the correct energy cost for bot matches (matches actual deduction)
+  - `/development` drill preview XP matches post-drill result
+  - Evolution hub cooldown text reflects config-driven cooldown
+
+
 ### `middleware/guard.py` — Registration Gatekeeper
 
 Unregistered users are blocked from executing core gameplay commands (such as `/match play`, `/store`, `/squad view`, etc.) by a middleware check:
@@ -1708,6 +1755,132 @@ See `spec.md` US-30 for acceptance criteria.
 **Migration 039:** `weekly_rank_rewards`, `players.best_weekly_pts` / `best_weekly_rank`, `game_config` tier keys, RPC `claim_weekly_rank_tier`.
 
 **Apps:** `leaderboard_cog.py` (3-tab ephemeral hub), `competitive_display.py`, `view_helpers.edit_ephemeral_hub_message`, battle_cog display fixes, profile `/leaderboard` link, scheduler weekly snapshot DMs, auto `distribute_season_prizes` on natural season end.
+
+---
+
+## 29. Player Age & Lifecycle (US-31 — Phase A)
+
+### Architecture
+
+| Concern | Source of truth |
+|---------|-----------------|
+| Live age | `player_cards.date_of_birth` → `card_age_from_dob()` / `effective_card_age()` |
+| Cached age | `player_cards.age` refreshed weekly + on match RPC |
+| XP multipliers | `packages/player_engine/age_manager.py` + `game_config` `age_xp_mult_*` keys |
+| Decline / retirement | RPC `process_season_aging` (Monday 00:00 UTC, before league reset) |
+
+### Migration 041
+
+- Columns: `date_of_birth`, `is_retired`, `retirement_notified_at`, `retired_at`
+- RPCs: `card_age_from_dob`, `card_xp_age_multiplier`, `retire_player_card`, `process_season_aging`
+- Updated: `register_new_player`, `claim_daily_pack`, `renew_contract` (block 35+), `process_match_result`, `process_stat_drill` (age XP), `compute_agent_offer` + `process_agent_sale` (age/potential)
+
+### Packages
+
+| Module | Role |
+|--------|------|
+| `age_manager.py` | Lifecycle phases, XP multipliers, decline rules, contract gate |
+| `player_factory.py` | Unified `create_player_card()` with DOB |
+| `progression.py` | Optional `age` on `match_xp_reward` / `drill_xp_reward` |
+
+### Bot wiring
+
+| File | Change |
+|------|--------|
+| `card_payload.py` | `card_rpc_payload()`, `effective_card_age()` |
+| `match_xp.py` | Age-aware match XP payload |
+| `development_cog.py` | Age-aware drill XP preview |
+| `player_cog.py` | Lifecycle display + retirement warning |
+| `marketplace_cog.py` | Age-aware offers, filter `is_retired` |
+| `scheduler_jobs.py` + `main.py` | `season_aging_job` cron Monday 00:00 UTC |
+
+### Deferred (Phase B/C)
+
+- **Phase B:** flat youth intake at academy L1 — **shipped in migration 042**
+- **Phase C:** Youth Academy + Training Ground under `/store` (migration 043)
+
+See `spec.md` US-31 / US-32 for acceptance criteria.
+
+---
+
+## 30. Youth Academy Intake (US-32 — Phase B)
+
+### Migration 042
+
+- Table `youth_intake_log (owner_id, intake_week)` — idempotency + notification tracking
+- RPC `process_youth_intake(p_owner_id, p_cards JSONB)` — insert cards, no squad slots
+- RPC `current_intake_week()` — Monday UTC week key
+- `game_config`: `youth_intake_count` (3), `youth_intake_academy_level` (1)
+
+### Packages
+
+| Module | Role |
+|--------|------|
+| `youth_intake.py` | `generate_youth_intake_cards()` — flat L1 curve |
+| `gacha/generator.py` | `generate_youth_intake()` — names + GachaPlayer wrapper |
+
+### Bot wiring
+
+| File | Role |
+|------|------|
+| `youth_intake_notifier.py` | Batch all human managers, RPC persist, DM embed |
+| `youth_intake_embeds.py` | Prospect list embed |
+| `scheduler_jobs.py` | `youth_intake_job` Monday 00:00 UTC after aging |
+
+### Phase C hook
+
+`intake_config_for_academy(level)` returns L1 curve until migration 043 adds facility columns on `players`.
+
+---
+
+## 31. Club Facilities (US-33 — Phase C)
+
+### Migration 043
+
+- Columns on `players`: `youth_academy_level`, `training_ground_level`, `facility_last_upgrade_at`
+- RPC `upgrade_club_facility(p_owner_id, p_facility_key, p_expected_cost)`
+- RPC `training_ground_xp_bonus(p_level)` — flat +0…+4 drill XP
+- Updated `process_stat_drill` — age multiplier + training ground bonus
+
+### Packages
+
+| Module | Role |
+|--------|------|
+| `economy/facility_effects.py` | Costs, TG bonus, academy tier table |
+
+### Bot wiring
+
+| File | Role |
+|------|------|
+| `views/store_facilities.py` | Facilities sub-hub under `/store` |
+| `development_cog.py` | TG level in drill XP preview |
+| `youth_intake_notifier.py` | Reads `youth_academy_level` for intake |
+| `economy_cog.py` | Read-only facility levels on `/club-finances` |
+
+---
+
+## 32. Scouting Pool / Regen Market (US-34 — Phase D)
+
+### Migration 044
+
+- Table `scouting_pool_players` — unclaimed regen listings with `list_price`, `source_card_id`
+- RPCs: `insert_scouting_pool_player`, `purchase_scouting_player`
+- `game_config`: `regen_ovr_threshold` (75), `scouting_pool_max_active` (50)
+
+### Packages
+
+| Module | Role |
+|--------|------|
+| `regen_pool.py` | `generate_regen_from_retired()` |
+| `scouting_market.py` | `scouting_purchase_price()` (~1.4× agent offer) |
+
+### Bot wiring
+
+| File | Role |
+|------|------|
+| `regen_pool_job.py` | Post-aging spawn from recently retired 75+ OVR |
+| `marketplace_cog.py` | Search Market UI + purchase flow |
+| `scheduler_jobs.py` | `regen_pool_job` Monday 00:00 UTC |
 
 **Terminology:** Division Rank (`league_points`), Global LP (`global_lp`), Season Pts (fixtures) — never "league pts" without qualifier.
 

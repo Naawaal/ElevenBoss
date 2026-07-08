@@ -21,7 +21,12 @@ from match_engine import (
     format_zone_breakdown,
 )
 from apps.discord_bot.core.match_cards import card_from_db_row, fetch_playstyles
-from apps.discord_bot.core.economy_rpc import sync_action_energy, match_energy_cost, economy_v2_enabled
+from apps.discord_bot.core.economy_rpc import (
+    sync_action_energy,
+    match_energy_cost,
+    economy_v2_enabled,
+    get_game_config_int,
+)
 from apps.discord_bot.core.league_rewards import apply_league_human_rewards
 from apps.discord_bot.core.match_rewards import apply_bot_match_rewards
 from apps.discord_bot.core.competitive_display import format_bot_rewards_block, format_season_reward_line
@@ -247,7 +252,8 @@ class StandardMatchHandler(IMatchOutputHandler):
         )
         if matchday:
             ticket_embed.add_field(name="Matchday", value=f"Matchday {matchday}", inline=True)
-        ticket_embed.add_field(name="Cost", value="⚡ 10 Energy", inline=True)
+        # ponytail: cost differs by match type; avoid hardcoded wrong value in shared handler.
+        ticket_embed.add_field(name="Cost", value="⚡ Energy cost applies", inline=True)
 
         if interaction.response.is_done():
             self.ticket_msg = await interaction.channel.send(embed=ticket_embed)
@@ -1094,11 +1100,14 @@ class BattleCog(commands.Cog):
         player_res = await db.table("players").select("*").eq("discord_id", interaction.user.id).maybe_single().execute()
         player = player_res.data
 
+        v2 = await economy_v2_enabled(db)
+        bot_energy = await get_game_config_int(db, "match_energy_bot", match_energy_cost("bot", v2=v2))
+
         embed = discord.Embed(
             title="🏟️ ElevenBoss Battle Arena",
             description=(
                 f"Welcome to the Battle Arena, Manager **{player['manager_name']}**!\n"
-                f"Choose your competitive match pathway below. Bot battles consume **20** ⚡ action energy.\n"
+                f"Choose your competitive match pathway below. Bot battles consume **{bot_energy}** ⚡ action energy.\n"
                 f"Friendly matches are **free** — no energy, no coins, no XP."
             ),
             color=0x00FF87
@@ -1208,7 +1217,7 @@ class BattleCog(commands.Cog):
             v2 = await economy_v2_enabled(db)
             energy_row = await sync_action_energy(db, interaction.user.id)
             curr_energy = energy_row.get("action_energy", player.get("action_energy", 0))
-            needed = match_energy_cost("bot", v2=v2)
+            needed = await get_game_config_int(db, "match_energy_bot", match_energy_cost("bot", v2=v2))
             if curr_energy < needed:
                 await interaction.followup.send(
                     embed=error_embed(
@@ -1522,7 +1531,7 @@ class BattleCog(commands.Cog):
             if v2:
                 energy_row = await sync_action_energy(db, user_id)
                 curr_energy = energy_row.get("action_energy", active_p.get("action_energy", 0))
-                needed = match_energy_cost("league", v2=True)
+                needed = await get_game_config_int(db, "match_energy_league", match_energy_cost("league", v2=True))
                 if curr_energy < needed:
                     await interaction.followup.send(
                         embed=error_embed(f"Insufficient energy. League matches require **{needed}** ⚡ (you have **{curr_energy}**)."),

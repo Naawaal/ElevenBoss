@@ -105,20 +105,36 @@ def match_xp_reward(
     assists: int = 0,
     motm: bool = False,
     result: str = "loss",
+    age: int | None = None,
 ) -> int:
     base = _base_match_development_xp(minutes_played, match_rating)
     if base <= 0:
         return 0
     mult = MATCH_TYPE_MULT.get(match_type, 1.0)
     bonuses = goals * 5 + assists * 3 + (15 if motm else 0) + RESULT_BONUS.get(result, 0)
-    return max(MATCH_XP_MIN, min(MATCH_XP_MAX, int(base * mult) + bonuses))
+    raw = max(MATCH_XP_MIN, min(MATCH_XP_MAX, int(base * mult) + bonuses))
+    if age is not None:
+        from .age_manager import apply_xp_age_multiplier
+        return apply_xp_age_multiplier(raw, age)
+    return raw
 
 
-def drill_xp_reward(tier_xp_base: int, player_level: int) -> int:
-    """Diminishing returns: base × 1/(1 + 0.05×(level−1))."""
+def drill_xp_reward(
+    tier_xp_base: int,
+    player_level: int,
+    age: int | None = None,
+    *,
+    training_ground_level: int = 1,
+) -> int:
+    """Diminishing returns + optional age multiplier + training ground flat bonus."""
     lvl = max(1, player_level)
     mult = 1.0 / (1.0 + 0.05 * (lvl - 1))
-    return max(1, int(tier_xp_base * mult))
+    raw = max(1, int(tier_xp_base * mult))
+    if age is not None:
+        from .age_manager import apply_xp_age_multiplier
+        raw = apply_xp_age_multiplier(raw, age)
+    from economy.facility_effects import training_ground_drill_xp_bonus
+    return raw + training_ground_drill_xp_bonus(training_ground_level)
 
 
 @dataclass(frozen=True)

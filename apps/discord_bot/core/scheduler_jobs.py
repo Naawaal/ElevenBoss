@@ -10,6 +10,45 @@ logger = logging.getLogger(__name__)
 
 DIVISIONS = ["Grassroots", "Amateur", "Semi-Pro", "Professional", "Elite", "Legendary"]
 
+async def season_aging_job(bot: commands.Bot) -> None:
+    """Monday 00:00 UTC — refresh ages, apply decline, retire veterans (Phase A)."""
+    logger.info("Executing season aging batch...")
+    try:
+        db = await get_client()
+        res = await db.rpc("process_season_aging").execute()
+        summary = res.data or {}
+        logger.info(
+            "Season aging complete: declined=%s retired=%s warned=%s",
+            summary.get("declined_cards", 0),
+            summary.get("retired_cards", 0),
+            summary.get("warned_cards", 0),
+        )
+    except Exception:
+        logger.exception("Season aging job failed.")
+
+
+async def youth_intake_job(bot: commands.Bot) -> None:
+    """Monday 00:00 UTC — flat L1 youth intake for all human managers (Phase B)."""
+    logger.info("Executing weekly youth intake...")
+    try:
+        from apps.discord_bot.tasks.youth_intake_notifier import run_season_youth_intake
+
+        await run_season_youth_intake(bot)
+    except Exception:
+        logger.exception("Youth intake job failed.")
+
+
+async def regen_pool_job(bot: commands.Bot) -> None:
+    """Monday 00:00 UTC — list retired 75+ OVR players on scouting market (Phase D)."""
+    logger.info("Executing regen scouting pool spawn...")
+    try:
+        from apps.discord_bot.tasks.regen_pool_job import spawn_regens_from_recent_retirements
+
+        await spawn_regens_from_recent_retirements(bot)
+    except Exception:
+        logger.exception("Regen pool job failed.")
+
+
 async def weekly_league_reset_job(bot: commands.Bot) -> None:
     """
     APScheduler cron job (Monday 00:00 UTC) to:

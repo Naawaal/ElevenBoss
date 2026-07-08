@@ -66,7 +66,20 @@ BEGIN
       ('function:charge_league_entry_fees'),
       ('function:claim_weekly_rank_tier'),
       ('function:process_match_result'),
-      ('function:claim_daily_pack'),
+      ('column:public.player_cards.date_of_birth'),
+      ('column:public.player_cards.is_retired'),
+      ('function:card_age_from_dob'),
+      ('function:card_xp_age_multiplier'),
+      ('function:retire_player_card'),
+      ('column:public.players.youth_academy_level'),
+      ('column:public.players.training_ground_level'),
+      ('function:training_ground_xp_bonus'),
+      ('function:upgrade_club_facility'),
+      ('function:insert_scouting_pool_player'),
+      ('function:purchase_scouting_player'),
+      ('table:public.scouting_pool_players'),
+      ('function:process_youth_intake'),
+      ('table:public.youth_intake_log'),
       ('policy:public.league_members.league_members_select'),
       ('policy:public.league_matchday_reminders.league_matchday_reminders_select'),
       ('policy:public.league_matchday_reminders.league_matchday_reminders_insert'),
@@ -120,6 +133,15 @@ BEGIN
         WHEN 'claim_weekly_rank_tier' THEN to_regprocedure('public.claim_weekly_rank_tier(bigint,text)')
         WHEN 'process_match_result' THEN to_regprocedure('public.process_match_result(text,uuid[],integer,numeric[],integer[])')
         WHEN 'claim_daily_pack' THEN to_regprocedure('public.claim_daily_pack(bigint,jsonb)')
+        WHEN 'card_age_from_dob' THEN to_regprocedure('public.card_age_from_dob(date,date)')
+        WHEN 'card_xp_age_multiplier' THEN to_regprocedure('public.card_xp_age_multiplier(integer)')
+        WHEN 'retire_player_card' THEN to_regprocedure('public.retire_player_card(uuid)')
+        WHEN 'process_season_aging' THEN to_regprocedure('public.process_season_aging()')
+        WHEN 'training_ground_xp_bonus' THEN to_regprocedure('public.training_ground_xp_bonus(integer)')
+        WHEN 'upgrade_club_facility' THEN to_regprocedure('public.upgrade_club_facility(bigint,text,bigint)')
+        WHEN 'insert_scouting_pool_player' THEN to_regprocedure('public.insert_scouting_pool_player(jsonb)')
+        WHEN 'purchase_scouting_player' THEN to_regprocedure('public.purchase_scouting_player(bigint,uuid,bigint)')
+        WHEN 'process_youth_intake' THEN to_regprocedure('public.process_youth_intake(bigint,jsonb)')
         WHEN 'formation_slot_role' THEN to_regprocedure('public.formation_slot_role(text,integer)')
         ELSE NULL
       END IS NOT NULL

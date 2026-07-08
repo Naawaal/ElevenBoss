@@ -9,10 +9,12 @@ from discord.ext import commands
 from player_engine import (
     GameConfig,
     calculate_contract_renewal_cost,
-    format_potential_display,
+    format_lifecycle_display,
+    can_renew_contract,
     EVOLUTION_TRACKS,
     xp_progress,
 )
+from apps.discord_bot.core.card_payload import effective_card_age
 from apps.discord_bot.cogs.development_cog import (
     make_match_progress_bar,
     _evo_played,
@@ -53,7 +55,7 @@ def make_xp_bar(current: int, needed: int) -> str:
 
 
 class PlayerProfileView(discord.ui.View):
-    def __init__(self, card_id: str, owner_id: int, card_name: str, has_evo: bool, can_claim: bool, renewal_cost: int, card_data: dict) -> None:
+    def __init__(self, card_id: str, owner_id: int, card_name: str, has_evo: bool, can_claim: bool, renewal_cost: int, card_data: dict, renew_allowed: bool = True) -> None:
         super().__init__(timeout=900)
         self.card_id = card_id
         self.owner_id = owner_id
@@ -63,7 +65,8 @@ class PlayerProfileView(discord.ui.View):
         self.renew_btn = discord.ui.Button(
             style=discord.ButtonStyle.primary,
             label=f"Renew Contract (🪙 {renewal_cost})",
-            custom_id="renew_contract_profile"
+            custom_id="renew_contract_profile",
+            disabled=not renew_allowed,
         )
         self.renew_btn.callback = self.renew_callback
         self.add_item(self.renew_btn)
@@ -237,6 +240,8 @@ async def build_player_profile(
         contract_val = "❌ `No Active Contract`"
 
     renewal_cost = calculate_contract_renewal_cost(card["overall"], GameConfig())
+    card_age = effective_card_age(card)
+    renew_allowed = can_renew_contract(card_age)
     embed = discord.Embed(
         title=f"📋 Roster Profile: {card['name']}",
         description=(
@@ -247,10 +252,16 @@ async def build_player_profile(
     )
     embed.add_field(name="📋 Role Style", value=card.get("role", "Balanced"), inline=True)
     embed.add_field(
-        name="🎂 Age / Potential",
-        value=format_potential_display(card.get("potential"), card.get("age", 25)),
+        name="🎂 Age / Lifecycle",
+        value=format_lifecycle_display(card_age, card.get("potential")),
         inline=True,
     )
+    if card.get("retirement_notified_at") or card_age >= 35:
+        embed.add_field(
+            name="⚠️ Retirement",
+            value="This player will retire at age **36**." if card_age < 36 else "Retiring — cannot renew contract.",
+            inline=False,
+        )
     embed.add_field(name="😊 Morale Rating", value=f"Morale **{card.get('morale', 80)}/100**", inline=True)
     embed.add_field(name="📈 Level & Experience Progression", value=xp_bar, inline=False)
     embed.add_field(
@@ -280,7 +291,7 @@ async def build_player_profile(
         )
         embed.add_field(name="Evolution In Progress", value=progress_str, inline=False)
 
-    view = PlayerProfileView(player_id, owner_id, card["name"], has_evo, can_claim, renewal_cost, card)
+    view = PlayerProfileView(player_id, owner_id, card["name"], has_evo, can_claim, renewal_cost, card, renew_allowed)
     return embed, view
 
 

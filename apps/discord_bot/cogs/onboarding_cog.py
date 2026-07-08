@@ -8,6 +8,7 @@ from discord.ext import commands
 from supabase import Client
 
 from gacha import generate_starter_squad
+from apps.discord_bot.core.card_payload import card_rpc_payload
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.core.thread_manager import ThreadManager
 from apps.discord_bot.embeds.onboarding_embeds import (
@@ -251,25 +252,7 @@ async def _run_recruitment_animation(
         await asyncio.sleep(2.5)
 
         # Phase 4: Execute atomic Supabase transaction (all 11 players + squad slots)
-        cards_payload = [
-            {
-                "name":        p.name,
-                "position":    p.position,
-                "rarity":      p.rarity,
-                "base_rating": p.base_rating,
-                "overall":     p.overall,
-                "pac":         p.pac,
-                "sho":         p.sho,
-                "pas":         p.pas,
-                "dri":         p.dri,
-                "def":         p.def_stat,
-                "phy":         p.phy,
-                "potential":   p.potential,
-                "base_potential": p.potential,
-                "age":         p.age,
-            }
-            for p in all_players
-        ]
+        cards_payload = [card_rpc_payload(p) for p in all_players]
         await db.rpc("register_new_player", {
             "p_discord_id":   owner_id,
             "p_username":     str(user),

@@ -320,6 +320,60 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-08h:** The Evolution Command Center displays active slot usage (e.g. `2/3 slots used`), training energy, start-cost summary, cooldown until the next cold start, active evolutions with match progress, and recently completed history.
 - **AC-08i:** Starting an evolution deducts **25 training energy** and **10 × player OVR coins** atomically in `start_player_evolution`. Insufficient training energy or coins blocks the start with no partial deduction. Replacement starts pay the same fee.
 
+### US-31: Player Age & Lifecycle (Phase A)
+
+> **As a** football club manager,
+> **I want** players to age, decline, and retire over time,
+> **So that** squad building stays strategic and the roster ecosystem stays fresh.
+
+**Acceptance Criteria:**
+- **AC-31a:** Each `player_card` stores `date_of_birth` (source of truth) and a cached `age` refreshed from DOB. New cards from registration and daily packs include DOB at creation.
+- **AC-31b:** `/player-profile` shows lifecycle phase (Youth / Early Prime / Late Prime / Veteran / Retiring) alongside age and POT.
+- **AC-31c:** Match and drill XP apply lifecycle multipliers (youth bonus, veteran penalty) via `packages/player_engine` formulas.
+- **AC-31d:** A weekly season-aging batch (`process_season_aging`, Monday 00:00 UTC) refreshes ages, applies PAC/PHY decline for veterans, flags retirement warnings at age 35+, and retires players at age 36+ (removed from squad assignments).
+- **AC-31e:** Contract renewal is blocked server-side for players age 35+. Agent sale offers factor in player age.
+- **AC-31f:** Phase B youth intake and Phase C club facilities remain separate follow-ups (not required for Phase A).
+
+### US-32: Youth Academy Intake (Phase B)
+
+> **As a** football club manager,
+> **I want** fresh youth prospects each season,
+> **So that** I can rebuild my squad as veterans retire without relying only on packs.
+
+**Acceptance Criteria:**
+- **AC-32a:** Every **Monday 00:00 UTC**, each human manager receives **3** new youth cards (ages 16–19, OVR 50–65, POT 72–82, Common) via RPC `process_youth_intake`.
+- **AC-32b:** Intake cards are added to the roster **without** auto squad assignment.
+- **AC-32c:** Intake is **idempotent** per manager per UTC week (`youth_intake_log` primary key).
+- **AC-32d:** Managers receive a **DM embed** listing new prospects when DMs are enabled.
+- **AC-32e:** Flat **academy L1** quality for all clubs — no facility upgrade required (Phase C scales intake later).
+
+### US-33: Club Facilities (Phase C)
+
+> **As a** football club manager,
+> **I want** to invest coins in club facilities,
+> **So that** my youth intake and training improve over time.
+
+**Acceptance Criteria:**
+- **AC-33a:** `players` stores `youth_academy_level` and `training_ground_level` (default 1, max 5).
+- **AC-33b:** `/store` hub includes **Club Facilities** with upgrade buttons for both facilities.
+- **AC-33c:** Upgrades cost **750 / 2,000 / 5,000 / 12,000** coins per step (server-validated via `upgrade_club_facility` RPC).
+- **AC-33d:** **Training Ground** grants **+0…+4** flat drill XP (L1 = today); wired in `process_stat_drill` and drill preview.
+- **AC-33e:** **Youth Academy** improves next weekly intake POT/OVR ceiling and gem chance (does not affect daily packs).
+- **AC-33f:** Max **1 facility upgrade per UTC week**; L2 requires **5** career matches, L4 requires **20**.
+
+### US-34: Scouting Pool / Regen Market (Phase D)
+
+> **As a** football club manager,
+> **I want** to sign youth regens when veterans retire,
+> **So that** I can replace aging squad members from the transfer market.
+
+**Acceptance Criteria:**
+- **AC-34a:** When a player retires at **OVR 75+**, a youth regen is listed on the global scouting pool (same position, ages 16–19, OVR 55–70).
+- **AC-34b:** `/marketplace` → **Search Market** shows available scouting listings with signing fees.
+- **AC-34c:** `purchase_scouting_player` RPC charges coins atomically and adds the card to the buyer's roster.
+- **AC-34d:** Regen spawn is idempotent per retired `source_card_id`; pool capped at **50** active listings.
+- **AC-34e:** Regen spawn runs weekly after season aging (Monday 00:00 UTC batch).
+
 ---
 
 # ElevenBoss v1.4 Features
@@ -368,7 +422,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 > **So that** all financial trading activities are centralized.
 
 **Acceptance Criteria:**
-- **AC-11a:** Slash command `/marketplace` is introduced, opening the central `MarketplaceHubView` containing three button pathways: `[💰 Sell Player]`, `[🔍 Search Market (Soon)]` (disabled), and `[📋 My Listings (Soon)]` (disabled).
+- **AC-11a:** Slash command `/marketplace` opens the central `MarketplaceHubView` with `[💰 Sell Player]`, `[🔍 Search Market]` (scouting pool), and `[📋 My Listings (Soon)]` (disabled).
 - **AC-11b:** Deprecated command: Running the old `/sell-player` command displays an ephemeral warning: *"⚠️ The Marketplace has moved! Please use /marketplace."*
 - **AC-11c:** State-swapping UI: Clicking `[💰 Sell Player]` edits the existing dashboard message to present the player selection dropdown and valuation results in-place.
 - **AC-11d:** Navigation: A `[⬅️ Back to Market]` button is present on the sell screen to return to the Marketplace Hub.
@@ -867,6 +921,38 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **THEN** `players.action_energy` (max 100) regens **1 per 6 minutes** via `sync_action_energy`.
 - **AND** costs: bot match 20, league 10, basic drill 10, advanced drill 15, evolution start 25 (from `game_config`). Friendly matches cost **0** energy.
 - **AND** `/profile`, `/development`, and battle hub show unified `⚡ current/max` with time-to-full estimate.
+
+---
+
+### US-35: Progression & Energy Rebalance (v2.x)
+
+> **As a** daily manager,
+> **I want** training drills and battles to feel rewarding without hard walls,
+> **So that** I can play a satisfying 20–30 minute session and still progress meaningfully.
+
+**Design reference:** [`.specify/specs/v1.0.0/rebalance_proposal.md`](rebalance_proposal.md)
+
+#### AC-35a: Config-driven tunables (live ops)
+
+- **GIVEN** any energy regen / energy cost / drill XP base / evolution cooldown lever,
+- **THEN** it must be stored in `public.game_config` and read server-side in RPCs.
+- Keys (minimum): `energy_regen_per_min`, `energy_max`, `match_energy_bot`, `match_energy_league`, `drill_basic_xp`, `drill_advanced_xp`, `evolution_cooldown_hours`, `evolution_max_active`.
+
+#### AC-35b: Player-facing copy matches live config
+
+- **GIVEN** `/battle hub`, match ticket embeds, `/development` drill menus, and `/store` refill copy,
+- **THEN** displayed energy costs and regen rates must reflect effective `game_config` values (no hardcoded “10/20 energy” text).
+
+#### AC-35c: Evolution pacing is tunable
+
+- **GIVEN** `start_player_evolution`,
+- **THEN** cooldown hours and max-active slots are read from `game_config` (no hard-coded 10h / 3 slots constants).
+
+#### AC-35d: Battle vs drill reward balance target
+
+- **GIVEN** a typical bot match and a drill at a midgame level (e.g. level 10–25),
+- **THEN** bot battles must not be strictly worse XP-per-energy than drills for a focus card, within reasonable performance variance.
+
 
 #### AC-25d: Config-Driven Income
 - **GIVEN** economy v2 enabled,

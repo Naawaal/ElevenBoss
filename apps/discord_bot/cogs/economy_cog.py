@@ -67,9 +67,12 @@ class EconomyCog(commands.Cog):
             )
 
             embed.add_field(
-                name="📈 Balance",
-                value=f"Current coins: `🪙 {player['coins']:,}`",
-                inline=False
+                name="🏗️ Club Facilities",
+                value=(
+                    f"🌱 Youth Academy **L{player.get('youth_academy_level', 1)}** · "
+                    f"🏋️ Training Ground **L{player.get('training_ground_level', 1)}**"
+                ),
+                inline=False,
             )
 
             await interaction.followup.send(embed=embed, ephemeral=True)
