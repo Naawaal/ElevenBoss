@@ -1,7 +1,9 @@
 # apps/discord_bot/main.py
 from __future__ import annotations
+import json
 import os
 import logging
+import time
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -17,6 +19,30 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# #region agent log
+_DEBUG_LOG_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "debug-690a24.log",
+)
+
+
+def _agent_debug(hypothesis_id: str, location: str, message: str, data: dict | None = None) -> None:
+    payload = {
+        "sessionId": "690a24",
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data or {},
+        "timestamp": int(time.time() * 1000),
+    }
+    try:
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload) + "\n")
+    except OSError:
+        pass
+    logger.info("[DEBUG690a24] %s", json.dumps(payload))
+# #endregion
 
 # Load env variables
 load_dotenv()
@@ -46,6 +72,15 @@ class ElevenBossBot(commands.Bot):
         ]
 
     async def setup_hook(self) -> None:
+        # #region agent log
+        _agent_debug(
+            "E",
+            "main.py:setup_hook",
+            "setup_hook_reached",
+            {"discord_login_succeeded": True},
+        )
+        # #endregion
+
         # Load cogs
         for cog in self.cogs_list:
             try:
@@ -152,6 +187,14 @@ class ElevenBossBot(commands.Bot):
         self._web_site = web.TCPSite(self._web_runner, "0.0.0.0", port)
         await self._web_site.start()
         logger.info(f"Web server started on port {port} for Render health checks.")
+        # #region agent log
+        _agent_debug(
+            "E",
+            "main.py:_start_web_server",
+            "health_server_listening",
+            {"port": port},
+        )
+        # #endregion
 
     async def close(self) -> None:
         """
@@ -234,13 +277,80 @@ class ElevenBossBot(commands.Bot):
             logger.exception("Failed to pause seasons after leaving guild %s", guild.id)
 
 def main() -> None:
+    # #region agent log
+    _agent_debug(
+        "B",
+        "main.py:main:entry",
+        "process_start",
+        {
+            "render_service": os.environ.get("RENDER_SERVICE_NAME"),
+            "render_instance": os.environ.get("RENDER_INSTANCE_ID"),
+            "port": os.environ.get("PORT"),
+            "environment": os.environ.get("ENVIRONMENT"),
+        },
+    )
+    # #endregion
+
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
         logger.error("DISCORD_TOKEN is missing from environment variables.")
+        # #region agent log
+        _agent_debug("D", "main.py:main", "missing_discord_token", {})
+        # #endregion
         return
-        
+
+    # #region agent log
+    stripped = token.strip()
+    _agent_debug(
+        "D",
+        "main.py:main",
+        "token_shape",
+        {
+            "raw_len": len(token),
+            "stripped_len": len(stripped),
+            "has_outer_whitespace": token != stripped,
+            "looks_like_bot_token": stripped.count(".") == 2 and stripped.startswith(("MT", "OD", "MF", "Nz", "OT", "Mj")),
+        },
+    )
+    # #endregion
+
     bot = ElevenBossBot()
-    bot.run(token)
+
+    # #region agent log
+    _agent_debug(
+        "E",
+        "main.py:main",
+        "before_bot_run",
+        {
+            "health_server_starts_in": "setup_hook_after_login",
+            "port_configured": bool(os.environ.get("PORT")),
+        },
+    )
+    # #endregion
+
+    try:
+        bot.run(token)
+    except discord.HTTPException as exc:
+        # #region agent log
+        body_preview = str(getattr(exc, "text", "") or "")[:300]
+        _agent_debug(
+            "A",
+            "main.py:main",
+            "discord_login_http_exception",
+            {
+                "status": exc.status,
+                "cloudflare_1015": "1015" in body_preview or "rate limited" in body_preview.lower(),
+                "body_preview": body_preview,
+            },
+        )
+        _agent_debug(
+            "B",
+            "main.py:main",
+            "login_failed_process_exiting",
+            {"render_will_auto_restart": bool(os.environ.get("RENDER"))},
+        )
+        # #endregion
+        raise
 
 if __name__ == "__main__":
     main()
