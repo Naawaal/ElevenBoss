@@ -1,5 +1,6 @@
 # apps/discord_bot/main.py
 from __future__ import annotations
+import asyncio
 import json
 import os
 import logging
@@ -43,6 +44,129 @@ def _agent_debug(hypothesis_id: str, location: str, message: str, data: dict | N
         pass
     logger.info("[DEBUG690a24] %s", json.dumps(payload))
 # #endregion
+
+# ponytail: module-level health server stays up across login retries so Render
+# does not kill the process while Cloudflare 1015 cools down on shared IPs.
+_render_health_site = None
+_render_health_runner = None
+
+# Backoff seconds between Discord login attempts after Cloudflare 1015 / HTTP 429.
+_LOGIN_RETRY_DELAYS = (30, 60, 120, 180, 300, 300, 300, 300)
+
+
+async def _start_render_health_server(port: int) -> None:
+    global _render_health_site, _render_health_runner
+    if _render_health_site is not None:
+        return
+
+    from aiohttp import web
+
+    async def handle_health(_request: web.Request) -> web.Response:
+        return web.json_response({"status": "ok", "bot": "connecting"})
+
+    app = web.Application()
+    app.router.add_get("/", handle_health)
+    app.router.add_get("/health", handle_health)
+
+    _render_health_runner = web.AppRunner(app)
+    await _render_health_runner.setup()
+    _render_health_site = web.TCPSite(_render_health_runner, "0.0.0.0", port)
+    await _render_health_site.start()
+    logger.info("Render health server listening on port %s (pre-login).", port)
+    # #region agent log
+    _agent_debug(
+        "E",
+        "main.py:_start_render_health_server",
+        "health_server_listening_pre_login",
+        {"port": port},
+    )
+    # #endregion
+
+
+async def _stop_render_health_server() -> None:
+    global _render_health_site, _render_health_runner
+    if _render_health_site is not None:
+        try:
+            await _render_health_site.stop()
+        except Exception as exc:
+            logger.warning("Error stopping render health site: %s", exc)
+        _render_health_site = None
+    if _render_health_runner is not None:
+        try:
+            await _render_health_runner.cleanup()
+        except Exception as exc:
+            logger.warning("Error cleaning up render health runner: %s", exc)
+        _render_health_runner = None
+
+
+def _is_login_rate_limit(exc: discord.HTTPException) -> bool:
+    if exc.status != 429:
+        return False
+    body = str(getattr(exc, "text", "") or getattr(exc, "message", "") or "")
+    return (
+        "1015" in body
+        or "rate limited" in body.lower()
+        or "cloudflare" in body.lower()
+    )
+
+
+async def _run_bot_with_login_retry(token: str) -> None:
+    try:
+        port = os.environ.get("PORT")
+        if port:
+            try:
+                await _start_render_health_server(int(port))
+            except ValueError:
+                logger.error("Invalid PORT environment variable value: %s", port)
+
+        last_exc: discord.HTTPException | None = None
+        for attempt, delay in enumerate(_LOGIN_RETRY_DELAYS, start=1):
+            bot = ElevenBossBot()
+            try:
+                async with bot:
+                    await bot.start(token, reconnect=True)
+                return
+            except discord.HTTPException as exc:
+                if not _is_login_rate_limit(exc):
+                    raise
+                last_exc = exc
+                body_preview = str(getattr(exc, "text", "") or "")[:500]
+                # #region agent log
+                _agent_debug(
+                    "A",
+                    "main.py:_run_bot_with_login_retry",
+                    "discord_login_rate_limited",
+                    {
+                        "attempt": attempt,
+                        "max_attempts": len(_LOGIN_RETRY_DELAYS),
+                        "retry_in_seconds": delay,
+                        "cloudflare_1015": "1015" in body_preview,
+                    },
+                )
+                # #endregion
+                if attempt >= len(_LOGIN_RETRY_DELAYS):
+                    break
+                logger.warning(
+                    "Discord login rate-limited (attempt %d/%d); retrying in %ds. "
+                    "Health server stays up so Render does not restart-loop.",
+                    attempt,
+                    len(_LOGIN_RETRY_DELAYS),
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+        if last_exc is not None:
+            # #region agent log
+            _agent_debug(
+                "B",
+                "main.py:_run_bot_with_login_retry",
+                "login_retries_exhausted",
+                {"attempts": len(_LOGIN_RETRY_DELAYS)},
+            )
+            # #endregion
+            raise last_exc
+    finally:
+        await _stop_render_health_server()
 
 # Load env variables
 load_dotenv()
@@ -159,16 +283,6 @@ class ElevenBossBot(commands.Bot):
         self.scheduler.start()
         logger.info("APScheduler initialized and jobs started.")
 
-        # Start a simple web server for Render health checks and UptimeRobot pings if PORT exists
-        port = os.environ.get("PORT")
-        if port:
-            try:
-                port_int = int(port)
-                import asyncio
-                asyncio.create_task(self._start_web_server(port_int))
-            except ValueError:
-                logger.error(f"Invalid PORT environment variable value: {port}. Web server not started.")
-
     async def _start_web_server(self, port: int) -> None:
         from aiohttp import web
         
@@ -200,18 +314,6 @@ class ElevenBossBot(commands.Bot):
         """
         Cleanly closes the bot, stops background jobs, web server, and releases DB connections.
         """
-        logger.info("Stopping background web server...")
-        if hasattr(self, "_web_site") and self._web_site:
-            try:
-                await self._web_site.stop()
-            except Exception as e:
-                logger.warning(f"Error stopping web site: {e}")
-        if hasattr(self, "_web_runner") and self._web_runner:
-            try:
-                await self._web_runner.cleanup()
-            except Exception as e:
-                logger.warning(f"Error cleaning up web runner: {e}")
-
         logger.info("Stopping background scheduler...")
         if hasattr(self, "scheduler") and self.scheduler.running:
             try:
@@ -314,7 +416,7 @@ def main() -> None:
     )
     # #endregion
 
-    bot = ElevenBossBot()
+    clean_token = stripped
 
     # #region agent log
     _agent_debug(
@@ -322,17 +424,17 @@ def main() -> None:
         "main.py:main",
         "before_bot_run",
         {
-            "health_server_starts_in": "setup_hook_after_login",
+            "health_server_starts_in": "pre_login_module_level",
             "port_configured": bool(os.environ.get("PORT")),
         },
     )
     # #endregion
 
     try:
-        bot.run(token)
+        asyncio.run(_run_bot_with_login_retry(clean_token))
     except discord.HTTPException as exc:
         # #region agent log
-        body_preview = str(getattr(exc, "text", "") or "")[:300]
+        body_preview = str(getattr(exc, "text", "") or "")[:500]
         _agent_debug(
             "A",
             "main.py:main",
@@ -340,7 +442,7 @@ def main() -> None:
             {
                 "status": exc.status,
                 "cloudflare_1015": "1015" in body_preview or "rate limited" in body_preview.lower(),
-                "body_preview": body_preview,
+                "body_preview": body_preview[:300],
             },
         )
         _agent_debug(
