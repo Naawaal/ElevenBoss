@@ -216,11 +216,10 @@ Add (new) keys:
 - Ensure drill previews use the same config bases (`drill_basic_xp`, `drill_advanced_xp`) the RPC uses.
 - Remove any remaining hardcoded energy costs in embeds.
 
-### D) `/debug energy` admin command
+### D) Ops validation (no Discord command)
 
-- Slash command `/debug energy` for bot owner/admin only:
-  - Shows: `energy_max`, `energy_regen_per_min`, computed “minutes per energy”, match/drill costs, refill costs/cap.
-  - Provides a small simulator: given current energy and a delta minutes (e.g. +30m), show expected regen and “time to full”.
+- Confirm rebalance values via Supabase `game_config` or `scratch/check_migration_046.py`.
+- Friendly matches remain sandbox: **0 energy, 0 coins, 0 XP** (unchanged).
 
 ### E) Verification
 
