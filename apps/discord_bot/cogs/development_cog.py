@@ -8,6 +8,7 @@ from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.core.api_errors import api_error_message
+from apps.discord_bot.core.debug_session_log import debug_log
 from apps.discord_bot.core.card_payload import effective_card_age
 from apps.discord_bot.core.drill_rpc import parse_stat_drill_result
 from apps.discord_bot.core.select_helpers import rebuild_select_options
@@ -460,6 +461,14 @@ class StatDrillView(discord.ui.View):
 
         except Exception as exc:
             logger.exception("Failed running stat drill.")
+            # #region agent log
+            debug_log(
+                "C",
+                "development_cog.py:run_drill_callback",
+                "process_stat_drill failed",
+                {"error": str(exc)[:300], "drill_id": self.selected_drill},
+            )
+            # #endregion
             set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
 

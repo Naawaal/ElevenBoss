@@ -14,6 +14,7 @@ Security and fairness hardening from the full codebase audit — mostly invisibl
 - **Contract renewal & evolution cancel** — fees now flow through the same audited economy pipe as everything else.
 - **Admin-only RPCs** — season prize distribution, entry-fee sweeps, season aging, and scouting pool inserts are no longer callable with a public API key (bot server uses service role only).
 - **Removed legacy training RPC** — old direct coin-deduction path retired.
+- **XP logging fix (migration 048)** — `apply_card_xp` runs as `SECURITY DEFINER` so XP grants work after ledger hardening (fixes `permission denied for table player_xp_log`).
 - **UX fixes** — `/leaderboard` is guild-only; formation changes blocked mid-match; bot match errors no longer leak raw server text in public channels.
 
 ### For server operators
