@@ -9,7 +9,7 @@ from apps.discord_bot.core.economy_rpc import (
     apply_match_economy,
     compute_bot_match_coins,
     economy_v2_enabled,
-    match_energy_cost,
+    get_match_energy_cost,
     sync_action_energy,
 )
 from apps.discord_bot.core.match_xp import apply_match_xp_if_needed
@@ -45,21 +45,19 @@ async def apply_bot_match_rewards(
     if not existing:
         await sync_action_energy(db, player_id)
         coins = compute_bot_match_coins(result_str, division_win_coins, v2=v2)
-        energy_cost = match_energy_cost("bot", v2=v2)
+        energy_cost = await get_match_energy_cost(db, "bot", v2=v2)
         await apply_match_economy(db, player_id, coins, energy_cost, "bot", run_id, result_str)
 
-        user_lp = player_row.get("global_lp", 0)
-        new_lp = max(0, user_lp + lp_change)
-
-        await db.table("players").update({
-            "league_points": player_row["league_points"] + points_earned,
-            "global_lp": new_lp,
-            "goal_difference": player_row["goal_difference"] + (goals_for - goals_against),
-            "matches_played": player_row["matches_played"] + 1,
-            "wins": player_row["wins"] + (1 if result_str == "win" else 0),
-            "draws": player_row["draws"] + (1 if result_str == "draw" else 0),
-            "losses": player_row["losses"] + (1 if result_str == "loss" else 0),
-        }).eq("discord_id", player_id).execute()
+        await db.rpc(
+            "increment_match_career_stats",
+            {
+                "p_club_id": player_id,
+                "p_result": result_str,
+                "p_league_points_delta": points_earned,
+                "p_lp_change": lp_change,
+                "p_goal_diff_delta": goals_for - goals_against,
+            },
+        ).execute()
 
         insert_res = await db.table("match_history").insert({
             "player_id": player_id,

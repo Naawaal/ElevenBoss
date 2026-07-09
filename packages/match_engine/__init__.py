@@ -1,5 +1,40 @@
+# packages/match_engine/__init__.py — public facade (v1 legacy + v2 NSS API)
+from __future__ import annotations
+
 from .match_engine import (
+    MatchPlayerCard,
+    MatchInput,
+    MatchResult,
+    EventType,
+    MatchEvent,
     simulate_match,
+    generate_match_script,
+    CommentaryEngine,
+    render_commentary,
+    bold_vars,
+    MatchState,
+    stream_match,
+    collect_match_events,
+    generate_round_robin_fixtures,
+    expected_fixture_counts,
+    get_coordinates_for_formation,
+    FORMATION_COORDINATES,
+    get_slot_role,
+    reserve_fits_formation_slot,
+    MatchLiveStats,
+    stats_from_events,
+    zone_averages,
+    format_zone_breakdown,
+)
+from .lineup_validator import validate_lineup
+from .lineup_builder import build_auto_lineup
+from .formation_rules import get_slots_for_formation, get_slot_rules
+from .match_config import MatchEngineConfig
+from .team_strength import calculate_team_strength, TeamStrength
+from .match_rating import calculate_player_ratings
+
+# Legacy v1 aliases (root match_engine.py interval simulator)
+from .match_engine import (
     MatchSimulationInput,
     MatchSimulationResult,
     MatchTeamInput,
@@ -11,12 +46,45 @@ from .match_engine import (
     _apply_yellow_card,
     _apply_straight_red_card,
 )
-from .lineup_validator import validate_lineup
-from .lineup_builder import build_auto_lineup
-from .fixture_generator import generate_round_robin_fixtures
-from .formation_positions import get_coordinates_for_formation, FORMATION_COORDINATES
-from .formation_rules import get_slots_for_formation, get_slot_rules
-from .match_config import MatchEngineConfig
-from .team_strength import calculate_team_strength, TeamStrength
-from .match_state import MatchState
-from .match_rating import calculate_player_ratings
+
+__all__ = [
+    "MatchPlayerCard",
+    "MatchInput",
+    "MatchResult",
+    "EventType",
+    "MatchEvent",
+    "simulate_match",
+    "generate_match_script",
+    "CommentaryEngine",
+    "render_commentary",
+    "bold_vars",
+    "MatchState",
+    "stream_match",
+    "collect_match_events",
+    "generate_round_robin_fixtures",
+    "expected_fixture_counts",
+    "get_coordinates_for_formation",
+    "FORMATION_COORDINATES",
+    "get_slot_role",
+    "reserve_fits_formation_slot",
+    "MatchLiveStats",
+    "stats_from_events",
+    "zone_averages",
+    "format_zone_breakdown",
+    "validate_lineup",
+    "build_auto_lineup",
+    "get_slots_for_formation",
+    "get_slot_rules",
+    "MatchEngineConfig",
+    "calculate_team_strength",
+    "TeamStrength",
+    "calculate_player_ratings",
+    "MatchSimulationInput",
+    "MatchSimulationResult",
+    "MatchTeamInput",
+    "MatchPlayerInput",
+    "MatchGoalEvent",
+    "MatchCardEvent",
+    "MatchInjuryEvent",
+    "MatchSubstitutionEvent",
+]

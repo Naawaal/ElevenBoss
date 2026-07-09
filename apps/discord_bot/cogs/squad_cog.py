@@ -230,6 +230,10 @@ class SquadFormationView(discord.ui.View):
         
         try:
             db = await get_client()
+            lock_msg = await assert_not_in_match(db, self.user_id)
+            if lock_msg:
+                await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
+                return
             
             # Fetch all owned players
             res = await db.table("player_cards").select("*").eq("owner_id", self.user_id).execute()

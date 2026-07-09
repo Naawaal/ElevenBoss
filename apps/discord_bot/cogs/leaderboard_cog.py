@@ -49,6 +49,7 @@ class LeaderboardCog(commands.Cog):
         name="leaderboard",
         description="View Division Rank, Global LP, and guild Season standings.",
     )
+    @app_commands.guild_only()
     @app_commands.check(ensure_registered)
     async def leaderboard(self, interaction: discord.Interaction) -> None:
         db = await get_client()

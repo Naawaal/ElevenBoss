@@ -2,6 +2,26 @@
 
 Hey Managers!
 
+## Audit Remediation (US-38 follow-up)
+
+Security and fairness hardening from the full codebase audit — mostly invisible, but it protects your progress and coins.
+
+### What changed
+- **Economy idempotency** — match payouts, daily login, and other coin grants can no longer double-apply under retry or lag (ledger + balance stay in sync).
+- **Atomic match locks** — you cannot start two bot, league, or friendly matches at once by double-tapping.
+- **Career stats** — wins, LP, and match counts update atomically after bot and league matches (no lost progress under concurrency).
+- **Match XP safety** — duplicate XP grants on the same match result are blocked at the database layer.
+- **Contract renewal & evolution cancel** — fees now flow through the same audited economy pipe as everything else.
+- **Admin-only RPCs** — season prize distribution, entry-fee sweeps, season aging, and scouting pool inserts are no longer callable with a public API key (bot server uses service role only).
+- **Removed legacy training RPC** — old direct coin-deduction path retired.
+- **UX fixes** — `/leaderboard` is guild-only; formation changes blocked mid-match; bot match errors no longer leak raw server text in public channels.
+
+### For server operators
+- Ensure `SUPABASE_KEY` on the bot is the **service role** key (not anon).
+- Migration **047** must be applied before deploying this bot build.
+
+---
+
 ## Stat Drills Hotfix
 
 Stat drills were failing for all managers immediately after the age system shipped.

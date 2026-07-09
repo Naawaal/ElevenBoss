@@ -23,9 +23,8 @@ from match_engine import (
 from apps.discord_bot.core.match_cards import card_from_db_row, fetch_playstyles
 from apps.discord_bot.core.economy_rpc import (
     sync_action_energy,
-    match_energy_cost,
     economy_v2_enabled,
-    get_game_config_int,
+    get_match_energy_cost,
 )
 from apps.discord_bot.core.league_rewards import apply_league_human_rewards
 from apps.discord_bot.core.match_rewards import apply_bot_match_rewards
@@ -58,6 +57,8 @@ from apps.discord_bot.core.match_runs import (
 )
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
+from apps.discord_bot.middleware.match_lock import acquire_match_lock, is_in_match, release_match_lock
+from apps.discord_bot.core.api_errors import api_error_message
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.core.locks import get_guild_thread_lock
 from datetime import datetime, timezone
@@ -967,7 +968,7 @@ async def run_league_match_simulation(
         "away_score": state.away_score,
         "is_played": True,
         "played_at": datetime.now(timezone.utc).isoformat()
-    }).eq("id", fixture_id).execute()
+    }).eq("id", fixture_id).eq("is_played", False).execute()
 
     # Live standings + result line in journal (dual_v2) or commentary thread (legacy)
     if not silent and handler.season_id:
@@ -1106,7 +1107,7 @@ class BattleCog(commands.Cog):
         player = player_res.data
 
         v2 = await economy_v2_enabled(db)
-        bot_energy = await get_game_config_int(db, "match_energy_bot", match_energy_cost("bot", v2=v2))
+        bot_energy = await get_match_energy_cost(db, "bot", v2=v2)
 
         embed = discord.Embed(
             title="🏟️ ElevenBoss Battle Arena",
@@ -1174,14 +1175,13 @@ class BattleCog(commands.Cog):
             await interaction.followup.send(embed=error_embed(f"The manager {opponent.display_name} is not registered yet!"), ephemeral=True)
             return
 
-        # Check if either player is already locked in match_locks
-        locks_res = await db.table("match_locks").select("*").in_("discord_id", [challenger.id, opponent.id]).execute()
-        active_locks = locks_res.data or []
-        if active_locks:
-            locked_ids = [l["discord_id"] for l in active_locks]
-            if challenger.id in locked_ids and opponent.id in locked_ids:
+        # Check if either player is already locked in a match
+        challenger_locked = await is_in_match(db, challenger.id)
+        opponent_locked = await is_in_match(db, opponent.id)
+        if challenger_locked or opponent_locked:
+            if challenger_locked and opponent_locked:
                 msg = "Both you and the opponent are currently locked in another match."
-            elif challenger.id in locked_ids:
+            elif challenger_locked:
                 msg = "You are currently locked in another match."
             else:
                 msg = f"{opponent.display_name} is currently locked in another match."
@@ -1205,11 +1205,10 @@ class BattleCog(commands.Cog):
         try:
             db = await get_client()
 
-            # Concurrency Lock Check
-            locks_res = await db.table("match_locks").select("*").eq("discord_id", interaction.user.id).execute()
-            if locks_res.data:
+            if not await acquire_match_lock(db, interaction.user.id, "bot"):
                 await interaction.followup.send(embed=error_embed("You are currently locked in another match."), ephemeral=True)
                 return
+            lock_acquired = True
 
             # 1. Fetch player metadata
             player_res = await db.table("players").select("*").eq("discord_id", interaction.user.id).maybe_single().execute()
@@ -1223,7 +1222,7 @@ class BattleCog(commands.Cog):
             v2 = await economy_v2_enabled(db)
             energy_row = await sync_action_energy(db, interaction.user.id)
             curr_energy = energy_row.get("action_energy", player.get("action_energy", 0))
-            needed = await get_game_config_int(db, "match_energy_bot", match_energy_cost("bot", v2=v2))
+            needed = await get_match_energy_cost(db, "bot", v2=v2)
             if curr_energy < needed:
                 await interaction.followup.send(
                     embed=error_embed(
@@ -1232,10 +1231,6 @@ class BattleCog(commands.Cog):
                     ephemeral=True,
                 )
                 return
-
-            # Acquire lock
-            await db.table("match_locks").insert({"discord_id": interaction.user.id, "lock_type": "bot"}).execute()
-            lock_acquired = True
 
             # 3. Fetch starting 11 details
             assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", interaction.user.id).execute()
@@ -1452,12 +1447,12 @@ class BattleCog(commands.Cog):
             if bot_run_id:
                 await abandon_run(db, bot_run_id)
             if interaction.response.is_done():
-                await interaction.channel.send(embed=error_embed(f"An error occurred: {str(e)}"))
+                await interaction.followup.send(embed=error_embed(api_error_message(e)), ephemeral=True)
             else:
-                await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
+                await interaction.followup.send(embed=error_embed(api_error_message(e)), ephemeral=True)
         finally:
             if lock_acquired:
-                await db.table("match_locks").delete().eq("discord_id", interaction.user.id).execute()
+                await release_match_lock(db, interaction.user.id)
 
     async def execute_league_match(self, interaction: discord.Interaction, fixture: dict) -> None:
         lock_acquired = False
@@ -1465,14 +1460,9 @@ class BattleCog(commands.Cog):
             db = await get_client()
             user_id = interaction.user.id
 
-            # Concurrency Lock Check
-            locks_res = await db.table("match_locks").select("*").eq("discord_id", user_id).execute()
-            if locks_res.data:
+            if not await acquire_match_lock(db, user_id, "league"):
                 await interaction.followup.send(embed=error_embed("You are currently locked in another match."), ephemeral=True)
                 return
-
-            # Acquire lock
-            await db.table("match_locks").insert({"discord_id": user_id, "lock_type": "league"}).execute()
             lock_acquired = True
 
             fixture_id = fixture["id"]
@@ -1537,7 +1527,7 @@ class BattleCog(commands.Cog):
             if v2:
                 energy_row = await sync_action_energy(db, user_id)
                 curr_energy = energy_row.get("action_energy", active_p.get("action_energy", 0))
-                needed = await get_game_config_int(db, "match_energy_league", match_energy_cost("league", v2=True))
+                needed = await get_match_energy_cost(db, "league", v2=True)
                 if curr_energy < needed:
                     await interaction.followup.send(
                         embed=error_embed(f"Insufficient energy. League matches require **{needed}** ⚡ (you have **{curr_energy}**)."),
@@ -1589,12 +1579,12 @@ class BattleCog(commands.Cog):
         except Exception as e:
             logger.exception("Failed to execute league match.")
             if interaction.response.is_done():
-                await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
+                await interaction.followup.send(embed=error_embed(api_error_message(e)), ephemeral=True)
             else:
-                await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
+                await interaction.followup.send(embed=error_embed(api_error_message(e)), ephemeral=True)
         finally:
             if lock_acquired:
-                await db.table("match_locks").delete().eq("discord_id", user_id).execute()
+                await release_match_lock(db, user_id)
 
     async def start_friendly_match(
         self,
@@ -1605,9 +1595,9 @@ class BattleCog(commands.Cog):
     ) -> None:
         db = await get_client()
         friendly_run_id: str | None = None
-        
-        locks_res = await db.table("match_locks").select("discord_id").in_("discord_id", [challenger.id, opponent.id]).execute()
-        if locks_res.data:
+        locks_held: list[int] = []
+
+        if await is_in_match(db, challenger.id) or await is_in_match(db, opponent.id):
             await invitation_msg.channel.send(
                 embed=error_embed("One or both managers are already in another match."),
             )
@@ -1632,16 +1622,16 @@ class BattleCog(commands.Cog):
             await invitation_msg.channel.send(embed=error_embed(f"Failed to create match thread: {str(e)}"))
             return
 
-        # 2. Acquire Concurrency Locks
-        try:
-            await db.table("match_locks").upsert([
-                {"discord_id": challenger.id, "lock_type": "friendly"},
-                {"discord_id": opponent.id, "lock_type": "friendly"}
-            ]).execute()
-        except Exception as e:
-            logger.exception("Failed to acquire match locks.")
-            await thread.send(embed=error_embed(f"Failed to acquire match locks: {str(e)}"))
+        # 2. Acquire concurrency locks
+        if not await acquire_match_lock(db, challenger.id, "friendly"):
+            await thread.send(embed=error_embed("Could not acquire match lock for challenger."))
             return
+        locks_held.append(challenger.id)
+        if not await acquire_match_lock(db, opponent.id, "friendly"):
+            await release_match_lock(db, challenger.id)
+            await thread.send(embed=error_embed("Could not acquire match lock for opponent."))
+            return
+        locks_held.append(opponent.id)
 
         try:
             async def get_squad_cards(discord_id: int):
@@ -1839,10 +1829,10 @@ class BattleCog(commands.Cog):
             logger.exception("Error during friendly match execution.")
             if friendly_run_id:
                 await abandon_run(db, friendly_run_id)
-            await thread.send(embed=error_embed(f"An error occurred during friendly match execution: {str(e)}"))
+            await thread.send(embed=error_embed(api_error_message(e)))
         finally:
-            # Release Locks
-            await db.table("match_locks").delete().in_("discord_id", [challenger.id, opponent.id]).execute()
+            for uid in locks_held:
+                await release_match_lock(db, uid)
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(BattleCog(bot))

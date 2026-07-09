@@ -3,6 +3,7 @@ from __future__ import annotations
 import discord
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.core.view_helpers import safe_defer
+from apps.discord_bot.core.api_errors import api_error_message
 from apps.discord_bot.embeds.common_embeds import error_embed
 
 async def ensure_registered(interaction: discord.Interaction) -> bool:
@@ -34,7 +35,7 @@ async def ensure_registered(interaction: discord.Interaction) -> bool:
         return True
     except Exception as e:
         await interaction.followup.send(
-            embed=error_embed(f"Database error during registration check: {str(e)}"),
+            embed=error_embed(api_error_message(e)),
             ephemeral=True
         )
         return False

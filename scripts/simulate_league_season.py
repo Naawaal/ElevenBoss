@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from match_engine import generate_round_robin_fixtures
-from match_engine.fixture_generator import expected_fixture_counts
+from match_engine import expected_fixture_counts
 from leagues import distribute_finish_prizes, format_standings_table, sort_standings
 
 

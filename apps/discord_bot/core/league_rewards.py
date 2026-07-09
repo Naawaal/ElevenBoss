@@ -9,7 +9,7 @@ from apps.discord_bot.core.economy_rpc import (
     apply_match_economy,
     compute_league_match_coins,
     economy_v2_enabled,
-    match_energy_cost,
+    get_match_energy_cost,
     sync_action_energy,
 )
 from apps.discord_bot.core.match_runs import fetch_match_reward_row
@@ -125,17 +125,15 @@ async def apply_league_human_rewards(
 
         if deduct_energy and v2:
             await sync_action_energy(db, player_id)
-            energy_cost = match_energy_cost("league", v2=True)
+            energy_cost = await get_match_energy_cost(db, "league", v2=True)
             await apply_match_economy(db, player_id, coins, energy_cost, "league", run_id, result_str)
         elif v2:
             await apply_match_economy(db, player_id, coins, 0, "league", run_id, result_str)
 
-        await db.table("players").update({
-            "matches_played": player_row["matches_played"] + 1,
-            "wins": player_row["wins"] + (1 if result_str == "win" else 0),
-            "draws": player_row["draws"] + (1 if result_str == "draw" else 0),
-            "losses": player_row["losses"] + (1 if result_str == "loss" else 0),
-        }).eq("discord_id", player_id).execute()
+        await db.rpc(
+            "increment_league_career_stats",
+            {"p_club_id": player_id, "p_result": result_str},
+        ).execute()
 
         insert_res = await db.table("match_history").insert({
             "player_id": player_id,
@@ -179,19 +177,18 @@ async def check_matchday_milestone(
     if points_earned <= 0:
         return None
     try:
-        row_res = await db.table("league_matchday_milestones").select("*").eq(
-            "season_id", season_id
-        ).eq("player_id", player_id).eq("matchday", matchday).maybe_single().execute()
-        row = row_res.data if row_res else None
-        total_pts = (row["points_earned"] if row else 0) + points_earned
-        claimed = row["milestone_claimed"] if row else False
-        await db.table("league_matchday_milestones").upsert({
-            "season_id": season_id,
-            "player_id": player_id,
-            "matchday": matchday,
-            "points_earned": total_pts,
-            "milestone_claimed": claimed,
-        }).execute()
+        agg_res = await db.rpc(
+            "upsert_matchday_milestone_points",
+            {
+                "p_season_id": season_id,
+                "p_player_id": player_id,
+                "p_matchday": matchday,
+                "p_points_delta": points_earned,
+            },
+        ).execute()
+        row = agg_res.data if agg_res else {}
+        total_pts = int(row.get("points_earned") or 0)
+        claimed = bool(row.get("milestone_claimed"))
         if claimed:
             return None
         threshold_res = await db.rpc("get_game_config", {"p_key": "league_milestone_pts_threshold"}).execute()

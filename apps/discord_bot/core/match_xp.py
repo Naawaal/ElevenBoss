@@ -99,5 +99,6 @@ async def apply_match_xp_if_needed(
         club_name=club_name,
         team_rating=team_rating,
     )
+    xp_payload["p_match_history_id"] = history_id
     await db.rpc("process_match_result", xp_payload).execute()
     await mark_match_xp_applied(db, history_id)

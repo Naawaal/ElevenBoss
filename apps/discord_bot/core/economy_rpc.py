@@ -91,6 +91,22 @@ def match_energy_cost(match_type: str, v2: bool = True) -> int:
     return {"bot": 20, "friendly": 15, "league": 10}.get(match_type, 20)
 
 
+_MATCH_ENERGY_CONFIG_KEY = {
+    "bot": "match_energy_bot",
+    "league": "match_energy_league",
+    "friendly": "match_energy_friendly",
+}
+
+
+async def get_match_energy_cost(db: Any, match_type: str, *, v2: bool = True) -> int:
+    """Runtime match energy cost from game_config (single source for UI + deduction)."""
+    fallback = match_energy_cost(match_type, v2=v2)
+    key = _MATCH_ENERGY_CONFIG_KEY.get(match_type)
+    if not key:
+        return fallback
+    return await get_game_config_int(db, key, fallback)
+
+
 def minutes_to_full_action_energy(current: int, maximum: int = 100) -> int:
     if current >= maximum:
         return 0

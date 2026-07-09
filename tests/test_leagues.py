@@ -2,7 +2,7 @@
 from __future__ import annotations
 import pytest
 from match_engine import generate_round_robin_fixtures
-from match_engine.fixture_generator import expected_fixture_counts
+from match_engine import expected_fixture_counts
 
 def test_fixture_generator_validation():
     # Odd number of teams should raise ValueError

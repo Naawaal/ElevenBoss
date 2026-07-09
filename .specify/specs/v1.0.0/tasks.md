@@ -1,7 +1,7 @@
 # ElevenBoss v1.0.0 — Implementation Tasks (`tasks.md`)
 
 **Feature**: Core Game Loop — v1.0.0 Initial Release
-**Status**: Pending Implementation Approval
+**Status**: Implemented — task groups through US-38 audit remediation complete; defer to `spec.md` + `change_log.md` for deltas
 **Depends On**: `plan.md` v1.0.0
 
 > Tasks are strictly ordered. Do not begin a task group until all tasks in the preceding group are complete.

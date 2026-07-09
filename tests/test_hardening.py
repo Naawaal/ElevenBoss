@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from economy.engine import generate_agent_offer
 from economy.config import GameConfig
-from match_engine.formation_positions import get_slot_role
+from match_engine import get_slot_role
 
 
 def test_get_slot_role_4231() -> None:

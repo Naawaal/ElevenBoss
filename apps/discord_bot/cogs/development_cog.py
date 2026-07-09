@@ -430,32 +430,6 @@ class StatDrillView(discord.ui.View):
                 "dri_dribble": "dri", "def_tackling": "def", "phy_strength": "phy",
             }.get(self.selected_drill, "pac")
 
-            # #region agent log
-            import json as _json
-            import time as _time
-            _rpc_payload = {
-                "p_owner_id": self.owner_id,
-                "p_card_id": self.selected_card_id,
-                "p_drill_id": self.selected_drill,
-            }
-            try:
-                with open("debug-4da5fa.log", "a", encoding="utf-8") as _df:
-                    _df.write(_json.dumps({
-                        "sessionId": "4da5fa",
-                        "runId": "pre-fix",
-                        "hypothesisId": "A",
-                        "location": "development_cog.py:run_drill_callback",
-                        "message": "pre process_stat_drill rpc",
-                        "data": {
-                            "rpc_payload": {k: str(v) for k, v in _rpc_payload.items()},
-                            "card_age": effective_card_age(selected_p),
-                        },
-                        "timestamp": int(_time.time() * 1000),
-                    }) + "\n")
-            except Exception:
-                pass
-            # #endregion
-
             res = await db.rpc("process_stat_drill", {
                 "p_owner_id": self.owner_id,
                 "p_card_id": self.selected_card_id,
@@ -484,40 +458,7 @@ class StatDrillView(discord.ui.View):
             await interaction.followup.send(embed=success_embed(msg), ephemeral=True)
             await show_training_menu(interaction, self.owner_id)
 
-            # #region agent log
-            try:
-                with open("debug-4da5fa.log", "a", encoding="utf-8") as _df:
-                    _df.write(_json.dumps({
-                        "sessionId": "4da5fa",
-                        "runId": "pre-fix",
-                        "hypothesisId": "A",
-                        "location": "development_cog.py:run_drill_callback",
-                        "message": "process_stat_drill success",
-                        "data": {"xp_gained": xp_gained, "energy_spent": energy_spent},
-                        "timestamp": int(_time.time() * 1000),
-                    }) + "\n")
-            except Exception:
-                pass
-            # #endregion
-
         except Exception as exc:
-            # #region agent log
-            try:
-                import json as _json
-                import time as _time
-                with open("debug-4da5fa.log", "a", encoding="utf-8") as _df:
-                    _df.write(_json.dumps({
-                        "sessionId": "4da5fa",
-                        "runId": "pre-fix",
-                        "hypothesisId": "A",
-                        "location": "development_cog.py:run_drill_callback",
-                        "message": "process_stat_drill failed",
-                        "data": {"error": str(exc)[:200]},
-                        "timestamp": int(_time.time() * 1000),
-                    }) + "\n")
-            except Exception:
-                pass
-            # #endregion
             logger.exception("Failed running stat drill.")
             set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)

@@ -1,7 +1,7 @@
 # ElevenBoss v1.0.0 — Technical Plan (`plan.md`)
 
 **Feature**: Core Game Loop — v1.0.0 Initial Release
-**Status**: Draft
+**Status**: Implemented (US-30+ shipped; see `change_log.md` for incremental releases)
 **Depends On**: `spec.md` v1.0.0
 
 ---
