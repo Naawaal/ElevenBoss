@@ -15,9 +15,11 @@ from .age_manager import (
     xp_multiplier,
     yearly_stat_decline,
 )
-from .player_factory import create_player_card, roll_creation_age
+from .archetypes import ARCHETYPES, ArchetypeDef, archetypes_for, roll_archetype
+from .created_card import CreatedPlayerCard
+from .player_factory import balance_true_ovr, create_player_card, roll_creation_age
 from .youth_intake import generate_youth_intake_cards
-from .regen_pool import generate_regen_from_retired
+from .regen_pool import generate_regen_from_retired, regen_rarity_for_ovr
 from .config import GameConfig
 from .generated_player import GeneratedPlayer
 from .potential import (
@@ -67,6 +69,20 @@ from .progression import (
     xp_needed_for_level,
     xp_progress,
 )
+from .mentor_math import (
+    MENTOR_TRANSFERS_DAILY_LIMIT,
+    SP_PER_MENTOR_UNIT,
+    XP_PER_MENTOR_UNIT,
+    MentorTransferPreview,
+    is_mentor_source,
+    is_mentor_target,
+    mentor_max_units,
+    mentor_units_to_sp,
+    mentor_units_to_xp,
+    preview_mentor_transfer,
+    sp_to_mentor_units,
+    xp_headroom_to_max,
+)
 from .drill_catalog import (
     DRILL_TIERS,
     STAT_DRILLS as DRILL_CATALOG,
@@ -74,6 +90,33 @@ from .drill_catalog import (
     drill_coin_cost,
     drill_spec,
     drill_unlocked,
+)
+from .fatigue import (
+    FATIGUE_BASE_DRAIN,
+    FATIGUE_BENCH_PER_MATCH,
+    FATIGUE_HOSPITAL_PER_DAY,
+    FATIGUE_PASSIVE_PER_DAY,
+    apply_bench_rest,
+    apply_passive_recovery,
+    apply_starter_drain,
+    clamp_fatigue,
+    fatigue_bar,
+    fatigue_indicator,
+    fatigue_stat_multiplier,
+    match_fatigue_drain,
+    stance_from_tactics_modifier,
+    tactic_modifier,
+)
+from .injury_math import (
+    BASE_RECOVERY_DAYS,
+    INJURY_ELIGIBLE_FATIGUE_BELOW,
+    TIER_NAMES,
+    hospital_bed_capacity as injury_hospital_beds,
+    hospital_recovery_multiplier as injury_hospital_mult,
+    injury_chance,
+    recovery_days_for_tier,
+    roll_injury_tier,
+    select_post_match_injury,
 )
 from .evolution_tracks import (
     CANCEL_FEE_COINS,
@@ -99,15 +142,22 @@ __all__ = [
     "age_from_dob",
     "apply_xp_age_multiplier",
     "can_renew_contract",
+    "ARCHETYPES",
+    "ArchetypeDef",
+    "CreatedPlayerCard",
+    "archetypes_for",
+    "balance_true_ovr",
     "create_player_card",
     "dob_from_age",
     "format_lifecycle_display",
     "lifecycle_phase",
     "lifecycle_phase_emoji",
     "lifecycle_phase_label",
+    "roll_archetype",
     "roll_creation_age",
     "generate_youth_intake_cards",
     "generate_regen_from_retired",
+    "regen_rarity_for_ovr",
     "xp_multiplier",
     "yearly_stat_decline",
     "RARITY_POT_CAPS",
@@ -150,6 +200,18 @@ __all__ = [
     "skill_points_earned_for_level",
     "xp_needed_for_level",
     "xp_progress",
+    "MENTOR_TRANSFERS_DAILY_LIMIT",
+    "SP_PER_MENTOR_UNIT",
+    "XP_PER_MENTOR_UNIT",
+    "MentorTransferPreview",
+    "is_mentor_source",
+    "is_mentor_target",
+    "mentor_max_units",
+    "mentor_units_to_sp",
+    "mentor_units_to_xp",
+    "preview_mentor_transfer",
+    "sp_to_mentor_units",
+    "xp_headroom_to_max",
     "DRILL_TIERS",
     "DRILL_CATALOG",
     "VALID_DRILL_IDS",
@@ -172,4 +234,25 @@ __all__ = [
     "format_cooldown_remaining",
     "track_goal",
     "track_min_player_level",
+    "FATIGUE_BASE_DRAIN",
+    "FATIGUE_BENCH_PER_MATCH",
+    "FATIGUE_HOSPITAL_PER_DAY",
+    "FATIGUE_PASSIVE_PER_DAY",
+    "apply_bench_rest",
+    "apply_passive_recovery",
+    "apply_starter_drain",
+    "clamp_fatigue",
+    "fatigue_bar",
+    "fatigue_indicator",
+    "fatigue_stat_multiplier",
+    "match_fatigue_drain",
+    "stance_from_tactics_modifier",
+    "tactic_modifier",
+    "BASE_RECOVERY_DAYS",
+    "INJURY_ELIGIBLE_FATIGUE_BELOW",
+    "TIER_NAMES",
+    "injury_chance",
+    "recovery_days_for_tier",
+    "roll_injury_tier",
+    "select_post_match_injury",
 ]

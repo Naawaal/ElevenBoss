@@ -24,6 +24,7 @@ class GachaPlayer(BaseModel):
     potential: int = Field(..., ge=1, le=99)
     age: int = Field(25, ge=15, le=45)
     date_of_birth: str | None = None
+    role: str = "Balanced"
 
     class Config:
         populate_by_name = True

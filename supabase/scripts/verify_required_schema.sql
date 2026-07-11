@@ -86,11 +86,29 @@ BEGIN
       ('column:public.players.training_ground_level'),
       ('function:training_ground_xp_bonus'),
       ('function:upgrade_club_facility'),
+      ('column:public.player_cards.fatigue'),
+      ('column:public.player_cards.injury_tier'),
+      ('column:public.player_cards.in_hospital'),
+      ('column:public.players.hospital_level'),
+      ('column:public.players.squad_invalid'),
+      ('table:public.hospital_patients'),
+      ('function:apply_match_fatigue'),
+      ('function:process_post_match_injuries'),
+      ('function:process_daily_recovery'),
+      ('function:admit_to_hospital'),
+      ('function:discharge_from_hospital'),
+      ('policy:public.hospital_patients.hospital_patients_select'),
       ('function:insert_scouting_pool_player'),
       ('function:purchase_scouting_player'),
       ('table:public.scouting_pool_players'),
+      ('column:public.player_cards.role'),
+      ('column:public.scouting_pool_players.role'),
       ('function:process_youth_intake'),
       ('table:public.youth_intake_log'),
+      ('table:public.mentor_transfer_log'),
+      ('function:transfer_mentor_xp'),
+      ('policy:public.mentor_transfer_log.mentor_transfer_log_select'),
+      ('policy:public.mentor_transfer_log.mentor_transfer_log_insert'),
       ('policy:public.league_members.league_members_select'),
       ('policy:public.league_matchday_reminders.league_matchday_reminders_select'),
       ('policy:public.league_matchday_reminders.league_matchday_reminders_insert'),
@@ -161,10 +179,16 @@ BEGIN
         WHEN 'process_season_aging' THEN to_regprocedure('public.process_season_aging()')
         WHEN 'training_ground_xp_bonus' THEN to_regprocedure('public.training_ground_xp_bonus(integer)')
         WHEN 'upgrade_club_facility' THEN to_regprocedure('public.upgrade_club_facility(bigint,text,bigint)')
+        WHEN 'apply_match_fatigue' THEN to_regprocedure('public.apply_match_fatigue(bigint,jsonb,uuid[])')
+        WHEN 'process_post_match_injuries' THEN to_regprocedure('public.process_post_match_injuries(bigint,jsonb)')
+        WHEN 'process_daily_recovery' THEN to_regprocedure('public.process_daily_recovery()')
+        WHEN 'admit_to_hospital' THEN to_regprocedure('public.admit_to_hospital(bigint,uuid)')
+        WHEN 'discharge_from_hospital' THEN to_regprocedure('public.discharge_from_hospital(bigint,uuid)')
         WHEN 'insert_scouting_pool_player' THEN to_regprocedure('public.insert_scouting_pool_player(jsonb)')
         WHEN 'purchase_scouting_player' THEN to_regprocedure('public.purchase_scouting_player(bigint,uuid,bigint)')
         WHEN 'process_youth_intake' THEN to_regprocedure('public.process_youth_intake(bigint,jsonb)')
         WHEN 'formation_slot_role' THEN to_regprocedure('public.formation_slot_role(text,integer)')
+        WHEN 'transfer_mentor_xp' THEN to_regprocedure('public.transfer_mentor_xp(bigint,uuid,uuid,integer)')
         ELSE NULL
       END IS NOT NULL
     )
@@ -172,6 +196,19 @@ BEGIN
 
   IF v_missing IS NOT NULL THEN
     RAISE EXCEPTION 'Schema verify failed — missing: %', array_to_string(v_missing, ', ');
+  END IF;
+
+  -- apply_card_xp must be SECURITY DEFINER (migration 048) — existence alone is not enough
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname = 'apply_card_xp'
+      AND pg_get_function_identity_arguments(p.oid) = 'p_card_id uuid, p_xp_amount integer, p_source text'
+      AND p.prosecdef
+  ) THEN
+    RAISE EXCEPTION 'Schema verify failed — apply_card_xp is not SECURITY DEFINER (apply migration 048)';
   END IF;
 
   -- RLS-on-without-policies guard (same as migration 031)
@@ -188,7 +225,8 @@ BEGIN
         'player_season_stats', 'league_season_awards', 'player_league_history',
         'league_matchday_milestones', 'weekly_rank_rewards', 'scouting_pool_players',
         'pending_level_rewards', 'fusion_daily_log', 'player_drill_daily_log',
-        'game_config', 'agent_sale_daily_log', 'energy_refill_daily_log'
+        'game_config', 'agent_sale_daily_log', 'energy_refill_daily_log',
+        'hospital_patients', 'mentor_transfer_log'
     )
     AND NOT EXISTS (
         SELECT 1 FROM pg_policies p

@@ -14,6 +14,7 @@ from apps.discord_bot.core.economy_rpc import (
 )
 from apps.discord_bot.core.match_runs import fetch_match_reward_row
 from apps.discord_bot.core.match_xp import apply_match_xp_if_needed
+from apps.discord_bot.core.injury_rpc import apply_post_match_fitness, notify_injury_overflow
 from leagues import season_fixture_points
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,10 @@ async def apply_league_human_rewards(
     goals_for: int,
     goals_against: int,
     deduct_energy: bool,
+    bench_ids: list[str] | None = None,
+    tactics_modifier: float = 1.0,
+    bot: Any | None = None,
+    recorded_injuries: list[dict] | None = None,
 ) -> tuple[int, int]:
     """
     Apply league rewards for one human manager.
@@ -161,6 +166,23 @@ async def apply_league_human_rewards(
         club_name=club_name,
         team_rating=team_rating,
     )
+
+    try:
+        fitness = await apply_post_match_fitness(
+            db,
+            player_id,
+            starter_cards=cards,
+            bench_ids=bench_ids,
+            tactics_modifier=tactics_modifier,
+            intensity=False,
+            apply_injuries=True,
+            recorded_injuries=recorded_injuries,
+        )
+        overflow = (fitness.get("injuries") or {}).get("overflow") or []
+        if overflow and bot is not None:
+            await notify_injury_overflow(bot, player_id, overflow)
+    except Exception:
+        logger.exception("post-match fatigue/injury failed for %s", player_id)
 
     return coins, season_pts
 

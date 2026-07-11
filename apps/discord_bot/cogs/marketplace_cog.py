@@ -221,6 +221,13 @@ class SellPlayerSubView(discord.ui.View):
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
 
+            if self.selected_card.get("injury_tier") or self.selected_card.get("in_hospital"):
+                await interaction.followup.send(
+                    embed=error_embed("Injured / hospitalized players cannot be sold to an agent."),
+                    ephemeral=True,
+                )
+                return
+
             res = await db.rpc("process_agent_sale", {
                 "p_club_id": self.owner_id,
                 "p_card_id": self.selected_card["id"],

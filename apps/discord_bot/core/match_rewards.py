@@ -13,6 +13,7 @@ from apps.discord_bot.core.economy_rpc import (
     sync_action_energy,
 )
 from apps.discord_bot.core.match_xp import apply_match_xp_if_needed
+from apps.discord_bot.core.injury_rpc import apply_post_match_fitness, notify_injury_overflow
 
 
 async def apply_bot_match_rewards(
@@ -33,6 +34,10 @@ async def apply_bot_match_rewards(
     run_id: str | None,
     motm_name: str,
     key_events: list[dict],
+    bench_ids: list[str] | None = None,
+    tactics_modifier: float = 1.0,
+    bot: Any | None = None,
+    recorded_injuries: list[dict] | None = None,
 ) -> int:
     """Apply bot match payouts. Returns coins earned."""
     existing = await fetch_match_reward_row(db, player_id, run_id=run_id) if run_id else None
@@ -86,5 +91,24 @@ async def apply_bot_match_rewards(
         club_name=club_name,
         team_rating=team_rating,
     )
+
+    intensity = float(opponent_rating) >= float(team_rating) + 8.0
+    try:
+        fitness = await apply_post_match_fitness(
+            db,
+            player_id,
+            starter_cards=cards,
+            bench_ids=bench_ids,
+            tactics_modifier=tactics_modifier,
+            intensity=intensity,
+            apply_injuries=True,
+            recorded_injuries=recorded_injuries,
+        )
+        overflow = (fitness.get("injuries") or {}).get("overflow") or []
+        if overflow and bot is not None:
+            await notify_injury_overflow(bot, player_id, overflow)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("post-match fatigue/injury failed for %s", player_id)
 
     return coins

@@ -123,6 +123,9 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AND GIVEN** 22 hours have elapsed since my last claim (or I have never claimed),
 - **THEN** I receive a pack of **5 randomised players** drawn from a weighted rarity pool (`Common 60%, Rare 30%, Epic 8%, Legendary 2%`).
 - **AND** each player's overall rating is derived from their rarity tier (Common 50–64, Rare 65–74, Epic 75–84, Legendary 85–99).
+- **AND** each new card rolls a **position archetype** (e.g. FWD Poacher / Speedster / Complete Forward; MID/DEF/GK each have ≥3 styles) that shapes attributes and is stored/displayed as `player_cards.role`.
+- **AND** the printed overall equals True OVR at creation (deterministic terminating balance; no abandoned mismatch loop).
+- **AND** pack rarity weights live in named pack config (`standard` = 60/30/8/2); factory returns a typed `CreatedPlayerCard` mapped to `GachaPlayer` before RPC payload.
 - **AND** my `last_claim_at` timestamp is updated atomically in the same transaction.
 - **GIVEN** fewer than 22 hours have elapsed since my last claim,
 - **THEN** the bot responds with a cooldown embed showing the time remaining (`HH:MM:SS`), and NO players are awarded.
@@ -235,7 +238,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 **Acceptance Criteria:**
 - **GIVEN** I run `/profile`,
-- **THEN** I see an embed containing: **Club Name**, **Manager Name**, Discord username, current division, league points, coins balance, current energy / max energy, time to full energy, total matches played, win/draw/loss record.
+- **THEN** I see an embed containing: **Club Name**, **Manager Name**, Discord username, current division, league points, coins balance, gems, current energy / max energy, time to full energy, total matches played, win/draw/loss record, plus **Club Finance** and **Hospital** summary sections (see US-40).
 - **GIVEN** I am not yet registered,
 - **THEN** the bot responds with an ephemeral embed prompting me to run `/register`.
 
@@ -263,6 +266,10 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-05a:** The match simulation engine generates a chronological script of events (goals, misses, saves, yellow cards) that culminate in the pre-calculated final score.
 - **AC-05b:** Running `/match play` posts a "Match Ticket" embed in the main channel and spawns a public thread named `"🏟️ [Home] vs [Away] - Live"`.
 - **AC-05c:** The live commentary ticker plays out dynamically inside the public thread, showing a 5-event live-scroll history and pausing for 1.5 to 2.0 seconds between events to build suspense.
+- **AC-05c2:** Live embeds show a persistent **Goal Scroll** (max 10 lines) under the scoreboard listing minute + scorer for every goal so far, independent of the rolling ticker (immersion fix — ghost match).
+- **AC-05c3:** At half-time (~45'), the ticker includes a clear `--- HALF TIME ---` separator line.
+- **AC-05c4:** Bot/AI opponent event actors use generated roster display names — never positional stubs such as “Opponent Striker”.
+- **AC-05c5:** Contested phase transitions enforce a minimum ~5% success floor; possession ticks are recorded on midfield contests, set-pieces, and counter steals so post-match possession is not exact 0%–100% for valid XIs.
 - **AC-05d:** Upon match completion, a "Post-Match Press Conference" embed is posted in the thread detailing final score, stats (Possession, Shots, MOTM), and rewards.
 - **AC-05e:** The thread is renamed to display the final score (e.g. `🏆 [Home] [Score] [Away]`) and is locked and archived after 3 minutes.
 - **AC-05f:** To ensure data integrity, all database updates (deducting energy, crediting coins/XP, logging match history) are executed *after* the final whistle event and before the Press Conference UI is posted.
@@ -280,7 +287,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 **Acceptance Criteria:**
 - **AC-06a:** The club's wallet supports both Coins and Tokens.
-- **AC-06b:** Running `/club-finances` displays current Coins/Tokens balances and a calculated weekly wage bill forecast based on the OVR of the manager's current starting 11 squad.
+- **AC-06b:** Running `/club-finances` displays current Coins/Tokens balances and a calculated weekly wage bill forecast based on the OVR of the manager's current starting 11 squad. *(Amended — also soft-points to `/profile` as the unified finance + hospital dashboard; Finances button on `/profile` shows the same content.)*
 - **AC-06c:** Entering the **Sell Player** sub-menu of the `/marketplace` hub displays a dropdown of owned players. Selecting a player calculates their agent sale value based on OVR and rarity, presenting a "Confirm Sale" button.
 - **AC-06d:** Clicking "Confirm Sale" transactionally removes the player card from the manager's roster, credits the sale value in coins to the club, and logs the details to the transaction ledger.
 - **AC-06e:** Players currently assigned to the starting 11 squad, in training, or in active evolutions cannot be sold.
@@ -330,7 +337,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-31a:** Each `player_card` stores `date_of_birth` (source of truth) and a cached `age` refreshed from DOB. New cards from registration and daily packs include DOB at creation.
 - **AC-31b:** `/player-profile` shows lifecycle phase (Youth / Early Prime / Late Prime / Veteran / Retiring) alongside age and POT.
 - **AC-31c:** Match and drill XP apply lifecycle multipliers (youth bonus, veteran penalty) via `packages/player_engine` formulas.
-- **AC-31d:** A weekly season-aging batch (`process_season_aging`, Monday 00:00 UTC) refreshes ages, applies PAC/PHY decline for veterans, flags retirement warnings at age 35+, and retires players at age 36+ (removed from squad assignments).
+- **AC-31d:** A weekly season-aging batch (`process_season_aging`, Monday 00:00 UTC) refreshes ages, applies veteran decline (PAC/PHY from 31; PAS/DEF/DRI from 33; SHO from 35; stronger PAC/PHY at 35+), flags retirement warnings at age 35+, and retires players at age 36+. Retirement removes the card from squad assignments and auto-promotes a same-role reserve when available; otherwise sets `players.squad_invalid` so match starts are blocked until `/squad` is repaired (or auto-promote restores 11).
 - **AC-31e:** Contract renewal is blocked server-side for players age 35+. Agent sale offers factor in player age.
 - **AC-31f:** Phase B youth intake and Phase C club facilities remain separate follow-ups (not required for Phase A).
 
@@ -368,7 +375,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 > **So that** I can replace aging squad members from the transfer market.
 
 **Acceptance Criteria:**
-- **AC-34a:** When a player retires at **OVR 75+**, a youth regen is listed on the global scouting pool (same position, ages 16–19, OVR 55–70).
+- **AC-34a:** When a player retires at **OVR 75+**, a youth regen is listed on the global scouting pool (same position, ages 16–19, OVR 55–70). Rarity weights by retired peak OVR: ≥85 → 50% Epic / 50% Rare; 80–84 → 60% Rare / 40% Common; 75–79 → 80% Common / 20% Rare.
 - **AC-34b:** `/marketplace` → **Search Market** shows available scouting listings with signing fees.
 - **AC-34c:** `purchase_scouting_player` RPC charges coins atomically and adds the card to the buyer's roster.
 - **AC-34d:** Regen spawn is idempotent per retired `source_card_id`; pool capped at **50** active listings.
@@ -918,7 +925,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 #### AC-25c: Action Energy Pool
 - **GIVEN** a registered player,
-- **THEN** `players.action_energy` (max 100) regens **1 per 6 minutes** via `sync_action_energy`.
+- **THEN** `players.action_energy` (max 100) regens **1 per 4 minutes** via `sync_action_energy` (`game_config.energy_regen_per_min = 0.25`; empty→full ≈ 6h 40m).
 - **AND** costs: bot match 20, league 10, basic drill 10, advanced drill 15, evolution start 25 (from `game_config`). Friendly matches cost **0** energy.
 - **AND** `/profile`, `/development`, and battle hub show unified `⚡ current/max` with time-to-full estimate.
 
@@ -1278,4 +1285,54 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-36a:** Any embed that contains interactive buttons for an action that costs energy (e.g., Bot Matches, League Matches, Training Drills, Evolutions) must include a standardized footer text: \⚡ Energy cost applies\.
 - **AC-36b:** Where applicable, Discord UI buttons that trigger an energy-consuming action should append the ⚡ emoji to the button label (e.g., \[🤖 Bot Battle ⚡]\).
 - **AC-36c:** These UI indicators must pull the dynamic cost configuration from the game_config (via get_game_config_int) so the UI stays synchronized with any backend economy rebalancing.
+
+### US-39: Player Fatigue, Injury & Hospital
+
+> **As a** football club manager,
+> **I want** per-card fatigue, post-match injuries with Hospital care, and squad rotation pressure,
+> **So that** matches reward depth and rest without breaking the coin economy.
+
+**Status:** Phases 1–3 shipped (Phase 3 = in-match substitution UI / US4).
+
+**Design:** `specs/002-injury-fatigue-hospital/` (spec, plan, plan-phase3, tasks T043–T062). Clarifications: hospital costs 1.5k–60k shared weekly facility slot; no career-ending; injury soft-cap A+C (fatigue &lt; 75, max 1 injury/club/match); live pause via `async for` + `MatchState` mutation (not `generator.send()`).
+
+**Acceptance Criteria (shipped):**
+- **AC-39a:** `player_cards.fatigue` drains after bot/league matches; bench rest + daily recovery; NSS applies fatigue penalties via phase-attr multiplier.
+- **AC-39b:** Fatigue does not replace or refill club `action_energy`.
+- **AC-39c:** Post-match injuries persist; Hospital facility under `/store` Club Facilities **and** `/profile` → Manage Hospital; auto-admit / overflow; daily `process_daily_recovery`.
+- **AC-39d:** Injured cards blocked from XI, drills, fusion, evolution start, and agent sale.
+- **AC-39e:** Friendlies remain sandbox (no fatigue/injury writes).
+- **AC-39f:** Live bot/league injuries before 90' pause ≤30s for Select/Play On; auto-sim/AI auto-resolve; mid-match recordings skip a second A+C roll.
+
+### US-40: Profile Finance & Hospital Hub
+
+> **As a** football club manager,
+> **I want** `/profile` to show club finance and hospital status with action buttons,
+> **So that** I can manage wallet and medical care from one dashboard without hunting slash commands.
+
+**Status:** Shipped (presentation hub; hospital math remains US-39).
+
+**Design:** `specs/003-profile-finance-hospital/`
+
+**Acceptance Criteria:**
+- **AC-40a:** `/profile` includes Club Finance (coins + gems) and Hospital summary (L0 empty-state, or level/beds/recovery/patients).
+- **AC-40b:** Hub buttons: Manage Hospital (reuses Store hospital panel with `origin=profile` + upgrade), Finances (wage/facility detail), View Club Stats (Squad hub).
+- **AC-40c:** No new `/hospital` slash command; Store → Facilities → Hospital path remains; `/club-finances` kept with pointer to `/profile`.
+
+### US-41: Mentor Transfusion
+
+> **As a** manager with a potential-maxed card holding surplus skill points,
+> **I want** to convert those SP into mentor XP for a developing club mate via `/development`,
+> **So that** legends remain useful for academy development instead of a dead end.
+
+**Status:** Implemented (feature specs under `specs/006-mentor-transfusion/`).
+
+**Design:** `specs/006-mentor-transfusion/`
+
+**Acceptance Criteria:**
+- **AC-41a:** Conversion **5 SP = 1 MP = 500 XP**; leftover SP below 5 stays on the source.
+- **AC-41b:** Atomic RPC `transfer_mentor_xp` debits source SP (and `skill_points_spent`), grants XP via `apply_card_xp(..., 'mentor_transfer')`, appends `mentor_transfer_log`.
+- **AC-41c:** Max **3 successful transfers per club per UTC day**; independent of allocation/fusion daily caps.
+- **AC-41d:** Allocate Skills shows Mentor Transfer for maxed sources; non-maxed allocate unchanged; profile shows Mentor Ready copy.
+- **AC-41e:** No new slash command; no coin/energy/match-engine/marketplace formula changes.
 

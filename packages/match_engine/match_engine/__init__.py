@@ -10,6 +10,14 @@ from .match_stats import MatchLiveStats, stats_from_events, zone_averages, forma
 from .fixture_generator import generate_round_robin_fixtures, expected_fixture_counts
 from .formation_positions import get_coordinates_for_formation, FORMATION_COORDINATES, get_slot_role
 from .squad_validation import reserve_fits_formation_slot
+from .substitution_resolve import (
+    SubResolution,
+    auto_pick_bench,
+    auto_resolve_injury,
+    play_on_tier_upgrade,
+    MAX_SUBS_PER_MATCH,
+)
+from .bot_squad import build_bot_match_squad
 
 __all__ = [
     "MatchPlayerCard",
@@ -35,4 +43,10 @@ __all__ = [
     "stats_from_events",
     "zone_averages",
     "format_zone_breakdown",
+    "SubResolution",
+    "auto_pick_bench",
+    "auto_resolve_injury",
+    "play_on_tier_upgrade",
+    "MAX_SUBS_PER_MATCH",
+    "build_bot_match_squad",
 ]

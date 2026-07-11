@@ -7,10 +7,30 @@ from postgrest.exceptions import APIError
 
 _FRIENDLY: dict[str, str] = {
     "Insufficient action energy": (
-        "Not enough **action energy**. Regenerates +1 every 6 minutes, or buy a refill in `/store`."
+        "Not enough **action energy**. Regenerates +1 every 4 minutes, or buy a refill in `/store`."
     ),
     "Daily drill limit reached": "You've hit today's **club drill limit** (20). Try again tomorrow.",
     "Insufficient coins": "Not enough **coins** for this drill. Play matches or claim daily login in `/store`.",
+    "Match XP could not be applied": (
+        "Match finished, but **player XP could not be saved**. Coins may already be credited — "
+        "try again later or contact an admin if this keeps happening."
+    ),
+    "Insufficient skill points": "Not enough **skill points** for that mentor transfer (need 5 SP per mentor unit).",
+    "Source card has not reached potential ceiling": (
+        "Only **potential-maxed** cards can mentor. Keep allocating or pick a maxed legend."
+    ),
+    "Target card is already maxed": "That player is already at their **potential ceiling** — pick a developing card.",
+    "Target cannot receive more XP": "That player is already at **max level** and cannot absorb mentor XP.",
+    "Target cannot absorb mentor XP": (
+        "That amount would **waste XP** near the level cap. Choose fewer mentor units or another target."
+    ),
+    "Daily mentor transfer limit (3) reached": (
+        "You've used all **3 mentor transfers** for today (UTC). Try again tomorrow."
+    ),
+    "Source card not found or not owned": "Source card not found on your club.",
+    "Target card not found or not owned": "Target card not found on your club.",
+    "Source and target must differ": "Pick a **different** player as the mentor target.",
+    "Invalid mentor unit amount": "Choose at least **1 mentor unit**.",
 }
 
 
@@ -39,4 +59,14 @@ def _extract_message(exc: Exception) -> str:
 def api_error_message(exc: Exception) -> str:
     """Turn postgrest/Supabase errors into player-facing copy."""
     raw = _extract_message(exc)
-    return _FRIENDLY.get(raw, raw)
+    if raw in _FRIENDLY:
+        return _FRIENDLY[raw]
+    # Chained XP failures (RuntimeError from apply_match_xp_if_needed)
+    if "Match XP could not be applied" in raw:
+        return _FRIENDLY["Match XP could not be applied"]
+    if "permission denied" in raw.lower() and "player_xp_log" in raw.lower():
+        return _FRIENDLY["Match XP could not be applied"]
+    for key, friendly in _FRIENDLY.items():
+        if key in raw:
+            return friendly
+    return raw

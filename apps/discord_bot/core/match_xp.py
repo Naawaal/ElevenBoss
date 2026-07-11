@@ -12,6 +12,18 @@ from apps.discord_bot.core.match_runs import mark_match_xp_applied
 
 MATCH_MINUTES = 90
 
+# Columns needed for match_xp_reward / effective_card_age (league recovery hydration).
+_XP_CARD_SELECT = "id, name, age, date_of_birth"
+
+
+async def hydrate_cards_for_match_xp(db: Any, card_ids: list) -> list[dict]:
+    """Load player_cards rows for XP apply, preserving input order. Skips missing ids."""
+    if not card_ids:
+        return []
+    res = await db.table("player_cards").select(_XP_CARD_SELECT).in_("id", card_ids).execute()
+    by_id = {str(row["id"]): row for row in (res.data or [])}
+    return [by_id[str(cid)] for cid in card_ids if str(cid) in by_id]
+
 
 def _goals_and_assists(
     player_name: str,
@@ -128,5 +140,6 @@ async def apply_match_xp_if_needed(
             {"history_id": str(history_id), "error": str(exc)[:300]},
         )
         # #endregion
-        raise
+        # FR-004: surface a stable message key for api_error_message mapping
+        raise RuntimeError("Match XP could not be applied") from exc
     await mark_match_xp_applied(db, history_id)

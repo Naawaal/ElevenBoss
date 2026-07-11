@@ -49,6 +49,18 @@ async def regen_pool_job(bot: commands.Bot) -> None:
         logger.exception("Regen pool job failed.")
 
 
+async def daily_recovery_job(bot: commands.Bot) -> None:
+    """Daily 00:05 UTC — fatigue recovery + hospital discharges / untreated clocks."""
+    logger.info("Executing daily fatigue/injury recovery...")
+    try:
+        db = await get_client()
+        res = await db.rpc("process_daily_recovery").execute()
+        summary = res.data or {}
+        logger.info("Daily recovery complete: %s", summary)
+    except Exception:
+        logger.exception("Daily recovery job failed.")
+
+
 async def weekly_league_reset_job(bot: commands.Bot) -> None:
     """
     APScheduler cron job (Monday 00:00 UTC) to:

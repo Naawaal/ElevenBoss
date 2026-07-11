@@ -10,7 +10,7 @@ def test_api_error_string_dict_payload() -> None:
     exc = APIError({"message": "Insufficient action energy", "code": "P0001"})
     msg = api_error_message(exc)
     assert msg == (
-        "Not enough **action energy**. Regenerates +1 every 6 minutes, or buy a refill in `/store`."
+        "Not enough **action energy**. Regenerates +1 every 4 minutes, or buy a refill in `/store`."
     )
     assert "{" not in msg
 

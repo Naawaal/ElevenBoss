@@ -9,9 +9,10 @@ def test_generate_youth_intake_cards_bounds() -> None:
     )
     assert len(cards) == 3
     for card in cards:
-        assert card["rarity"] == "Common"
-        assert 16 <= card["age"] <= 19
-        assert 50 <= card["overall"] <= 65
-        assert 72 <= card["potential"] <= 82
-        assert card["potential"] >= card["overall"]
-        assert card["date_of_birth"]
+        assert card.rarity == "Common"
+        assert 16 <= card.age <= 19
+        assert 50 <= card.overall <= 65
+        assert 72 <= card.potential <= 82
+        assert card.potential >= card.overall
+        assert card.date_of_birth
+        assert card.role

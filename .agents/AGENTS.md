@@ -110,12 +110,14 @@ Not lazy about: understanding the problem (read it fully and trace the real flow
 
 Player XP/level/skill points are **centralized**. Agents must not reintroduce old bypasses.
 
-* **Single XP pipe:** all XP (match, drill, fusion) goes through RPC `apply_card_xp`. Never `UPDATE player_cards SET xp = xp + N` or `level = level + 1` in app code or ad-hoc SQL.
+* **Single XP pipe:** all XP (match, drill, fusion, mentor) goes through RPC `apply_card_xp`. Never `UPDATE player_cards SET xp = xp + N` or `level = level + 1` in app code or ad-hoc SQL.
 * **Pure formulas:** `packages/player_engine/player_engine/progression.py` is the source of truth for curves and rewards (`match_xp_reward`, `fusion_xp_reward`, `drill_xp_reward`, `level_from_xp`). Bot code **calls** these; it does not duplicate formulas.
 * **Match XP wiring:** use `apps/discord_bot/core/match_xp.py` → `build_process_match_result_rpc()` and RPC `process_match_result(..., p_xp_amounts)`. Do **not** pass hardcoded flat XP (e.g. `15`) from cogs.
 * **Drills:** `process_stat_drill` grants XP only — no direct `+1` stat bumps.
 * **Fusion:** `train_with_fodder` grants fusion XP via `apply_card_xp` — no direct level/stat bump; respect `fusion_daily_log` cap.
 * **Skill allocation:** `allocate_skill_point` enforces POT caps and `skill_points_spent`; use `can_allocate_skill_point()` in packages before UI hints.
+* **Mentor Transfusion:** potential-maxed surplus SP → youth XP via RPC `transfer_mentor_xp` (5 SP = 1 MP = 500 XP; 3/club/UTC day; log `mentor_transfer_log`). Pure math in `packages/player_engine/mentor_math.py`. UI under `/development` Allocate Skills + profile Ready copy. Does not touch coins/energy or allocation daily caps.
+* **Retirement lifecycle (053):** Decline PAC/PHY≥31 (−2 at ≥35), PAS/DEF/DRI≥33, SHO≥35 via `process_season_aging` / `yearly_stat_decline`. `retire_player_card` auto-promotes same-role reserve or sets `players.squad_invalid` (clears on promote→11 or full `/squad` save). Match gates in `squad_validity.py` + `battle_cog`. Regen rarity via `regen_rarity_for_ovr` (≥85 never Common).
 * **Retroactive rewards:** `pending_level_rewards` + `claim_pending_level_rewards`; claim uses **current `owner_id`**, not stale `club_id`; scaled 75% cap 18 (US-24).
 * **Daily caps (US-24):** match XP 100/card/day; drills 5/card/day + 20/club; allocation 15/card/day during pacing window.
 * **`/claim-rewards`** fallback when DMs disabled — use **`/development` hub Claim button** instead.
@@ -125,7 +127,7 @@ Player XP/level/skill points are **centralized**. Agents must not reintroduce ol
 
 * **Single coin pipe:** all coin mutations go through RPC `apply_club_economy` (match payouts, drills, fusion, login, refills). Never direct `players.coins` UPDATE in cogs.
 * **Config:** tunables live in `game_config` table (migration `028_economy_foundation.sql`); packages mirror defaults in `packages/economy/economy/flows.py`.
-* **Action energy:** unified `players.action_energy` via `sync_action_energy` (+1 per 6 min); legacy `energy`/`training_energy` dual-written during transition.
+* **Action energy:** unified `players.action_energy` via `sync_action_energy` (+1 per 4 min); legacy `energy`/`training_energy` dual-written during transition.
 * **Match wiring:** `apps/discord_bot/core/economy_rpc.py` — `apply_match_economy`, `sync_action_energy`, `compute_*_match_coins`; `battle_cog` uses `match_run_id` as idempotency key.
 * **Agent sales:** `process_agent_sale` enforces `agent_sale_daily_cap` (default 10/day).
 * **Player faucets:** `/store` hub (`store_cog.py`) for `claim_daily_login` + `purchase_energy_refill` — **not** `/development`.

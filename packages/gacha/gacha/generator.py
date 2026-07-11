@@ -1,15 +1,18 @@
 # packages/gacha/gacha/generator.py
 from __future__ import annotations
-import os
-import json
-import random
-from .models import GachaPlayer, GachaPack, StarterSquad, RARITY_RATING_RANGES
 
-_POSITIONS = ["GK", "DEF", "MID", "FWD"]
-_POSITION_WEIGHTS = [10, 30, 30, 30]
+import json
+import os
+import random
+
+from player_engine import CreatedPlayerCard, create_player_card, generate_youth_intake_cards
+
+from .models import GachaPack, GachaPlayer, RARITY_RATING_RANGES, StarterSquad
+from .pack_configs import get_pack_config
 
 _YOUTH_POSITIONS: list[str] = ["GK", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "FWD", "FWD"]
 _MARQUEE_POSITIONS: list[str] = ["DEF", "DEF", "MID", "MID", "MID", "FWD"]
+
 
 def _load_names() -> dict[str, list[str]]:
     dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -17,7 +20,25 @@ def _load_names() -> dict[str, list[str]]:
     with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-from player_engine import create_player_card, generate_youth_intake_cards
+
+def _from_created(card: CreatedPlayerCard) -> GachaPlayer:
+    return GachaPlayer(
+        name=card.name,
+        position=card.position,
+        rarity=card.rarity,
+        base_rating=card.base_rating,
+        overall=card.overall,
+        pac=card.pac,
+        sho=card.sho,
+        pas=card.pas,
+        dri=card.dri,
+        def_stat=card.def_stat,
+        phy=card.phy,
+        potential=card.potential,
+        age=card.age,
+        date_of_birth=card.date_of_birth,
+        role=card.role,
+    )
 
 
 def _make_player(position: str, rarity: str, names: dict[str, list[str]]) -> GachaPlayer:
@@ -25,43 +46,28 @@ def _make_player(position: str, rarity: str, names: dict[str, list[str]]) -> Gac
     target = random.randint(lo, hi)
     first_name = random.choice(names["first"])
     last_name = random.choice(names["last"])
-    data = create_player_card(
+    card = create_player_card(
         position=position,
         rarity=rarity,
         target_ovr=target,
         first_name=first_name,
         last_name=last_name,
     )
-    return GachaPlayer(
-        name=data["name"],
-        position=data["position"],
-        rarity=data["rarity"],
-        base_rating=data["base_rating"],
-        overall=data["overall"],
-        pac=data["pac"],
-        sho=data["sho"],
-        pas=data["pas"],
-        dri=data["dri"],
-        def_stat=data["def"],
-        phy=data["phy"],
-        potential=data["potential"],
-        age=data["age"],
-        date_of_birth=data["date_of_birth"],
-    )
+    return _from_created(card)
 
-def generate_pack(n: int = 5) -> GachaPack:
-    """Generates a randomized pack of n players with weighted rarities."""
+
+def generate_pack(n: int | None = None, *, pack_id: str = "standard") -> GachaPack:
+    """Generate a pack using named PackConfig (default: standard 60/30/8/2)."""
+    cfg = get_pack_config(pack_id)
+    count = cfg.card_count if n is None else n
     names = _load_names()
     players = []
-    rarity_choices = ["Common", "Rare", "Epic", "Legendary"]
-    rarity_weights = [60, 30, 8, 2]
-
-    for _ in range(n):
-        rarity = random.choices(rarity_choices, weights=rarity_weights, k=1)[0]
-        position = random.choices(_POSITIONS, weights=_POSITION_WEIGHTS, k=1)[0]
+    for _ in range(count):
+        rarity = random.choices(list(cfg.rarities), weights=list(cfg.rarity_weights), k=1)[0]
+        position = random.choices(list(cfg.positions), weights=list(cfg.position_weights), k=1)[0]
         players.append(_make_player(position, rarity, names))
-
     return GachaPack(players=players)
+
 
 def generate_starter_squad() -> StarterSquad:
     """
@@ -92,22 +98,4 @@ def generate_youth_intake(count: int | None = None, *, academy_level: int = 1) -
         first_names=names["first"],
         last_names=names["last"],
     )
-    return [
-        GachaPlayer(
-            name=row["name"],
-            position=row["position"],
-            rarity=row["rarity"],
-            base_rating=row["base_rating"],
-            overall=row["overall"],
-            pac=row["pac"],
-            sho=row["sho"],
-            pas=row["pas"],
-            dri=row["dri"],
-            def_stat=row["def"],
-            phy=row["phy"],
-            potential=row["potential"],
-            age=row["age"],
-            date_of_birth=row["date_of_birth"],
-        )
-        for row in rows
-    ]
+    return [_from_created(row) for row in rows]

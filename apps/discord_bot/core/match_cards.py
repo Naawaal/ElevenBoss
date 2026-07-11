@@ -24,6 +24,8 @@ def card_from_db_row(row: dict[str, Any], playstyles: list[str] | None = None) -
         def_stat=int(row.get("def", 50)),
         phy=int(row.get("phy", 50)),
         morale=morale,
+        fatigue=int(row.get("fatigue", 100)),
+        card_id=str(row["id"]) if row.get("id") else None,
         playstyles=list(playstyles or []),
     )
 

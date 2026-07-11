@@ -30,6 +30,15 @@ from pydantic import BaseModel, Field
 
 from .match_stats import MatchLiveStats
 from .phase_stats import PhaseStat, phase_stat_value
+from .substitution_resolve import (
+    MAX_SUBS_PER_MATCH,
+    SubResolution,
+    apply_sub,
+    apply_ten_men,
+    auto_resolve_injury,
+    bench_options_payload,
+    is_gk,
+)
 
 # Stat gap impact: /55 yields ~75%+ favorite win at +10 OVR (audit target)
 _STAT_DIFF_DIVISOR = 55.0
@@ -158,9 +167,11 @@ class MatchState(BaseModel):
         home_rating, away_rating, home_score, away_score, minute, momentum,
         home_tactics_modifier, context_tags
 
-    New internal fields are prefixed with underscore or stored outside this
-    model in the stream_match() closure.
+    Phase 3 injury/sub fields are serializable; asyncio.Event for Discord pause
+    is attached as a plain attribute (sub_wait_event) outside Pydantic.
     """
+    model_config = {"arbitrary_types_allowed": True}
+
     home_rating: float
     away_rating: float
     home_score: int = 0
@@ -171,6 +182,20 @@ class MatchState(BaseModel):
     context_tags: list[str] = Field(default_factory=list)
     pending_home_momentum: float = 0.0
     live_stats: MatchLiveStats = Field(default_factory=MatchLiveStats)
+
+    # Phase 3 — in-match injury / subs
+    injuries_enabled: bool = False
+    interactive_sides: list[str] = Field(default_factory=list)
+    bench_home: list = Field(default_factory=list)
+    bench_away: list = Field(default_factory=list)
+    subs_used_home: int = 0
+    subs_used_away: int = 0
+    recorded_injuries: list[dict] = Field(default_factory=list)
+    compromised_card_ids: list[str] = Field(default_factory=list)
+    emergency_gk_ids: list[str] = Field(default_factory=list)
+    injury_used_home: bool = False
+    injury_used_away: bool = False
+    sub_resolution: dict | None = None
 
     def update_tags(self) -> None:
         tags: list[str] = []
@@ -195,9 +220,8 @@ class MatchState(BaseModel):
 # Core probability engine
 # ---------------------------------------------------------------------------
 def _probability_floor(attacker_stat: float, defender_stat: float) -> float:
-    """Lower floor when stat gap is large so favorites convert dominance."""
-    diff = attacker_stat - defender_stat
-    return 0.02 if diff > 15.0 else 0.05
+    """Hard 5% floor so trailing sides still win contested transitions (immersion)."""
+    return 0.05
 
 
 def _roll_chance(
@@ -294,6 +318,255 @@ def _advance_clock(rng: random.Random, phase: Phase, current_minute: int) -> int
     return min(90, current_minute + rng.randint(lo, hi))
 
 
+def _player_card_id(player) -> str | None:
+    if player is None:
+        return None
+    if hasattr(player, "card_id") and player.card_id:
+        return str(player.card_id)
+    if isinstance(player, dict):
+        return str(player.get("id") or player.get("card_id") or "") or None
+    return None
+
+
+def _find_player(squad: list, card_id: str | None):
+    if not card_id:
+        return None
+    for p in squad:
+        if _player_card_id(p) == card_id:
+            return p
+    return None
+
+
+def _starters_for_injury_roll(squad: list) -> list[dict]:
+    rows = []
+    for p in squad:
+        cid = _player_card_id(p)
+        if not cid:
+            continue
+        fatigue = int(getattr(p, "fatigue", None) or (p.get("fatigue", 100) if isinstance(p, dict) else 100))
+        phy = int(getattr(p, "phy", None) or (p.get("phy", 50) if isinstance(p, dict) else 50))
+        age = int(getattr(p, "age", None) or (p.get("age", 25) if isinstance(p, dict) else 25))
+        rows.append({"id": cid, "fatigue": fatigue, "phy": phy, "age": age})
+    return rows
+
+
+def _bench_for_side(state: MatchState, side: str) -> list:
+    return list(state.bench_home if side == "home" else state.bench_away)
+
+
+def _subs_used(state: MatchState, side: str) -> int:
+    return state.subs_used_home if side == "home" else state.subs_used_away
+
+
+def _set_subs_used(state: MatchState, side: str, value: int) -> None:
+    if side == "home":
+        state.subs_used_home = value
+    else:
+        state.subs_used_away = value
+
+
+def _set_bench(state: MatchState, side: str, bench: list) -> None:
+    if side == "home":
+        state.bench_home = bench
+    else:
+        state.bench_away = bench
+
+
+def _apply_sub_resolution(
+    state: MatchState,
+    home: MatchTeamState,
+    away: MatchTeamState,
+    resolution: SubResolution | dict,
+) -> None:
+    if isinstance(resolution, dict):
+        resolution = SubResolution(
+            kind=resolution["kind"],
+            injured_card_id=resolution.get("injured_card_id"),
+            replacement_card_id=resolution.get("replacement_card_id"),
+            tier=int(resolution.get("tier") or 1),
+            side=str(resolution.get("side") or "home"),
+            play_on=bool(resolution.get("play_on")),
+        )
+    side = resolution.side
+    team = home if side == "home" else away
+    bench = _bench_for_side(state, side)
+    injured_id = resolution.injured_card_id or ""
+    kind = resolution.kind
+
+    if kind == "play_on" or resolution.play_on:
+        if injured_id and injured_id not in state.compromised_card_ids:
+            state.compromised_card_ids.append(injured_id)
+        injured_p = _find_player(team.squad, injured_id)
+        if injured_p is not None:
+            if hasattr(injured_p, "compromised"):
+                injured_p.compromised = True
+            elif isinstance(injured_p, dict):
+                injured_p["compromised"] = True
+        if "played_through_injury" not in state.context_tags:
+            state.context_tags.append("played_through_injury")
+    elif kind == "sub" and resolution.replacement_card_id:
+        team.squad, bench = apply_sub(
+            team.squad, bench, injured_id, resolution.replacement_card_id
+        )
+        team._compute_zone_averages()
+        _set_bench(state, side, bench)
+        _set_subs_used(state, side, _subs_used(state, side) + 1)
+        if "substitution" not in state.context_tags:
+            state.context_tags.append("substitution")
+    elif kind == "emergency_gk" and resolution.replacement_card_id:
+        team.squad = apply_ten_men(team.squad, injured_id)
+        em = _find_player(team.squad, resolution.replacement_card_id)
+        if em is not None:
+            if hasattr(em, "emergency_gk"):
+                em.emergency_gk = True
+            elif isinstance(em, dict):
+                em["emergency_gk"] = True
+            if hasattr(em, "position"):
+                em.position = "GK"
+            elif isinstance(em, dict):
+                em["position"] = "GK"
+        if resolution.replacement_card_id not in state.emergency_gk_ids:
+            state.emergency_gk_ids.append(resolution.replacement_card_id)
+        team._compute_zone_averages()
+        _set_subs_used(state, side, _subs_used(state, side) + 1)
+        if "emergency_goalkeeper" not in state.context_tags:
+            state.context_tags.append("emergency_goalkeeper")
+    else:  # ten_men
+        team.squad = apply_ten_men(team.squad, injured_id)
+        team._compute_zone_averages()
+        if "down_to_ten_men" not in state.context_tags:
+            state.context_tags.append("down_to_ten_men")
+
+    state.recorded_injuries.append({
+        "player_card_id": injured_id,
+        "tier": resolution.tier,
+        "side": side,
+        "resolution": kind,
+        "minute": state.minute,
+        "play_on": kind == "play_on" or resolution.play_on,
+    })
+    if side == "home":
+        state.injury_used_home = True
+    else:
+        state.injury_used_away = True
+    state.sub_resolution = None
+
+
+def _build_injury_event(
+    state: MatchState,
+    team: MatchTeamState,
+    side: str,
+    injured,
+    tier: int,
+) -> dict:
+    bench = _bench_for_side(state, side)
+    subs_used = _subs_used(state, side)
+    subs_remaining = max(0, MAX_SUBS_PER_MATCH - subs_used)
+    minute = state.minute
+    gk_emergency = bool(is_gk(injured) and not any(is_gk(p) for p in bench))
+    options: list[str] = []
+    if minute < 90:
+        if subs_remaining > 0 and bench:
+            options = ["sub", "play_on"]
+        elif gk_emergency:
+            options = ["play_on"]  # emergency path still allows play_on; auto may pick emergency
+        elif subs_remaining > 0 and not bench:
+            options = []  # 10-men auto
+        else:
+            options = ["play_on"]  # no subs left — play on or auto ten_men via timeout
+
+    interactive = (
+        state.injuries_enabled
+        and side in state.interactive_sides
+        and minute < 90
+        and bool(options)
+    )
+
+    return {
+        "minute": minute,
+        "type": "INJURY",
+        "score_update": f"{state.home_score} - {state.away_score}",
+        "actor": _get_name(injured),
+        "team": team.name,
+        "interactive": interactive,
+        "side": side,
+        "injured_card_id": _player_card_id(injured),
+        "injured_name": _get_name(injured),
+        "injury_tier": tier,
+        "subs_remaining": subs_remaining,
+        "bench": bench_options_payload(bench),
+        "options": options,
+        "gk_emergency": gk_emergency,
+    }
+
+
+def _try_authoritative_injury(
+    state: MatchState,
+    team: MatchTeamState,
+    side: str,
+    rng: random.Random,
+) -> dict | None:
+    """A+C mid-match roll; at most one injury per side per match."""
+    if not state.injuries_enabled:
+        return None
+    if side == "home" and state.injury_used_home:
+        return None
+    if side == "away" and state.injury_used_away:
+        return None
+    if not team.squad:
+        return None
+    from player_engine import select_post_match_injury
+
+    hit = select_post_match_injury(_starters_for_injury_roll(team.squad), rng=rng)
+    if not hit:
+        return None
+    injured = _find_player(team.squad, hit.player_card_id)
+    if injured is None:
+        return None
+    return _build_injury_event(state, team, side, injured, hit.tier)
+
+
+def _consume_injury_after_yield(
+    state: MatchState,
+    home: MatchTeamState,
+    away: MatchTeamState,
+    injury_ev: dict,
+    rng: random.Random,
+) -> None:
+    """After Discord/auto consumer sets sub_resolution (or fallback auto)."""
+    if state.sub_resolution:
+        _apply_sub_resolution(state, home, away, state.sub_resolution)
+        return
+    side = injury_ev.get("side") or "home"
+    team = home if side == "home" else away
+    injured = _find_player(team.squad, injury_ev.get("injured_card_id"))
+    if injured is None:
+        # Already gone — still record
+        state.recorded_injuries.append({
+            "player_card_id": injury_ev.get("injured_card_id"),
+            "tier": int(injury_ev.get("injury_tier") or 1),
+            "side": side,
+            "resolution": "ten_men",
+            "minute": state.minute,
+            "play_on": False,
+        })
+        if side == "home":
+            state.injury_used_home = True
+        else:
+            state.injury_used_away = True
+        return
+    res = auto_resolve_injury(
+        side=side,
+        injured=injured,
+        bench=_bench_for_side(state, side),
+        squad=team.squad,
+        subs_used=_subs_used(state, side),
+        tier=int(injury_ev.get("injury_tier") or 1),
+        rng=rng,
+    )
+    _apply_sub_resolution(state, home, away, res)
+
+
 # ---------------------------------------------------------------------------
 # stream_match — the async generator consumed by battle_cog.py
 # ---------------------------------------------------------------------------
@@ -340,6 +613,13 @@ async def stream_match(
                 "actor": "The referee",
                 "team": home_name,
             }
+            # Stoppage: optional A+C injury for either side
+            for side, team in (("home", home), ("away", away)):
+                if rng.random() < 0.15:
+                    inj = _try_authoritative_injury(state, team, side, rng)
+                    if inj:
+                        yield inj
+                        _consume_injury_after_yield(state, home, away, inj, rng)
             phase = Phase.MIDFIELD
             continue
 
@@ -361,6 +641,8 @@ async def stream_match(
             if rng.random() < 0.08:
                 state.minute = _advance_clock(rng, phase, state.minute)
                 phase = Phase.SET_PIECE
+                # Set-piece side keeps the ball — count possession (was missing → 0% ghosts)
+                stats.record_possession(attacking.is_home)
                 fouler = _pick_player(rng, defending.squad, "defense")
                 fouler_name = _get_name(fouler)
                 yield {
@@ -378,6 +660,13 @@ async def stream_match(
                         "actor": fouler_name,
                         "team": defending.name,
                     }
+                # Stoppage injury check on defending side
+                if rng.random() < 0.12:
+                    side = "home" if defending.is_home else "away"
+                    inj = _try_authoritative_injury(state, defending, side, rng)
+                    if inj:
+                        yield inj
+                        _consume_injury_after_yield(state, home, away, inj, rng)
                 continue
 
             state.minute = _advance_clock(rng, phase, state.minute)
@@ -410,7 +699,8 @@ async def stream_match(
                 phase = Phase.COUNTER_ATTACK
                 attacking, defending = defending, attacking
                 tactics = state.home_tactics_modifier if attacking.is_home else 1.0
-
+                # Countering side wins the ball — was uncounted → 0% with chances
+                stats.record_possession(attacking.is_home)
         elif phase == Phase.ATTACK:
             atk_stat = attacking.phase_attack(PhaseStat.ATTACK, tactics)
             def_stat = defending.phase_defense()
@@ -485,15 +775,12 @@ async def stream_match(
 
                 _apply_momentum_goal(attacking, defending)
 
-                if rng.random() < 0.01 and len(attacking.squad) > 0:
-                    injury_player = _pick_player(rng, attacking.squad)
-                    yield {
-                        "minute": state.minute,
-                        "type": "INJURY",
-                        "score_update": f"{state.home_score} - {state.away_score}",
-                        "actor": _get_name(injury_player),
-                        "team": attacking.name,
-                    }
+                if rng.random() < 0.03:
+                    side = "home" if attacking.is_home else "away"
+                    inj = _try_authoritative_injury(state, attacking, side, rng)
+                    if inj:
+                        yield inj
+                        _consume_injury_after_yield(state, home, away, inj, rng)
 
                 phase = Phase.MIDFIELD
 
@@ -508,6 +795,12 @@ async def stream_match(
                 }
                 _apply_momentum_save(defending)
                 phase = Phase.SET_PIECE
+                if rng.random() < 0.08:
+                    side = "home" if defending.is_home else "away"
+                    inj = _try_authoritative_injury(state, defending, side, rng)
+                    if inj:
+                        yield inj
+                        _consume_injury_after_yield(state, home, away, inj, rng)
 
             else:
                 yield {
@@ -569,15 +862,12 @@ async def stream_match(
                 attacking.stagnation_counter += 1
                 phase = Phase.MIDFIELD
 
-            if rng.random() < 0.02 and len(defending.squad) > 0:
-                injury_player = _pick_player(rng, defending.squad, "defense")
-                yield {
-                    "minute": state.minute,
-                    "type": "INJURY",
-                    "score_update": f"{state.home_score} - {state.away_score}",
-                    "actor": _get_name(injury_player),
-                    "team": defending.name,
-                }
+            if rng.random() < 0.04:
+                side = "home" if defending.is_home else "away"
+                inj = _try_authoritative_injury(state, defending, side, rng)
+                if inj:
+                    yield inj
+                    _consume_injury_after_yield(state, home, away, inj, rng)
 
     state.minute = 90
     state.momentum = int(home.momentum * 10)
@@ -601,6 +891,8 @@ async def collect_match_events(
     sim_seed: int,
 ) -> tuple[MatchState, list[dict]]:
     """Run stream_match to completion without Discord delays (recovery / fast-forward)."""
+    # Silent sims never prompt — clear interactive sides so events auto-resolve
+    state.interactive_sides = []
     rng = random.Random(sim_seed)
     events: list[dict] = []
     async for ev in stream_match(state, home_squad, away_squad, home_name, away_name, rng=rng):

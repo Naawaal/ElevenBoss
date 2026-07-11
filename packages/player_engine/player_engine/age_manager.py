@@ -83,14 +83,23 @@ def apply_xp_age_multiplier(base_xp: int, age: int, cfg: LifecycleConfig | None 
 
 
 def yearly_stat_decline(age: int, cfg: LifecycleConfig | None = None) -> dict[str, int]:
-    """Per birthday-year stat deltas (negative = decline). Empty if still in prime."""
-    phase = lifecycle_phase(age, cfg)
-    if phase == LifecyclePhase.VETERAN:
-        return {"pac": -1, "phy": -1, "pas": 0, "def": 0, "sho": 0, "dri": 0}
-    if phase == LifecyclePhase.RETIRING:
-        pas_def = -1 if age >= 33 else 0
-        return {"pac": -2, "phy": -2, "pas": pas_def, "def": pas_def, "sho": 0, "dri": 0}
-    return {}
+    """Per birthday-year stat deltas (negative = decline). Empty if age < 31.
+
+    Mirrors process_season_aging (migration 053):
+      ≥31 PAC/PHY −1 (−2 at ≥35); ≥33 PAS/DEF/DRI −1; ≥35 SHO −1.
+    """
+    _ = cfg  # reserved for future lifecycle tunables; age bands are fixed product rules
+    if age < 31:
+        return {}
+    pac_phy = -2 if age >= 35 else -1
+    out: dict[str, int] = {"pac": pac_phy, "phy": pac_phy}
+    if age >= 33:
+        out["pas"] = -1
+        out["def"] = -1
+        out["dri"] = -1
+    if age >= 35:
+        out["sho"] = -1
+    return out
 
 
 def lifecycle_phase_label(phase: LifecyclePhase) -> str:

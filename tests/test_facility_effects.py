@@ -31,5 +31,6 @@ def test_generate_youth_intake_l5_bounds() -> None:
         last_names=["Smith"],
     )
     for card in cards:
-        assert 56 <= card["overall"] <= 69
-        assert card["potential"] <= 94
+        assert 56 <= card.overall <= 69
+        assert card.potential <= 94
+        assert card.role

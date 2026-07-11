@@ -29,9 +29,10 @@ async def fetch_squad_data(user_id: int):
     db = await get_client()
     
     # 1. Fetch club/manager details from players
-    player_res = await db.table("players").select("club_name, manager_name").eq("discord_id", user_id).maybe_single().execute()
+    player_res = await db.table("players").select("club_name, manager_name, squad_invalid").eq("discord_id", user_id).maybe_single().execute()
     player_data = player_res.data if player_res else None
     club_name = player_data.get("club_name", "Unknown Club") if player_data else "Unknown Club"
+    squad_invalid = bool(player_data.get("squad_invalid")) if player_data else False
     
     # 2. Fetch squad formation
     squad_res = await db.table("squads").select("formation").eq("discord_id", user_id).maybe_single().execute()
@@ -50,7 +51,7 @@ async def fetch_squad_data(user_id: int):
     lock_res = await db.table("match_locks").select("*").eq("discord_id", user_id).maybe_single().execute()
     is_locked = bool(lock_res.data) if lock_res else False
     
-    return club_name, formation, assignments, reserves_count, is_locked
+    return club_name, formation, assignments, reserves_count, is_locked, squad_invalid
 
 def get_players_list_for_pitch(formation: str, assignments: dict[int, dict]) -> list[dict]:
     players_list = []
@@ -73,7 +74,14 @@ def get_players_list_for_pitch(formation: str, assignments: dict[int, dict]) -> 
             })
     return players_list
 
-def build_hub_embed(club_name: str, formation: str, assignments: dict[int, dict], reserves_count: int, is_locked: bool) -> discord.Embed:
+def build_hub_embed(
+    club_name: str,
+    formation: str,
+    assignments: dict[int, dict],
+    reserves_count: int,
+    is_locked: bool,
+    squad_invalid: bool = False,
+) -> discord.Embed:
     embed = discord.Embed(
         title=f"📋 {club_name} Squad Management",
         color=0x00FF87
@@ -82,8 +90,15 @@ def build_hub_embed(club_name: str, formation: str, assignments: dict[int, dict]
     embed.add_field(name="Tactical Formation", value=f"`{formation}`", inline=True)
     embed.add_field(name="Reserves", value=f"👥 {reserves_count} Reserves Available", inline=True)
     
+    notes: list[str] = []
     if is_locked:
-        embed.description = "🔒 **Squad is locked. A match is currently in progress.**"
+        notes.append("🔒 **Squad is locked. A match is currently in progress.**")
+    if squad_invalid:
+        notes.append(
+            "⚠️ **Starting XI invalid after a retirement.** Fill empty slots, then save — matches are blocked until then."
+        )
+    if notes:
+        embed.description = "\n".join(notes)
         
     embed.set_image(url="attachment://squad_pitch.png")
     return embed
@@ -212,7 +227,7 @@ class SquadFormationView(discord.ui.View):
 
     async def on_back(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        club_name, formation, assignments, reserves_count, is_locked = await fetch_squad_data(self.user_id)
+        club_name, formation, assignments, reserves_count, is_locked, squad_invalid = await fetch_squad_data(self.user_id)
         players_list = get_players_list_for_pitch(formation, assignments)
         pitch_file = await generate_squad_pitch(formation, players_list)
         
@@ -222,7 +237,7 @@ class SquadFormationView(discord.ui.View):
         self.hub_view.reserves_count = reserves_count
         self.hub_view.is_locked = is_locked
         self.hub_view.setup_buttons()
-        await interaction.edit_original_response(embed=build_hub_embed(club_name, formation, assignments, reserves_count, is_locked), attachments=[pitch_file], view=self.hub_view)
+        await interaction.edit_original_response(embed=build_hub_embed(club_name, formation, assignments, reserves_count, is_locked, squad_invalid), attachments=[pitch_file], view=self.hub_view)
 
     async def on_select_formation(self, interaction: discord.Interaction) -> None:
         chosen_formation = self.select.values[0]
@@ -284,7 +299,7 @@ class SquadFormationView(discord.ui.View):
             }).execute()
                 
             # Return to main Hub with success message
-            club_name, formation, assignments, reserves_count, is_locked = await fetch_squad_data(self.user_id)
+            club_name, formation, assignments, reserves_count, is_locked, squad_invalid = await fetch_squad_data(self.user_id)
             players_list = get_players_list_for_pitch(formation, assignments)
             pitch_file = await generate_squad_pitch(formation, players_list)
             
@@ -296,7 +311,7 @@ class SquadFormationView(discord.ui.View):
             self.hub_view.setup_buttons()
             
             success_msg = f"Successfully set formation to **{chosen_formation}** and auto-assigned starters!"
-            embed = build_hub_embed(club_name, formation, assignments, reserves_count, is_locked)
+            embed = build_hub_embed(club_name, formation, assignments, reserves_count, is_locked, squad_invalid)
             embed.description = f"✅ {success_msg}"
             
             await interaction.edit_original_response(embed=embed, attachments=[pitch_file], view=self.hub_view)
@@ -425,7 +440,7 @@ class SquadSwapView(discord.ui.View):
 
     async def on_back(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        club_name, formation, assignments, reserves_count, is_locked = await fetch_squad_data(self.user_id)
+        club_name, formation, assignments, reserves_count, is_locked, squad_invalid = await fetch_squad_data(self.user_id)
         players_list = get_players_list_for_pitch(formation, assignments)
         pitch_file = await generate_squad_pitch(formation, players_list)
         
@@ -435,7 +450,7 @@ class SquadSwapView(discord.ui.View):
         self.hub_view.reserves_count = reserves_count
         self.hub_view.is_locked = is_locked
         self.hub_view.setup_buttons()
-        await interaction.edit_original_response(embed=build_hub_embed(club_name, formation, assignments, reserves_count, is_locked), attachments=[pitch_file], view=self.hub_view)
+        await interaction.edit_original_response(embed=build_hub_embed(club_name, formation, assignments, reserves_count, is_locked, squad_invalid), attachments=[pitch_file], view=self.hub_view)
 
     async def on_confirm(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
@@ -452,9 +467,16 @@ class SquadSwapView(discord.ui.View):
             if not slot:
                 raise ValueError("Could not find the squad slot of the selected starter.")
 
-            reserve_res = await db.table("player_cards").select("id, position").eq("id", self.selected_reserve_id).eq("owner_id", self.user_id).maybe_single().execute()
+            reserve_res = await db.table("player_cards").select(
+                "id, position, injury_tier, name"
+            ).eq("id", self.selected_reserve_id).eq("owner_id", self.user_id).maybe_single().execute()
             if not reserve_res or not reserve_res.data:
                 raise ValueError("Reserve player no longer available.")
+
+            if reserve_res.data.get("injury_tier"):
+                raise ValueError(
+                    f"**{reserve_res.data.get('name', 'Player')}** is injured and cannot enter the starting XI."
+                )
 
             reserve_pos = reserve_res.data["position"]
             if not reserve_fits_formation_slot(self.hub_view.formation, slot, reserve_pos):
@@ -470,7 +492,7 @@ class SquadSwapView(discord.ui.View):
             }).execute()
             
             # Refresh hub and transition
-            club_name, formation, assignments, reserves_count, is_locked = await fetch_squad_data(self.user_id)
+            club_name, formation, assignments, reserves_count, is_locked, squad_invalid = await fetch_squad_data(self.user_id)
             players_list = get_players_list_for_pitch(formation, assignments)
             pitch_file = await generate_squad_pitch(formation, players_list)
             
@@ -487,7 +509,7 @@ class SquadSwapView(discord.ui.View):
             r_name = reserve_card["name"] if reserve_card else "Unknown"
             
             success_msg = f"Successfully swapped **{s_name}** out for **{r_name}** in Slot {slot}!"
-            embed = build_hub_embed(club_name, formation, assignments, reserves_count, is_locked)
+            embed = build_hub_embed(club_name, formation, assignments, reserves_count, is_locked, squad_invalid)
             embed.description = f"✅ {success_msg}"
             
             await interaction.edit_original_response(embed=embed, attachments=[pitch_file], view=self.hub_view)
@@ -573,7 +595,7 @@ class SquadRosterView(discord.ui.View):
 
     async def on_back(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        club_name, formation, assignments, reserves_count, is_locked = await fetch_squad_data(self.user_id)
+        club_name, formation, assignments, reserves_count, is_locked, squad_invalid = await fetch_squad_data(self.user_id)
         players_list = get_players_list_for_pitch(formation, assignments)
         pitch_file = await generate_squad_pitch(formation, players_list)
         
@@ -583,7 +605,40 @@ class SquadRosterView(discord.ui.View):
         self.hub_view.reserves_count = reserves_count
         self.hub_view.is_locked = is_locked
         self.hub_view.setup_buttons()
-        await interaction.edit_original_response(embed=build_hub_embed(club_name, formation, assignments, reserves_count, is_locked), attachments=[pitch_file], view=self.hub_view)
+        await interaction.edit_original_response(embed=build_hub_embed(club_name, formation, assignments, reserves_count, is_locked, squad_invalid), attachments=[pitch_file], view=self.hub_view)
+
+
+async def show_squad_hub(interaction: discord.Interaction, owner_id: int) -> None:
+    """Shared entry for `/squad` and `/profile` → View Club Stats. Caller must defer first."""
+    club_name, formation, assignments, reserves_count, is_locked, squad_invalid = await fetch_squad_data(owner_id)
+    players_list = get_players_list_for_pitch(formation, assignments)
+    pitch_file = await generate_squad_pitch(formation, players_list)
+    view = SquadHubView(owner_id, club_name, formation, assignments, reserves_count, is_locked)
+    embed = build_hub_embed(club_name, formation, assignments, reserves_count, is_locked, squad_invalid)
+
+    if interaction.message is not None:
+        try:
+            await interaction.followup.edit_message(
+                interaction.message.id,
+                embed=embed,
+                view=view,
+                attachments=[pitch_file],
+            )
+            view.message = interaction.message
+            return
+        except discord.NotFound:
+            pass
+
+    try:
+        await interaction.edit_original_response(
+            embed=embed, view=view, attachments=[pitch_file]
+        )
+        view.message = await interaction.original_response()
+    except discord.HTTPException:
+        msg = await interaction.followup.send(
+            embed=embed, file=pitch_file, view=view, ephemeral=True
+        )
+        view.message = msg
 
 
 class SquadCog(commands.Cog):
@@ -596,18 +651,9 @@ class SquadCog(commands.Cog):
     async def squad(self, interaction: discord.Interaction) -> None:
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
-            
+
         try:
-            club_name, formation, assignments, reserves_count, is_locked = await fetch_squad_data(interaction.user.id)
-            
-            players_list = get_players_list_for_pitch(formation, assignments)
-            pitch_file = await generate_squad_pitch(formation, players_list)
-            
-            view = SquadHubView(interaction.user.id, club_name, formation, assignments, reserves_count, is_locked)
-            embed = build_hub_embed(club_name, formation, assignments, reserves_count, is_locked)
-            
-            msg = await interaction.followup.send(embed=embed, file=pitch_file, view=view, ephemeral=True)
-            view.message = msg
+            await show_squad_hub(interaction, interaction.user.id)
         except Exception as e:
             logger.exception("Failed to load squad hub.")
             await interaction.followup.send(

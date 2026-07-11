@@ -18,7 +18,7 @@ def youth_intake_embed(players: list[GachaPlayer], *, club_name: str | None = No
     emoji_map = {"GK": "🧤", "DEF": "🛡️", "MID": "👟", "FWD": "⚽"}
     lines = [
         f"{emoji_map.get(p.position, '🏃')} **{p.position}** — {p.name} "
-        f"({p.overall} OVR · {p.age} yrs · 📊 {p.potential} POT)"
+        f"({p.overall} OVR · {p.role} · {p.age} yrs · 📊 {p.potential} POT)"
         for p in ordered
     ]
     return discord.Embed(

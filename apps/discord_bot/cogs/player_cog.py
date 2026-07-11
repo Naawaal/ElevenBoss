@@ -12,6 +12,9 @@ from player_engine import (
     format_lifecycle_display,
     can_renew_contract,
     EVOLUTION_TRACKS,
+    TIER_NAMES,
+    fatigue_bar,
+    sp_to_mentor_units,
     xp_progress,
 )
 from apps.discord_bot.core.card_payload import effective_card_age
@@ -263,6 +266,19 @@ async def build_player_profile(
             inline=False,
         )
     embed.add_field(name="😊 Morale Rating", value=f"Morale **{card.get('morale', 80)}/100**", inline=True)
+    embed.add_field(name="💪 Fitness", value=fatigue_bar(int(card.get("fatigue", 100))), inline=False)
+    if card.get("injury_tier"):
+        tier = int(card["injury_tier"])
+        days = int(card.get("injury_recovery_days") or 0)
+        hosp = "Yes" if card.get("in_hospital") else "No (waiting / untreated)"
+        embed.add_field(
+            name="🩹 Injury Status",
+            value=(
+                f"**{TIER_NAMES.get(tier, 'Injured')}** · "
+                f"~**{days}** day(s) remaining · In hospital: **{hosp}**"
+            ),
+            inline=False,
+        )
     embed.add_field(name="📈 Level & Experience Progression", value=xp_bar, inline=False)
     embed.add_field(
         name="📈 Player Skill Attributes",
@@ -278,7 +294,18 @@ async def build_player_profile(
     )
     embed.add_field(name="✨ PlayStyles", value=playstyles_str, inline=True)
     embed.add_field(name="📄 Contract Status", value=contract_val, inline=False)
-    embed.add_field(name="⭐ Skill Points Available", value=f"**{card.get('skill_points', 0)}**", inline=False)
+    sp_avail = int(card.get("skill_points", 0) or 0)
+    overall = int(card.get("overall", 0) or 0)
+    potential = int(card.get("potential", 0) or 0)
+    if overall >= potential:
+        mp = sp_to_mentor_units(sp_avail)
+        sp_value = (
+            f"**{sp_avail}** · 🎓 Mentor Ready\n"
+            f"Converts to: **{mp} MP** ({mp * 500} XP)"
+        )
+    else:
+        sp_value = f"**{sp_avail}**"
+    embed.add_field(name="⭐ Skill Points Available", value=sp_value, inline=False)
 
     if has_evo:
         track = EVOLUTION_TRACKS.get(evo["evolution_id"], {"name": "Unknown Evolution"})

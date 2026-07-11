@@ -21,6 +21,7 @@ def gacha_claim_embed(pack: GachaPack) -> discord.Embed:
         
         details = (
             f"**Position**: {player.position}\n"
+            f"**Role**: {player.role}\n"
             f"**Age**: {player.age} yrs\n"
             f"**Rarity**: {player.rarity}\n"
             f"**Rating**: **{player.overall} OVR** · 📊 {player.potential} POT"

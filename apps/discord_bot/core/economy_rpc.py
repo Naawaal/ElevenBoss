@@ -9,7 +9,7 @@ from economy.flows import bot_match_coins, friendly_match_coins, league_match_co
 
 logger = logging.getLogger(__name__)
 
-REGEN_PER_MIN = 1 / 6  # 1 energy per 6 minutes
+REGEN_PER_MIN = 0.25  # 1 energy per 4 minutes (game_config energy_regen_per_min / migration 046)
 
 
 async def get_game_config_int(db: Any, key: str, default: int) -> int:
@@ -107,19 +107,42 @@ async def get_match_energy_cost(db: Any, match_type: str, *, v2: bool = True) ->
     return await get_game_config_int(db, key, fallback)
 
 
-def minutes_to_full_action_energy(current: int, maximum: int = 100) -> int:
+def minutes_to_full_action_energy(
+    current: int,
+    maximum: int = 100,
+    *,
+    regen_per_min: float | None = None,
+) -> int:
     if current >= maximum:
         return 0
+    rate = float(regen_per_min if regen_per_min is not None else REGEN_PER_MIN)
+    if rate <= 0:
+        rate = REGEN_PER_MIN
     needed = maximum - current
-    return int(needed / REGEN_PER_MIN)
+    return int(needed / rate)
 
 
-def format_action_energy_status(current: int, maximum: int = 100) -> str:
+def format_action_energy_status(
+    current: int,
+    maximum: int = 100,
+    *,
+    regen_per_min: float | None = None,
+) -> str:
     if current >= maximum:
         return f"⚡ **{current}/{maximum}** (Full)"
-    mins = minutes_to_full_action_energy(current, maximum)
+    mins = minutes_to_full_action_energy(current, maximum, regen_per_min=regen_per_min)
     hours, rem = divmod(mins, 60)
     return f"⚡ **{current}/{maximum}** (+{maximum - current} in {hours}h {rem}m)"
+
+
+async def format_action_energy_status_async(
+    db: Any,
+    current: int,
+    maximum: int = 100,
+) -> str:
+    """Status line using live game_config.energy_regen_per_min when available."""
+    rate = await get_game_config_numeric(db, "energy_regen_per_min", REGEN_PER_MIN)
+    return format_action_energy_status(current, maximum, regen_per_min=rate)
 
 
 async def economy_v2_enabled(db: Any) -> bool:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 
 import pytest
 
@@ -103,3 +104,34 @@ def test_individual_sho_affects_conversion() -> None:
     low = asyncio.run(_goals(50))
     high = asyncio.run(_goals(95))
     assert high >= low, f"high SHO avg goals {high} should be >= low SHO {low}"
+
+
+def test_no_exact_zero_hundred_possession_batch() -> None:
+    """Transition floor + softer midfield momentum: no exact 0–100 possession."""
+
+    async def _run() -> tuple[int, int, int]:
+        zero_splits = 0
+        favorite_wins = 0
+        n = 24
+        for i in range(n):
+            state = MatchState(home_rating=78.0, away_rating=84.0)
+            async for _ in stream_match(
+                state,
+                _squad11(78, "W"),
+                _squad11(84, "S"),
+                "Weak",
+                "Strong",
+                rng=random.Random(1000 + i),
+            ):
+                pass
+            ph = state.live_stats.possession_home_pct()
+            pa = state.live_stats.possession_away_pct()
+            if (ph, pa) in ((0, 100), (100, 0)):
+                zero_splits += 1
+            if state.away_score > state.home_score:
+                favorite_wins += 1
+        return zero_splits, favorite_wins, n
+
+    zero_splits, favorite_wins, n = asyncio.run(_run())
+    assert zero_splits == 0, f"{zero_splits} matches had exact 0–100 possession"
+    assert favorite_wins >= n // 2, f"favorite wins {favorite_wins}/{n} too low"

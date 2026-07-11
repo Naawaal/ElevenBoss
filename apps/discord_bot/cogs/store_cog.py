@@ -13,7 +13,7 @@ from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.embeds.gacha_embeds import gacha_cooldown_embed, gacha_claim_embed
-from apps.discord_bot.core.economy_rpc import format_action_energy_status, sync_action_energy
+from apps.discord_bot.core.economy_rpc import format_action_energy_status_async, sync_action_energy
 from apps.discord_bot.core.view_helpers import disable_view_on_timeout, set_view_controls_disabled
 from apps.discord_bot.core.card_payload import card_rpc_payload
 from gacha import generate_pack
@@ -59,7 +59,7 @@ async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
             "Claim your daily bonus and purchase action energy refills.\n\n"
             f"🪙 **Coins**: `{player['coins']:,}`\n"
             f"💎 **Gems**: `{gems:,}`\n"
-            f"{format_action_energy_status(ae, max_e)}"
+            f"{await format_action_energy_status_async(db, ae, max_e)}"
         ),
         color=0x00FF87,
     )

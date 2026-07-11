@@ -2,6 +2,8 @@
 from __future__ import annotations
 import discord
 from match_engine import get_slot_role
+from player_engine import TIER_NAMES, fatigue_indicator
+
 
 def get_slot_position(formation: str, slot: int) -> str:
     """Helper to determine the expected position of a slot based on the formation."""
@@ -11,7 +13,10 @@ def starting_11_embed(formation: str, assignments: dict[int, dict]) -> discord.E
     """Visually stunning starting 11 embed with positional emojis and clean formatting."""
     embed = discord.Embed(
         title=f"📋 Starting 11 (Formation: {formation})",
-        description="Your active squad configuration for match simulations.",
+        description=(
+            "Your active squad configuration for match simulations.\n"
+            "Legend: 🟢 rested · 🟡 OK · 🪫 tired · 🔴 exhausted · 🩹 injured"
+        ),
         color=0x00FF87  # Premium pitch green
     )
 
@@ -26,9 +31,18 @@ def starting_11_embed(formation: str, assignments: dict[int, dict]) -> discord.E
             rarity_emoji = rarity_emojis.get(card["rarity"], "⚪")
             role = card.get("role", "Balanced")
             morale = card.get("morale", 80)
+            fat = int(card.get("fatigue", 100))
+            fit = "🩹" if card.get("injury_tier") else fatigue_indicator(fat)
+            inj = ""
+            if card.get("injury_tier"):
+                inj = f"\n🩹 **{TIER_NAMES.get(int(card['injury_tier']), 'Injured')}**"
             ps_list = card.get("playstyles")
             ps_str = f"\n✨ {', '.join(ps_list)}" if ps_list else ""
-            value = f"{rarity_emoji} **{card['name']}**\n**{card['overall']} OVR** | {card['position']}\n💼 {role} | Morale: {morale}%{ps_str}"
+            value = (
+                f"{rarity_emoji} **{card['name']}** {fit}\n"
+                f"**{card['overall']} OVR** | {card['position']} | Fatigue **{fat}%**\n"
+                f"💼 {role} | Morale: {morale}%{inj}{ps_str}"
+            )
         else:
             value = "❌ *[EMPTY]*"
         
@@ -63,7 +77,11 @@ def roster_embed(
             rarity = rarity_emojis.get(card.get("rarity", "Common"), "⚪")
             embed.add_field(
                 name=f"{rarity} **{ovr} OVR** · {pos}",
-                value=f"**{name}** · Lvl {card.get('level', 1)}",
+                value=(
+                    f"**{name}** · Lvl {card.get('level', 1)} · "
+                    f"{'🩹' if card.get('injury_tier') else fatigue_indicator(int(card.get('fatigue', 100)))} "
+                    f"{card.get('fatigue', 100)}%"
+                ),
                 inline=True,
             )
     else:

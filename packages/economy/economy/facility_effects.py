@@ -5,11 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 FACILITY_UPGRADE_COSTS: tuple[int, ...] = (750, 2000, 5000, 12000)
+HOSPITAL_UPGRADE_COSTS: tuple[int, ...] = (1500, 4000, 10000, 25000, 60000)
 FACILITY_MAX_LEVEL: int = 5
+HOSPITAL_MAX_LEVEL: int = 5
 FACILITY_WEEKLY_CAP_DAYS: int = 7
 
 # Target level -> minimum career matches required before upgrading TO that level
 FACILITY_MIN_MATCHES: dict[int, int] = {2: 5, 4: 20}
+HOSPITAL_MIN_MATCHES: dict[int, int] = {2: 5, 4: 20}
 
 
 @dataclass(frozen=True)
@@ -32,10 +35,25 @@ YOUTH_ACADEMY_TIERS: dict[int, YouthAcademyTier] = {
 
 
 def facility_upgrade_cost(current_level: int) -> int | None:
-    """Coin cost to upgrade from current_level to current_level + 1."""
+    """Coin cost to upgrade YA/TG from current_level to current_level + 1."""
     if current_level < 1 or current_level >= FACILITY_MAX_LEVEL:
         return None
     return FACILITY_UPGRADE_COSTS[current_level - 1]
+
+
+def hospital_upgrade_cost(current_level: int) -> int | None:
+    """Coin cost to upgrade Hospital from current_level (0–4) to next."""
+    if current_level < 0 or current_level >= HOSPITAL_MAX_LEVEL:
+        return None
+    return HOSPITAL_UPGRADE_COSTS[current_level]
+
+
+def hospital_bed_capacity(hospital_level: int) -> int:
+    return max(0, int(hospital_level)) + 1
+
+
+def hospital_recovery_multiplier(hospital_level: int) -> float:
+    return 1.0 / (1.0 + 0.2 * max(0, int(hospital_level)))
 
 
 def training_ground_drill_xp_bonus(training_ground_level: int) -> int:
@@ -49,13 +67,15 @@ def youth_academy_tier(academy_level: int) -> YouthAcademyTier:
     return YOUTH_ACADEMY_TIERS[level]
 
 
-def min_matches_for_next_level(current_level: int) -> int:
+def min_matches_for_next_level(current_level: int, facility_key: str = "youth_academy") -> int:
     """Matches required to upgrade to current_level + 1 (0 if none)."""
-    return FACILITY_MIN_MATCHES.get(current_level + 1, 0)
+    table = HOSPITAL_MIN_MATCHES if facility_key == "hospital" else FACILITY_MIN_MATCHES
+    return table.get(current_level + 1, 0)
 
 
 def facility_label(facility_key: str) -> str:
     return {
         "youth_academy": "Youth Academy",
         "training_ground": "Training Ground",
+        "hospital": "Hospital",
     }.get(facility_key, facility_key)

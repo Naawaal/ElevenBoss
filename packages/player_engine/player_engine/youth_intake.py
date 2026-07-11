@@ -6,6 +6,7 @@ import random
 
 from economy.facility_effects import youth_academy_tier
 
+from .created_card import CreatedPlayerCard
 from .player_factory import create_player_card
 
 _INTAKE_POSITIONS = ["GK", "DEF", "DEF", "MID", "MID", "FWD"]
@@ -19,14 +20,14 @@ def generate_youth_intake_cards(
     first_names: list[str],
     last_names: list[str],
     rng: random.Random | None = None,
-) -> list[dict]:
-    """Return card dicts for process_youth_intake RPC (no squad assignment)."""
+) -> list[CreatedPlayerCard]:
+    """Return typed cards for process_youth_intake RPC (no squad assignment)."""
     tier = youth_academy_tier(academy_level)
     n = count if count is not None else 3
     n = max(1, min(5, n))
     r = rng or random
 
-    cards: list[dict] = []
+    cards: list[CreatedPlayerCard] = []
     for _ in range(n):
         position = r.choices(_INTAKE_POSITIONS, weights=_INTAKE_POSITION_WEIGHTS, k=1)[0]
         target_ovr = r.randint(tier.ovr_min, tier.ovr_max)
@@ -41,13 +42,13 @@ def generate_youth_intake_cards(
             age=age,
             rng=r,
         )
-        card["potential"] = min(tier.pot_max, potential)
-        card["base_potential"] = card["potential"]
-        cards.append(card)
+        pot = min(tier.pot_max, potential)
+        cards.append(card.model_copy(update={"potential": pot, "base_potential": pot}))
 
     if tier.gem_chance > 0 and cards and r.random() < tier.gem_chance:
         gem_idx = r.randrange(len(cards))
-        cards[gem_idx]["potential"] = min(tier.pot_max, cards[gem_idx]["potential"] + 5)
-        cards[gem_idx]["base_potential"] = cards[gem_idx]["potential"]
+        gem = cards[gem_idx]
+        pot = min(tier.pot_max, gem.potential + 5)
+        cards[gem_idx] = gem.model_copy(update={"potential": pot, "base_potential": pot})
 
     return cards

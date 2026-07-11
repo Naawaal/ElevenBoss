@@ -107,14 +107,34 @@ def phase_stat_value(
     phase: PhaseStat,
     zone_fallback: float,
 ) -> float:
-    """Blend zone OVR (70%) with phase-specific attribute average (30%)."""
+    """Blend zone OVR (70%) with fatigue-adjusted phase attribute average (30%)."""
+    from player_engine import fatigue_stat_multiplier
+    from .substitution_resolve import COMPROMISED_PHASE_MULT, EMERGENCY_GK_DEF_MULT
+
     zone = _ZONE_FOR_PHASE[phase]
     attr = _STAT_ATTR[phase]
     players = _zone_players(squad, zone)
     if not players:
         return zone_fallback
     ovrs = [_get_attr(p, "overall") for p in players]
-    specifics = [_get_attr(p, attr) for p in players]
+    specifics = []
+    for p in players:
+        raw = _get_attr(p, attr)
+        fatigue = int(getattr(p, "fatigue", None) or (p.get("fatigue", 100) if isinstance(p, dict) else 100))
+        val = raw * fatigue_stat_multiplier(fatigue, attr)
+        compromised = bool(
+            getattr(p, "compromised", False)
+            or (p.get("compromised") if isinstance(p, dict) else False)
+        )
+        if compromised:
+            val *= COMPROMISED_PHASE_MULT
+        emergency = bool(
+            getattr(p, "emergency_gk", False)
+            or (p.get("emergency_gk") if isinstance(p, dict) else False)
+        )
+        if emergency and phase == PhaseStat.GOALKEEPING:
+            val *= EMERGENCY_GK_DEF_MULT
+        specifics.append(val)
     blended = 0.7 * (sum(ovrs) / len(ovrs)) + 0.3 * (sum(specifics) / len(specifics))
     stat_key = attr if attr != "overall" else "overall"
     return blended + playstyle_bonus(squad, zone, stat_key) * 100.0

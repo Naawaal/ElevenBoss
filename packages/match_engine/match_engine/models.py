@@ -27,7 +27,11 @@ class MatchPlayerCard(BaseModel):
     def_stat: int = Field(50, alias="def")
     phy: int = 50
     morale: int = 80
+    fatigue: int = 100
+    card_id: str | None = None
     playstyles: list[str] = Field(default_factory=list)
+    compromised: bool = False  # Play On — phase attr ×0.50
+    emergency_gk: bool = False  # outfield pressed into GK
 
     class Config:
         populate_by_name = True

@@ -19,6 +19,7 @@ from match_engine import (
     collect_match_events,
     MatchResult,
     format_zone_breakdown,
+    build_bot_match_squad,
 )
 from apps.discord_bot.core.match_cards import card_from_db_row, fetch_playstyles
 from apps.discord_bot.core.economy_rpc import (
@@ -28,6 +29,15 @@ from apps.discord_bot.core.economy_rpc import (
 )
 from apps.discord_bot.core.league_rewards import apply_league_human_rewards
 from apps.discord_bot.core.match_rewards import apply_bot_match_rewards
+from apps.discord_bot.core.injury_rpc import fetch_bench_ids, fetch_bench_cards, recorded_for_side
+from apps.discord_bot.core.match_injury_stream import handle_injury_event
+from apps.discord_bot.core.match_xp import hydrate_cards_for_match_xp
+from apps.discord_bot.core.squad_validity import (
+    RETIREMENT_XI_MSG,
+    fetch_xi_state,
+    human_club_xi_ok,
+    xi_block_message,
+)
 from apps.discord_bot.core.competitive_display import format_bot_rewards_block, format_season_reward_line
 from leagues import division_rank_points, global_lp_delta, clamp_global_lp
 from apps.discord_bot.core.thread_permissions import (
@@ -114,6 +124,41 @@ def get_momentum_bar(momentum: int) -> str:
     bar = ["░"] * (bars + 1)
     bar[pos] = "🔵"
     return f"`[{''.join(bar)}]` ({momentum:+})"
+
+
+GOAL_SCROLL_CAP = 10
+
+_TICKER_EMOJI: dict[str, str] = {
+    "KICKOFF": "🟢",
+    "HALF_TIME": "⏸️",
+    "GOAL": "⚽",
+    "MISS": "❌",
+    "CHANCE": "🎯",
+    "FOUL": "💥",
+    "YELLOW_CARD": "🟨",
+    "INJURY": "🩹",
+    "FULL_TIME": "🏁",
+    "SAVE": "🧤",
+}
+
+
+def format_goal_scroll_line(minute: int, actor: str) -> str:
+    return f"⚽ {minute}' {actor}"
+
+
+def append_goal_scroll(scroll: list[str], minute: int, actor: str) -> list[str]:
+    """Append a goal line and keep at most GOAL_SCROLL_CAP (oldest drop first)."""
+    scroll.append(format_goal_scroll_line(minute, actor))
+    if len(scroll) > GOAL_SCROLL_CAP:
+        del scroll[:-GOAL_SCROLL_CAP]
+    return scroll
+
+
+def format_ticker_line(ev_type: str, minute: int, text: str) -> str:
+    if ev_type == "HALF_TIME":
+        return "⏸️ **--- HALF TIME ---**"
+    emo = _TICKER_EMOJI.get(ev_type, "⏱️")
+    return f"{emo} **{minute}'** - {text}"
 
 
 def _match_stats_from_state(state: MatchState) -> tuple[int, int, int, int]:
@@ -225,8 +270,15 @@ class IMatchOutputHandler(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def update_ticker(self, ev: dict, state: MatchState, recent_ticker: list[str], touchline_view: discord.ui.View | None) -> None:
-        """Update the match scoreboard/momentum/commentary state for a match tick."""
+    async def update_ticker(
+        self,
+        ev: dict,
+        state: MatchState,
+        recent_ticker: list[str],
+        touchline_view: discord.ui.View | None,
+        goal_scroll: list[str] | None = None,
+    ) -> None:
+        """Update scoreboard / Goal Scroll / momentum / commentary for a match tick."""
         pass
 
     @abc.abstractmethod
@@ -296,12 +348,21 @@ class StandardMatchHandler(IMatchOutputHandler):
 
         self.ticker_msg = await target.send(embed=init_embed, view=touchline_view)
 
-    async def update_ticker(self, ev: dict, state: MatchState, recent_ticker: list[str], touchline_view: discord.ui.View | None) -> None:
+    async def update_ticker(
+        self,
+        ev: dict,
+        state: MatchState,
+        recent_ticker: list[str],
+        touchline_view: discord.ui.View | None,
+        goal_scroll: list[str] | None = None,
+    ) -> None:
         embed = discord.Embed(
             title=f"🏟️ Live Stadium: {self.home_name or 'Home'} vs {self.away_name or 'Away'}",
             color=0x00FF87
         )
         embed.add_field(name="Scoreboard", value=f"🏟️ **{self.home_name or 'Home'}** `{ev['score_update']}` **{self.away_name or 'Away'}**", inline=False)
+        if goal_scroll:
+            embed.add_field(name="Goal Scroll", value="\n".join(goal_scroll), inline=False)
         embed.add_field(name="📈 Momentum", value=get_momentum_bar(state.momentum), inline=False)
         embed.add_field(name="Commentary Ticker", value="\n".join(recent_ticker), inline=False)
 
@@ -456,12 +517,21 @@ class LeagueMatchHandler(IMatchOutputHandler):
 
         self.ticker_msg = await target.send(embed=init_embed, view=touchline_view)
 
-    async def update_ticker(self, ev: dict, state: MatchState, recent_ticker: list[str], touchline_view: discord.ui.View | None) -> None:
+    async def update_ticker(
+        self,
+        ev: dict,
+        state: MatchState,
+        recent_ticker: list[str],
+        touchline_view: discord.ui.View | None,
+        goal_scroll: list[str] | None = None,
+    ) -> None:
         embed = discord.Embed(
             title=f"🏟️ Live League Match: {self.home_name or 'Home'} vs {self.away_name or 'Away'}",
             color=0x00FF87
         )
         embed.add_field(name="Scoreboard", value=f"🏟️ **{self.home_name or 'Home'}** `{ev['score_update']}` **{self.away_name or 'Away'}**", inline=False)
+        if goal_scroll:
+            embed.add_field(name="Goal Scroll", value="\n".join(goal_scroll), inline=False)
         embed.add_field(name="📈 Momentum", value=get_momentum_bar(state.momentum), inline=False)
         embed.add_field(name="Live Commentary", value="\n".join(recent_ticker), inline=False)
 
@@ -718,6 +788,10 @@ async def run_league_match_simulation(
     away_rating = 60.0
     away_cards: list[dict] = []
 
+    sim_seed = sim_seed if sim_seed is not None else generate_sim_seed()
+    match_rng = random.Random(sim_seed)
+    bot_squad_rng = random.Random(sim_seed ^ 0xB075AD)
+
     if recovery and run_id:
         run_res = await db.table("match_runs").select("squad_snapshot").eq("id", run_id).maybe_single().execute()
         snapshot = (run_res.data or {}).get("squad_snapshot") or {}
@@ -726,16 +800,15 @@ async def run_league_match_simulation(
         away_rating = float(snapshot.get("away_rating", 60.0))
         home_name = snapshot.get("home_name", home_p["club_name"])
         away_name = snapshot.get("away_name", away_p["club_name"])
-        home_cards = [{"id": cid} for cid in snapshot.get("home_card_ids", [])]
-        away_cards = [{"id": cid} for cid in snapshot.get("away_card_ids", [])]
+        home_card_ids = snapshot.get("home_card_ids", [])
+        away_card_ids = snapshot.get("away_card_ids", [])
+        # Recovery snapshots only store ids — hydrate name/age for match XP (FR-001/002)
+        home_cards = await hydrate_cards_for_match_xp(db, home_card_ids) if not home_p["is_ai"] else []
+        away_cards = await hydrate_cards_for_match_xp(db, away_card_ids) if not away_p["is_ai"] else []
     else:
         if home_p["is_ai"]:
             home_rating = float(home_p.get("ai_rating") or 60.0)
-            home_squad = [
-                MatchPlayerCard(name="Opponent Striker", position="FWD", overall=int(home_rating)),
-                MatchPlayerCard(name="Opponent Midfielder", position="MID", overall=int(home_rating)),
-                MatchPlayerCard(name="Opponent Defender", position="DEF", overall=int(home_rating)),
-            ]
+            home_squad = build_bot_match_squad(int(home_rating), bot_squad_rng)
         else:
             assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", fixture["home_team_id"]).execute()
             assignments = assignments_res.data or []
@@ -748,11 +821,7 @@ async def run_league_match_simulation(
 
         if away_p["is_ai"]:
             away_rating = float(away_p.get("ai_rating") or 60.0)
-            away_squad = [
-                MatchPlayerCard(name="Opponent Striker", position="FWD", overall=int(away_rating)),
-                MatchPlayerCard(name="Opponent Midfielder", position="MID", overall=int(away_rating)),
-                MatchPlayerCard(name="Opponent Defender", position="DEF", overall=int(away_rating)),
-            ]
+            away_squad = build_bot_match_squad(int(away_rating), bot_squad_rng)
         else:
             assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", fixture["away_team_id"]).execute()
             assignments = assignments_res.data or []
@@ -765,6 +834,42 @@ async def run_league_match_simulation(
 
         home_name = home_p["club_name"] + (" (AI)" if home_p["is_ai"] else "")
         away_name = away_p["club_name"] + (" (AI)" if away_p["is_ai"] else "")
+
+        # Fail closed: human clubs with retirement holes / incomplete XI must not auto-sim
+        if not home_p["is_ai"] and not await human_club_xi_ok(
+            db, int(fixture["home_team_id"]), card_count=len(home_cards)
+        ):
+            logger.warning(
+                "Skipping fixture %s: home club %s has invalid/incomplete XI (squad_invalid or count!=11).",
+                fixture_id,
+                fixture["home_team_id"],
+            )
+            if not silent and active_player_id and active_player_id == int(fixture["home_team_id"]):
+                try:
+                    cnt, inv = await fetch_xi_state(db, active_player_id)
+                    msg = xi_block_message(cnt, inv) or RETIREMENT_XI_MSG
+                    user = await bot.fetch_user(active_player_id)
+                    await user.send(embed=error_embed(msg))
+                except Exception:
+                    pass
+            return
+        if not away_p["is_ai"] and not await human_club_xi_ok(
+            db, int(fixture["away_team_id"]), card_count=len(away_cards)
+        ):
+            logger.warning(
+                "Skipping fixture %s: away club %s has invalid/incomplete XI (squad_invalid or count!=11).",
+                fixture_id,
+                fixture["away_team_id"],
+            )
+            if not silent and active_player_id and active_player_id == int(fixture["away_team_id"]):
+                try:
+                    cnt, inv = await fetch_xi_state(db, active_player_id)
+                    msg = xi_block_message(cnt, inv) or RETIREMENT_XI_MSG
+                    user = await bot.fetch_user(active_player_id)
+                    await user.send(embed=error_embed(msg))
+                except Exception:
+                    pass
+            return
 
         # Lineup familiarity bonus (US-26)
         if not recovery:
@@ -780,9 +885,6 @@ async def run_league_match_simulation(
                     db, season_id=season_id, discord_id=int(fixture["away_team_id"]),
                     current_card_ids=[c["id"] for c in away_cards],
                 )
-
-    sim_seed = sim_seed if sim_seed is not None else generate_sim_seed()
-    match_rng = random.Random(sim_seed)
 
     if not recovery and not run_id:
         existing = await get_active_fixture_run(db, fixture_id)
@@ -814,11 +916,34 @@ async def run_league_match_simulation(
         run_id = run_row.get("id", run_id)
 
     state = MatchState(home_rating=home_rating, away_rating=away_rating)
+    state.injuries_enabled = True
+    interactive: list[str] = []
+    if not home_p["is_ai"]:
+        interactive.append("home")
+        state.bench_home = await fetch_bench_cards(
+            db, int(fixture["home_team_id"]), [str(c["id"]) for c in home_cards]
+        )
+    if not away_p["is_ai"]:
+        interactive.append("away")
+        state.bench_away = await fetch_bench_cards(
+            db, int(fixture["away_team_id"]), [str(c["id"]) for c in away_cards]
+        )
+    if not silent:
+        state.interactive_sides = interactive
+    else:
+        state.interactive_sides = []
+
     commentary_engine = CommentaryEngine()
     target = await handler.initialize(None, home_name, away_name, fixture["matchday"])
 
     touchline_user_id = active_player_id if active_player_id else 0
     touchline_view = TouchlineView(state, touchline_user_id) if touchline_user_id and not silent else None
+
+    owner_by_side = {}
+    if not home_p["is_ai"]:
+        owner_by_side["home"] = int(fixture["home_team_id"])
+    if not away_p["is_ai"]:
+        owner_by_side["away"] = int(fixture["away_team_id"])
 
     if not silent:
         # Pre-match lineup pitches (human squads only)
@@ -835,6 +960,7 @@ async def run_league_match_simulation(
         await handler.start_match(target, home_name, away_name, touchline_view)
 
     ticker_history: list[str] = []
+    goal_scroll: list[str] = []
     key_events_list: list[dict] = []
 
     async def _consume_event(ev: dict) -> None:
@@ -842,13 +968,20 @@ async def run_league_match_simulation(
         comm = commentary_engine.get_commentary(ev["type"], state.context_tags, variables)
         text = comm["text"]
         urgency = comm["urgency"]
-        emoji_map = {
-            "KICKOFF": "🟢", "HALF_TIME": "⏸️", "GOAL": "⚽", "MISS": "❌",
-            "CHANCE": "🎯", "FOUL": "💥", "YELLOW_CARD": "🟨",
-            "INJURY": "🩹", "FULL_TIME": "🏁"
-        }
-        emo = emoji_map.get(ev["type"], "⏱️")
-        ticker_history.append(f"{emo} **{ev['minute']}'** - {text}")
+        injury_note = await handle_injury_event(
+            ev=ev,
+            state=state,
+            channel=getattr(handler, "commentary_thread", None) or target,
+            home_squad=home_squad,
+            away_squad=away_squad,
+            owner_by_side=owner_by_side,
+            silent=False,
+        )
+        if injury_note:
+            text = f"{text} {injury_note}"
+        ticker_history.append(format_ticker_line(ev["type"], ev["minute"], text))
+        if ev["type"] == "GOAL":
+            append_goal_scroll(goal_scroll, ev["minute"], ev["actor"])
         if ev["type"] in ["KICKOFF", "HALF_TIME", "GOAL", "YELLOW_CARD", "INJURY", "FULL_TIME"]:
             event_entry = {
                 "minute": ev["minute"],
@@ -861,7 +994,9 @@ async def run_league_match_simulation(
                 event_entry["assister"] = ev["assister"]
             key_events_list.append(event_entry)
         if not silent:
-            await handler.update_ticker(ev, state, ticker_history[-5:], touchline_view)
+            await handler.update_ticker(
+                ev, state, ticker_history[-5:], touchline_view, goal_scroll=goal_scroll
+            )
             if ev["type"] in ["FULL_TIME", "HALF_TIME"]:
                 sleep_time = 2.0
             elif urgency == "cliffhanger":
@@ -918,6 +1053,9 @@ async def run_league_match_simulation(
     h_milestone = a_milestone = None
 
     if not home_p["is_ai"]:
+        h_bench = await fetch_bench_ids(
+            db, int(fixture["home_team_id"]), [str(c["id"]) for c in home_cards]
+        )
         h_coins, h_pts = await apply_league_human_rewards(
             db,
             player_id=int(fixture["home_team_id"]),
@@ -933,6 +1071,10 @@ async def run_league_match_simulation(
             goals_for=state.home_score,
             goals_against=state.away_score,
             deduct_energy=(active_player_id == fixture["home_team_id"]),
+            bench_ids=h_bench,
+            tactics_modifier=float(getattr(state, "home_tactics_modifier", 1.0) or 1.0),
+            bot=bot,
+            recorded_injuries=recorded_for_side(state.recorded_injuries, "home"),
         )
         from apps.discord_bot.core.league_rewards import check_matchday_milestone
         h_milestone = await check_matchday_milestone(
@@ -941,6 +1083,9 @@ async def run_league_match_simulation(
         )
 
     if not away_p["is_ai"]:
+        a_bench = await fetch_bench_ids(
+            db, int(fixture["away_team_id"]), [str(c["id"]) for c in away_cards]
+        )
         a_coins, a_pts = await apply_league_human_rewards(
             db,
             player_id=int(fixture["away_team_id"]),
@@ -956,6 +1101,10 @@ async def run_league_match_simulation(
             goals_for=state.away_score,
             goals_against=state.home_score,
             deduct_energy=(active_player_id == fixture["away_team_id"]),
+            bench_ids=a_bench,
+            tactics_modifier=1.0,
+            bot=bot,
+            recorded_injuries=recorded_for_side(state.recorded_injuries, "away"),
         )
         from apps.discord_bot.core.league_rewards import check_matchday_milestone
         a_milestone = await check_matchday_milestone(
@@ -1237,14 +1386,20 @@ class BattleCog(commands.Cog):
             assignments = assignments_res.data or []
             active_cards = [a["player_cards"] for a in assignments if a.get("player_cards")]
             count = len(active_cards)
- 
-            if count != 11:
+            _, squad_invalid = await fetch_xi_state(db, interaction.user.id)
+            block = xi_block_message(count, squad_invalid)
+            if block:
+                await interaction.followup.send(embed=error_embed(block), ephemeral=True)
+                return
+
+            injured = [c["name"] for c in active_cards if c.get("injury_tier")]
+            if injured:
                 await interaction.followup.send(
                     embed=error_embed(
-                        f"Your starting squad must have exactly **11 players** assigned to play a match (current: **{count}/11**).\n"
-                        "Configure your starting 11 using `/squad` first."
+                        "Injured players cannot start. Replace them in `/squad`:\n"
+                        + ", ".join(f"**{n}**" for n in injured[:5])
                     ),
-                    ephemeral=True
+                    ephemeral=True,
                 )
                 return
  
@@ -1287,6 +1442,11 @@ class BattleCog(commands.Cog):
 
             # 5. Instantiate V2 MatchState and CommentaryEngine
             state = MatchState(home_rating=my_rating, away_rating=opp_rating)
+            state.injuries_enabled = True
+            state.interactive_sides = ["home"]
+            state.bench_home = await fetch_bench_cards(
+                db, interaction.user.id, [str(c["id"]) for c in active_cards]
+            )
             commentary_engine = CommentaryEngine()
 
             # Instantiate StandardMatchHandler
@@ -1311,16 +1471,14 @@ class BattleCog(commands.Cog):
             touchline_view = TouchlineView(state, interaction.user.id)
             await handler.start_match(target, player["club_name"], opp_name, touchline_view)
 
-            opp_squad = [
-                MatchPlayerCard(name="Opponent Striker", position="FWD", overall=int(opp_rating)),
-                MatchPlayerCard(name="Opponent Midfielder", position="MID", overall=int(opp_rating)),
-                MatchPlayerCard(name="Opponent Defender", position="DEF", overall=int(opp_rating)),
-            ]
-
             match_rng = random.Random(sim_seed)
+            opp_squad = build_bot_match_squad(int(opp_rating), random.Random(sim_seed ^ 0xB075AD))
             # Commentary Streaming Loop
             ticker_history: list[str] = []
+            goal_scroll: list[str] = []
             key_events_list: list[dict] = []
+            owner_by_side = {"home": interaction.user.id}
+            injury_channel = getattr(handler, "thread", None) or target
 
             async for ev in stream_match(
                 state, match_cards, opp_squad, player["club_name"], opp_name, rng=match_rng
@@ -1333,23 +1491,28 @@ class BattleCog(commands.Cog):
                 text = comm["text"]
                 urgency = comm["urgency"]
 
-                emoji_map = {
-                    "KICKOFF": "🟢",
-                    "HALF_TIME": "⏸️",
-                    "GOAL": "⚽",
-                    "MISS": "❌",
-                    "CHANCE": "🎯",
-                    "FOUL": "🟨",
-                    "FULL_TIME": "🏁"
-                }
-                emo = emoji_map.get(ev["type"], "⏱️")
+                injury_note = await handle_injury_event(
+                    ev=ev,
+                    state=state,
+                    channel=injury_channel,
+                    home_squad=match_cards,
+                    away_squad=opp_squad,
+                    owner_by_side=owner_by_side,
+                    silent=False,
+                )
+                if injury_note:
+                    text = f"{text} {injury_note}"
 
-                ticker_history.append(f"{emo} **{ev['minute']}'** - {text}")
+                ticker_history.append(format_ticker_line(ev["type"], ev["minute"], text))
+                if ev["type"] == "GOAL":
+                    append_goal_scroll(goal_scroll, ev["minute"], ev["actor"])
                 recent_ticker = ticker_history[-5:]
 
-                await handler.update_ticker(ev, state, recent_ticker, touchline_view)
+                await handler.update_ticker(
+                    ev, state, recent_ticker, touchline_view, goal_scroll=goal_scroll
+                )
 
-                if ev["type"] in ["KICKOFF", "HALF_TIME", "GOAL", "MISS", "CHANCE", "FOUL", "FULL_TIME"]:
+                if ev["type"] in ["KICKOFF", "HALF_TIME", "GOAL", "MISS", "CHANCE", "FOUL", "INJURY", "FULL_TIME"]:
                     event_entry = {
                         "minute": ev["minute"],
                         "type": ev["type"],
@@ -1403,6 +1566,12 @@ class BattleCog(commands.Cog):
                 run_id=bot_run_id,
                 motm_name=motm,
                 key_events=key_events_list,
+                bench_ids=await fetch_bench_ids(
+                    db, interaction.user.id, [str(c["id"]) for c in active_cards]
+                ),
+                tactics_modifier=float(getattr(state, "home_tactics_modifier", 1.0) or 1.0),
+                bot=self.bot,
+                recorded_injuries=recorded_for_side(state.recorded_injuries, "home"),
             )
 
             result = MatchResult(
@@ -1510,17 +1679,11 @@ class BattleCog(commands.Cog):
                 await interaction.followup.send(embed=error_embed("Active player profile not found."), ephemeral=True)
                 return
 
-            # 11-player XI guard
-            assignments_res = await db.table("squad_assignments").select("player_card_id").eq("discord_id", user_id).execute()
-            xi_count = len(assignments_res.data or [])
-            if xi_count != 11:
-                await interaction.followup.send(
-                    embed=error_embed(
-                        f"Your starting squad must have exactly **11 players** assigned (current: **{xi_count}/11**).\n"
-                        "Configure your starting 11 using `/squad` first."
-                    ),
-                    ephemeral=True,
-                )
+            # 11-player XI guard (+ retirement invalid flag)
+            xi_count, squad_invalid = await fetch_xi_state(db, user_id)
+            block = xi_block_message(xi_count, squad_invalid)
+            if block:
+                await interaction.followup.send(embed=error_embed(block), ephemeral=True)
                 return
 
             v2 = await economy_v2_enabled(db)
@@ -1603,15 +1766,32 @@ class BattleCog(commands.Cog):
             )
             return
 
+        c_res = await db.table("players").select("*").eq("discord_id", challenger.id).maybe_single().execute()
+        o_res = await db.table("players").select("*").eq("discord_id", opponent.id).maybe_single().execute()
+        c_player = c_res.data if c_res else None
+        o_player = o_res.data if o_res else None
+        if not c_player or not o_player:
+            await invitation_msg.channel.send(embed=error_embed("One or both managers are not registered."))
+            return
+
+        c_count, c_invalid = await fetch_xi_state(db, challenger.id)
+        o_count, o_invalid = await fetch_xi_state(db, opponent.id)
+        c_block = xi_block_message(c_count, c_invalid)
+        o_block = xi_block_message(o_count, o_invalid)
+        if c_block or o_block:
+            parts = []
+            if c_block:
+                parts.append(f"**{c_player['manager_name']}**: {c_block}")
+            if o_block:
+                parts.append(f"**{o_player['manager_name']}**: {o_block}")
+            await invitation_msg.channel.send(
+                embed=error_embed("Friendly match cancelled:\n" + "\n".join(parts))
+            )
+            return
+
         # 1. Spawning Thread
         thread = None
         try:
-            c_res = await db.table("players").select("*").eq("discord_id", challenger.id).maybe_single().execute()
-            o_res = await db.table("players").select("*").eq("discord_id", opponent.id).maybe_single().execute()
-            
-            c_player = c_res.data
-            o_player = o_res.data
-            
             thread_name = f"🤝 {c_player['club_name']} vs {o_player['club_name']} – Friendly"
             thread = await invitation_msg.create_thread(
                 name=thread_name,
@@ -1647,7 +1827,7 @@ class BattleCog(commands.Cog):
 
             c_cards, _, _ = await get_squad_cards(challenger.id)
             o_cards, _, _ = await get_squad_cards(opponent.id)
-            
+
             if len(c_cards) != 11 or len(o_cards) != 11:
                 error_msg = ""
                 if len(c_cards) != 11:
@@ -1690,6 +1870,7 @@ class BattleCog(commands.Cog):
 
             # Ticker Streaming Loop
             ticker_history: list[str] = []
+            goal_scroll: list[str] = []
             key_events_list: list[dict] = []
 
             async for ev in stream_match(
@@ -1703,19 +1884,9 @@ class BattleCog(commands.Cog):
                 text = comm["text"]
                 urgency = comm["urgency"]
 
-                emoji_map = {
-                    "KICKOFF": "🟢",
-                    "HALF_TIME": "⏸️",
-                    "GOAL": "⚽",
-                    "SAVE": "🧤",
-                    "MISS": "❌",
-                    "CHANCE": "🎯",
-                    "FOUL": "🟨",
-                    "FULL_TIME": "🏁"
-                }
-                emo = emoji_map.get(ev["type"], "⏱️")
-
-                ticker_history.append(f"{emo} **{ev['minute']}'** - {text}")
+                ticker_history.append(format_ticker_line(ev["type"], ev["minute"], text))
+                if ev["type"] == "GOAL":
+                    append_goal_scroll(goal_scroll, ev["minute"], ev["actor"])
                 recent_ticker = ticker_history[-5:]
 
                 embed = discord.Embed(
@@ -1723,6 +1894,8 @@ class BattleCog(commands.Cog):
                     color=0x00FF87
                 )
                 embed.add_field(name="Scoreboard", value=f"🏟️ **{c_player['club_name']}** `{ev['score_update']}` **{o_player['club_name']}**", inline=False)
+                if goal_scroll:
+                    embed.add_field(name="Goal Scroll", value="\n".join(goal_scroll), inline=False)
                 embed.add_field(name="📈 Momentum", value=get_momentum_bar(state.momentum), inline=False)
                 embed.add_field(name="Live Commentary", value="\n".join(recent_ticker), inline=False)
 

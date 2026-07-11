@@ -44,8 +44,23 @@ def test_match_xp_age_modifier() -> None:
 
 def test_yearly_decline_veteran() -> None:
     assert yearly_stat_decline(30) == {}
-    assert yearly_stat_decline(31)["pac"] == -1
-    assert yearly_stat_decline(36)["pac"] == -2
+    assert yearly_stat_decline(31) == {"pac": -1, "phy": -1}
+    assert yearly_stat_decline(32) == {"pac": -1, "phy": -1}
+    assert yearly_stat_decline(33) == {
+        "pac": -1,
+        "phy": -1,
+        "pas": -1,
+        "def": -1,
+        "dri": -1,
+    }
+    assert yearly_stat_decline(34)["dri"] == -1
+    assert "sho" not in yearly_stat_decline(34)
+    d35 = yearly_stat_decline(35)
+    assert d35["pac"] == -2
+    assert d35["phy"] == -2
+    assert d35["dri"] == -1
+    assert d35["sho"] == -1
+    assert yearly_stat_decline(36)["sho"] == -1
 
 
 def test_can_renew_contract() -> None:
@@ -65,6 +80,7 @@ def test_create_player_card_has_dob() -> None:
         age=19,
         reference_date=date(2026, 1, 1),
     )
-    assert data["age"] == 19
-    assert data["date_of_birth"]
+    assert data.age == 19
+    assert data.date_of_birth
     assert apply_xp_age_multiplier(10, 19) == 15
+    assert data.role

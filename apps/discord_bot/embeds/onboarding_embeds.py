@@ -65,6 +65,7 @@ def marquee_reveal_embed(player: GachaPlayer) -> discord.Embed:
     embed.add_field(name="🏃 Name", value=player.name, inline=True)
     embed.add_field(name="🎯 Position", value=player.position, inline=True)
     embed.add_field(name="📊 Rating", value=f"**{player.overall} OVR**", inline=True)
+    embed.add_field(name="💼 Role", value=player.role, inline=True)
     embed.set_footer(text="Captain of your starter squad")
     return embed
 
@@ -84,7 +85,10 @@ def registration_complete_embed(marquee: GachaPlayer, youth_players: list[GachaP
     rarity_emoji = "⭐" if marquee.rarity == "Rare" else "🔥"
     embed1.add_field(
         name="🎖️ Starter Captain (Marquee Signing)",
-        value=f"{rarity_emoji} **{marquee.name}** ({marquee.position}) — **{marquee.overall} OVR** [{marquee.rarity}]",
+        value=(
+            f"{rarity_emoji} **{marquee.name}** ({marquee.position}) — "
+            f"**{marquee.overall} OVR** [{marquee.rarity}] · 💼 {marquee.role}"
+        ),
         inline=False
     )
     embed1.set_footer(text="Tip: Use /match play in any server channel to play your first match!")
@@ -99,7 +103,9 @@ def registration_complete_embed(marquee: GachaPlayer, youth_players: list[GachaP
     youth_list = []
     for p in ordered_youth:
         emo = emoji_map.get(p.position, "🏃")
-        youth_list.append(f"{emo} **{p.position}** - {p.name} ({p.overall} OVR)")
+        youth_list.append(
+            f"{emo} **{p.position}** - {p.name} ({p.overall} OVR) · {p.role}"
+        )
 
     # Embed 2: Youth academy prospects
     embed2 = discord.Embed(

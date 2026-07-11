@@ -3,8 +3,24 @@
 from __future__ import annotations
 
 import random
+from typing import Literal
 
+from .created_card import CreatedPlayerCard
 from .player_factory import create_player_card
+
+RegenRarity = Literal["Common", "Rare", "Epic"]
+
+
+def regen_rarity_for_ovr(retired_ovr: int, rng: random.Random) -> RegenRarity:
+    """Rarity weights by peak OVR (FR-014). Below 75 returns Common defensively."""
+    roll = rng.random()
+    if retired_ovr >= 85:
+        return "Epic" if roll < 0.50 else "Rare"
+    if retired_ovr >= 80:
+        return "Rare" if roll < 0.60 else "Common"
+    if retired_ovr >= 75:
+        return "Rare" if roll < 0.20 else "Common"
+    return "Common"
 
 
 def generate_regen_from_retired(
@@ -13,7 +29,7 @@ def generate_regen_from_retired(
     first_names: list[str],
     last_names: list[str],
     rng: random.Random | None = None,
-) -> dict:
+) -> CreatedPlayerCard:
     """Spawn a youth regen inspired by a retired card (same position, POT ≈ base_potential)."""
     r = rng or random
     position = retired["position"]
@@ -25,11 +41,7 @@ def generate_regen_from_retired(
     target_ovr = r.randint(lo, hi)
     age = r.randint(16, 19)
 
-    rarity = "Common"
-    if retired_ovr >= 80 and r.random() < 0.35:
-        rarity = "Rare"
-    elif retired_ovr >= 85 and r.random() < 0.15:
-        rarity = "Epic"
+    rarity = regen_rarity_for_ovr(retired_ovr, r)
 
     pot = max(target_ovr, min(94, base_pot + r.randint(-3, 5)))
 
@@ -42,7 +54,10 @@ def generate_regen_from_retired(
         age=age,
         rng=r,
     )
-    card["potential"] = pot
-    card["base_potential"] = pot
-    card["source_card_id"] = str(retired["id"])
-    return card
+    return card.model_copy(
+        update={
+            "potential": pot,
+            "base_potential": pot,
+            "source_card_id": str(retired["id"]),
+        }
+    )

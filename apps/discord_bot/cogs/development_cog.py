@@ -1,6 +1,8 @@
 # apps/discord_bot/cogs/development_cog.py
 from __future__ import annotations
 import logging
+import os
+from datetime import datetime, timezone
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -25,7 +27,6 @@ from player_engine import (
     MAX_ACTIVE_EVOLUTIONS,
     DRILL_CATALOG,
     calculate_true_ovr,
-    can_allocate_skill_point,
     drill_spec,
     drill_unlocked,
     drill_xp_reward,
@@ -33,8 +34,12 @@ from player_engine import (
     evolution_unlocked,
     format_cooldown_remaining,
     fusion_xp_reward,
+    is_mentor_target,
     level_from_xp,
+    mentor_max_units,
+    preview_mentor_transfer,
     simulate_apply_card_xp,
+    sp_to_mentor_units,
     stats_from_card,
     track_min_player_level,
     xp_progress,
@@ -42,10 +47,19 @@ from player_engine import (
 
 from apps.discord_bot.middleware.match_lock import assert_not_in_match
 from apps.discord_bot.views.level_reward_claim import claim_level_rewards, unclaimed_reward_count
-from apps.discord_bot.core.economy_rpc import format_action_energy_status, sync_action_energy, get_game_config_int
+from apps.discord_bot.core.economy_rpc import format_action_energy_status_async, sync_action_energy, get_game_config_int
 from economy.flows import drill_cost, EconomyConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _mentor_enabled() -> bool:
+    raw = os.environ.get("MENTOR_TRANSFUSION_ENABLED", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _api_message(exc: Exception) -> str:
+    return api_error_message(exc)
 
 
 def _evo_played(evo: dict) -> int:
@@ -105,10 +119,6 @@ STAT_DRILLS = {
 }
 
 
-def _api_message(exc: Exception) -> str:
-    return api_error_message(exc)
-
-
 # --- Navigation / Switch helpers ---
 async def show_hub(interaction: discord.Interaction, owner_id: int):
     db = await get_client()
@@ -126,7 +136,7 @@ async def show_hub(interaction: discord.Interaction, owner_id: int):
         description=(
             f"Welcome to **{player['club_name']}** development center. "
             f"Train stats, fuse cards, evolve playstyles, or allocate skill points.\n\n"
-            f"{format_action_energy_status(ae, max_e)}"
+            f"{await format_action_energy_status_async(db, ae, max_e)}"
         ),
         color=0x00FF87,
     )
@@ -426,6 +436,13 @@ class StatDrillView(discord.ui.View):
                 return
 
             selected_p = next(p for p in self.eligible_players if str(p["id"]) == str(self.selected_card_id))
+            if selected_p.get("injury_tier"):
+                set_view_controls_disabled(self, disabled=False)
+                await interaction.followup.send(
+                    embed=error_embed("This player is injured and cannot train. Check Hospital in `/store` → Club Facilities."),
+                    ephemeral=True,
+                )
+                return
             drill_stat_key = {
                 "pac_sprint": "pac", "sho_finishing": "sho", "pas_distribution": "pas",
                 "dri_dribble": "dri", "def_tackling": "def", "phy_strength": "phy",
@@ -582,6 +599,20 @@ class FusionConfirmButton(discord.ui.Button):
             if lock_msg:
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
+
+            for cid, label in ((self.view.keeper_id, "target"), (self.view.sacrifice_id, "fodder")):
+                chk = await db.table("player_cards").select("injury_tier, in_hospital, name").eq(
+                    "id", cid
+                ).maybe_single().execute()
+                row = chk.data if chk else None
+                if row and (row.get("injury_tier") or row.get("in_hospital")):
+                    await interaction.followup.send(
+                        embed=error_embed(
+                            f"**{row.get('name', label)}** is injured or in hospital and cannot be used in fusion."
+                        ),
+                        ephemeral=True,
+                    )
+                    return
 
             fusion_res = await db.rpc("train_with_fodder", {
                 "p_owner_id": interaction.user.id,
@@ -1074,6 +1105,14 @@ class EvolutionsSubView(discord.ui.View):
                 return
             track = EVOLUTION_TRACKS[evo_key]
 
+            if self.card.get("injury_tier") or self.card.get("in_hospital"):
+                set_view_controls_disabled(self, disabled=False)
+                await interaction.followup.send(
+                    embed=error_embed("Injured players cannot start an evolution track."),
+                    ephemeral=True,
+                )
+                return
+
             gate = evolution_start_gate_message(self.hub_status)
             if gate:
                 set_view_controls_disabled(self, disabled=False)
@@ -1199,55 +1238,103 @@ async def show_skills_menu(interaction: discord.Interaction, owner_id: int, pres
     card_res = await db.table("player_cards").select("*").eq("id", target_card_id).maybe_single().execute()
     card = card_res.data if card_res else None
 
-    embed = discord.Embed(
-        title=f"⭐ Allocate Skills: {card['name']}",
-        description=(
-            f"Available Skill Points: **{int(card.get('skill_points', 0) or 0)}**\n\n"
+    skill_pts = int((card or {}).get("skill_points", 0) or 0)
+    overall = int((card or {}).get("overall", 0) or 0)
+    potential = int((card or {}).get("potential", 0) or 0)
+    maxed = overall >= potential and card is not None
+    mentor_on = _mentor_enabled()
+    mp = sp_to_mentor_units(skill_pts)
+
+    if maxed and mentor_on:
+        desc = (
+            f"Available Skill Points: **{skill_pts}**\n"
+            f"🎓 **Mentor Ready** — converts to **{mp} MP** ({mp * 500} XP)\n\n"
             f"⚡ **PAC**: `{card.get('pac', 50)}` | "
             f"🎯 **SHO**: `{card.get('sho', 50)}` | "
             f"🧠 **PAS**: `{card.get('pas', 50)}`\n"
             f"👟 **DRI**: `{card.get('dri', 50)}` | "
             f"🛡️ **DEF**: `{card.get('def', 50)}` | "
             f"💪 **PHY**: `{card.get('phy', 50)}`"
-        ),
-        color=0x00FF87
-    )
-    skill_pts = int(card.get("skill_points", 0) or 0)
-    if skill_pts <= 0:
-        embed.description += (
-            "\n\n_No skill points yet — level up players via **Training Drills** or matches, "
-            "then return here to spend points._"
         )
+        if skill_pts <= 0:
+            desc += (
+                "\n\n_This legend is at potential ceiling. Earn more SP via matches, "
+                "then use **Mentor Transfer** to feed your academy._"
+            )
+        elif skill_pts < 5:
+            desc += "\n\n_Need **5 SP** (1 mentor unit) before you can transfer._"
+        else:
+            desc += "\n\n_Stat allocation is capped — use **Mentor Transfer** to convert surplus SP into youth XP._"
+    else:
+        desc = (
+            f"Available Skill Points: **{skill_pts}**\n\n"
+            f"⚡ **PAC**: `{card.get('pac', 50)}` | "
+            f"🎯 **SHO**: `{card.get('sho', 50)}` | "
+            f"🧠 **PAS**: `{card.get('pas', 50)}`\n"
+            f"👟 **DRI**: `{card.get('dri', 50)}` | "
+            f"🛡️ **DEF**: `{card.get('def', 50)}` | "
+            f"💪 **PHY**: `{card.get('phy', 50)}`"
+        )
+        if skill_pts <= 0:
+            desc += (
+                "\n\n_No skill points yet — level up players via **Training Drills** or matches, "
+                "then return here to spend points._"
+            )
 
-    view = SkillsSubView(owner_id, card, roster)
+    embed = discord.Embed(
+        title=f"⭐ Allocate Skills: {card['name']}",
+        description=desc,
+        color=0x00FF87,
+    )
+    view = SkillsSubView(owner_id, card, roster, maxed=maxed and mentor_on)
     await edit_ephemeral_hub_message(interaction, embed, view)
 
 
 class SkillsSubView(discord.ui.View):
-    def __init__(self, owner_id: int, card: dict | None, roster: list[dict]) -> None:
+    def __init__(
+        self,
+        owner_id: int,
+        card: dict | None,
+        roster: list[dict],
+        *,
+        maxed: bool = False,
+    ) -> None:
         super().__init__(timeout=900)
         self.owner_id = owner_id
         self.card = card
+        self.maxed = maxed
 
-        # 1. Player Selector dropdown
         if roster:
             player_options = [
-                discord.SelectOption(label=p["name"], description=f"{p['overall']} OVR", value=p["id"], default=(card and p["id"] == card["id"]))
+                discord.SelectOption(
+                    label=p["name"],
+                    description=f"{p['overall']} OVR",
+                    value=p["id"],
+                    default=(card and p["id"] == card["id"]),
+                )
                 for p in roster[:25]
             ]
             player_sel = discord.ui.Select(placeholder="Select card...", options=player_options, row=0)
             player_sel.callback = self.player_select_callback
             self.add_item(player_sel)
 
-        # 2. Stat buttons only when the card has points to spend
-        if card and int(card.get("skill_points", 0) or 0) > 0:
+        skill_pts = int((card or {}).get("skill_points", 0) or 0)
+        if maxed:
+            mentor_btn = discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                label="🎓 Mentor Transfer",
+                disabled=skill_pts < 5,
+                row=1,
+            )
+            mentor_btn.callback = self.mentor_callback
+            self.add_item(mentor_btn)
+        elif card and skill_pts > 0:
             stats = [("pac", "PAC +1"), ("sho", "SHO +1"), ("pas", "PAS +1"), ("dri", "DRI +1"), ("def", "DEF +1"), ("phy", "PHY +1")]
             for idx, (col, label) in enumerate(stats):
                 row = 1 if idx < 3 else 2
                 btn = SkillPointButton(card["id"], col, label, True, owner_id, row)
                 self.add_item(btn)
 
-        # 3. Back button
         back_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Back to Hub", row=3)
         back_btn.callback = self.back_callback
         self.add_item(back_btn)
@@ -1264,6 +1351,11 @@ class SkillsSubView(discord.ui.View):
     async def player_select_callback(self, interaction: discord.Interaction):
         card_id = interaction.data["values"][0]
         await show_skills_menu(interaction, self.owner_id, preselected_card_id=card_id)
+
+    async def mentor_callback(self, interaction: discord.Interaction) -> None:
+        if not self.card:
+            return
+        await show_mentor_target_menu(interaction, self.owner_id, self.card)
 
 
 class SkillPointButton(discord.ui.Button):
@@ -1297,13 +1389,322 @@ class SkillPointButton(discord.ui.Button):
             await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
 
 
+# --- 3b. MENTOR TRANSFUSION ---
+
+async def _load_mentor_targets(db, owner_id: int, source_id: str) -> list[dict]:
+    res = await db.table("player_cards").select(
+        "id, name, overall, potential, level, xp, skill_points"
+    ).eq("owner_id", owner_id).order("level").execute()
+    rows = res.data or []
+    return [
+        r for r in rows
+        if is_mentor_target(
+            overall=int(r.get("overall") or 0),
+            potential=int(r.get("potential") or 0),
+            level=int(r.get("level") or 1),
+            source_id=source_id,
+            target_id=str(r["id"]),
+        )
+    ]
+
+
+async def show_mentor_target_menu(
+    interaction: discord.Interaction,
+    owner_id: int,
+    source: dict,
+) -> None:
+    if not interaction.response.is_done():
+        await interaction.response.defer()
+    db = await get_client()
+    targets = await _load_mentor_targets(db, owner_id, str(source["id"]))
+    if not targets:
+        await interaction.followup.send(
+            embed=error_embed("No eligible academy targets (need a non-maxed club mate under level 100)."),
+            ephemeral=True,
+        )
+        return
+    embed = discord.Embed(
+        title=f"🎓 Mentor Transfer — {source['name']}",
+        description=(
+            f"Source SP: **{int(source.get('skill_points') or 0)}** "
+            f"({sp_to_mentor_units(int(source.get('skill_points') or 0))} MP available)\n"
+            "Select a developing player to receive mentor XP."
+        ),
+        color=0x5865F2,
+    )
+    view = MentorTargetView(owner_id, source, targets)
+    await edit_ephemeral_hub_message(interaction, embed, view)
+
+
+class MentorTargetView(discord.ui.View):
+    def __init__(self, owner_id: int, source: dict, targets: list[dict]) -> None:
+        super().__init__(timeout=900)
+        self.owner_id = owner_id
+        self.source = source
+        self.targets = targets
+        self.selected_id: str | None = None
+
+        options = [
+            discord.SelectOption(
+                label=t["name"][:100],
+                description=f"Lv {t.get('level', 1)} · {t.get('overall', 0)} OVR / {t.get('potential', 0)} POT",
+                value=str(t["id"]),
+            )
+            for t in targets[:25]
+        ]
+        sel = discord.ui.Select(placeholder="Select target...", options=options, row=0)
+        sel.callback = self.select_callback
+        self.add_item(sel)
+
+        back = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Back", row=1)
+        back.callback = self.back_callback
+        self.add_item(back)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This belongs to another manager.", ephemeral=True)
+            return False
+        return True
+
+    async def select_callback(self, interaction: discord.Interaction) -> None:
+        self.selected_id = interaction.data["values"][0]
+        target = next((t for t in self.targets if str(t["id"]) == self.selected_id), None)
+        if not target:
+            await interaction.response.send_message(embed=error_embed("Target not found."), ephemeral=True)
+            return
+        await show_mentor_amount_menu(interaction, self.owner_id, self.source, target)
+
+    async def back_callback(self, interaction: discord.Interaction) -> None:
+        await show_skills_menu(interaction, self.owner_id, preselected_card_id=str(self.source["id"]))
+
+
+async def show_mentor_amount_menu(
+    interaction: discord.Interaction,
+    owner_id: int,
+    source: dict,
+    target: dict,
+) -> None:
+    if not interaction.response.is_done():
+        await interaction.response.defer()
+    source_sp = int(source.get("skill_points") or 0)
+    target_xp = int(target.get("xp") or 0)
+    max_n = mentor_max_units(source_sp, target_xp)
+    embed = discord.Embed(
+        title="🎓 Choose Mentor Amount",
+        description=(
+            f"**{source['name']}** → **{target['name']}**\n"
+            f"Max transferable now: **{max_n} MP** "
+            f"(5 SP = 1 MP = 500 XP)"
+        ),
+        color=0x5865F2,
+    )
+    view = MentorAmountView(owner_id, source, target, max_n)
+    await edit_ephemeral_hub_message(interaction, embed, view)
+
+
+class MentorAmountView(discord.ui.View):
+    def __init__(self, owner_id: int, source: dict, target: dict, max_n: int) -> None:
+        super().__init__(timeout=900)
+        self.owner_id = owner_id
+        self.source = source
+        self.target = target
+        self.max_n = max_n
+
+        for i, n in enumerate((1, 3, 5)):
+            btn = discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label=f"{n} MP",
+                disabled=n > max_n,
+                row=0,
+            )
+            btn.callback = self._make_amount_cb(n)
+            self.add_item(btn)
+
+        max_btn = discord.ui.Button(
+            style=discord.ButtonStyle.success,
+            label=f"Max ({max_n} MP)" if max_n else "Max",
+            disabled=max_n < 1,
+            row=0,
+        )
+        max_btn.callback = self._make_amount_cb(max_n if max_n > 0 else 1)
+        self.add_item(max_btn)
+
+        back = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Back", row=1)
+        back.callback = self.back_callback
+        self.add_item(back)
+
+    def _make_amount_cb(self, units: int):
+        async def _cb(interaction: discord.Interaction) -> None:
+            await show_mentor_confirm(interaction, self.owner_id, self.source, self.target, units)
+        return _cb
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This belongs to another manager.", ephemeral=True)
+            return False
+        return True
+
+    async def back_callback(self, interaction: discord.Interaction) -> None:
+        await show_mentor_target_menu(interaction, self.owner_id, self.source)
+
+
+async def show_mentor_confirm(
+    interaction: discord.Interaction,
+    owner_id: int,
+    source: dict,
+    target: dict,
+    units: int,
+) -> None:
+    if not interaction.response.is_done():
+        await interaction.response.defer()
+    preview = preview_mentor_transfer(
+        source_sp=int(source.get("skill_points") or 0),
+        target_xp=int(target.get("xp") or 0),
+        units=units,
+    )
+    if not preview.valid:
+        await interaction.followup.send(
+            embed=error_embed(preview.reason or "Cannot preview that transfer."),
+            ephemeral=True,
+        )
+        return
+
+    db = await get_client()
+    today = datetime.now(timezone.utc).date().isoformat()
+    used_res = await db.table("mentor_transfer_log").select("id", count="exact").eq(
+        "club_id", owner_id
+    ).eq("transfer_date", today).execute()
+    used = int(used_res.count or 0) if used_res else 0
+    remaining = max(0, 3 - used)
+
+    embed = discord.Embed(
+        title="🎓 Confirm Mentor Transfer",
+        description=(
+            f"**{source['name']}** → **{target['name']}**\n"
+            f"• Mentor units: **{preview.mentor_units} MP**\n"
+            f"• SP spent: **{preview.sp_spent}**\n"
+            f"• XP granted: **{preview.xp_granted}**\n"
+            f"• Level: **{preview.old_level}** → **{preview.new_level}** "
+            f"(+{preview.levels_gained}, +{preview.skill_points_granted} SP unlocked)\n"
+            f"• Daily transfers remaining: **{remaining}/3**"
+        ),
+        color=0x5865F2,
+    )
+    view = MentorConfirmView(owner_id, source, target, units)
+    await edit_ephemeral_hub_message(interaction, embed, view)
+
+
+class MentorConfirmView(discord.ui.View):
+    def __init__(self, owner_id: int, source: dict, target: dict, units: int) -> None:
+        super().__init__(timeout=900)
+        self.owner_id = owner_id
+        self.source = source
+        self.target = target
+        self.units = units
+        self._busy = False
+
+        confirm = discord.ui.Button(style=discord.ButtonStyle.success, label="Confirm Transfer", row=0)
+        confirm.callback = self.confirm_callback
+        self.add_item(confirm)
+
+        cancel = discord.ui.Button(style=discord.ButtonStyle.secondary, label="Cancel", row=0)
+        cancel.callback = self.cancel_callback
+        self.add_item(cancel)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This belongs to another manager.", ephemeral=True)
+            return False
+        return True
+
+    async def cancel_callback(self, interaction: discord.Interaction) -> None:
+        await show_mentor_amount_menu(interaction, self.owner_id, self.source, self.target)
+
+    async def confirm_callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        if self._busy:
+            await interaction.followup.send(
+                embed=error_embed("Transfer already in progress."),
+                ephemeral=True,
+            )
+            return
+        self._busy = True
+        set_view_controls_disabled(self, disabled=True)
+        try:
+            db = await get_client()
+            lock_msg = await assert_not_in_match(db, self.owner_id)
+            if lock_msg:
+                await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
+                self._busy = False
+                set_view_controls_disabled(self, disabled=False)
+                return
+
+            res = await db.rpc(
+                "transfer_mentor_xp",
+                {
+                    "p_owner_id": self.owner_id,
+                    "p_source_card_id": str(self.source["id"]),
+                    "p_target_card_id": str(self.target["id"]),
+                    "p_mentor_units": self.units,
+                },
+            ).execute()
+            data = res.data if isinstance(res.data, dict) else (res.data[0] if res.data else {})
+            xp_result = data.get("xp_result") or {}
+            await edit_ephemeral_hub_message(
+                interaction,
+                success_embed(
+                    f"**{self.source['name']}** mentored **{self.target['name']}**\n"
+                    f"• Spent **{data.get('sp_spent', self.units * 5)} SP** "
+                    f"({data.get('mentor_units', self.units)} MP)\n"
+                    f"• Granted **{data.get('xp_granted', self.units * 500)} XP**\n"
+                    f"• Level **{xp_result.get('old_level', '?')}** → "
+                    f"**{xp_result.get('new_level', '?')}** "
+                    f"(+{xp_result.get('levels_gained', 0)})\n"
+                    f"• Source SP left: **{data.get('source_skill_points', '?')}**\n"
+                    f"• Transfers today: **{data.get('transfers_used_today', '?')}/3** "
+                    f"({data.get('transfers_remaining_today', '?')} left)"
+                ),
+                MentorDoneView(self.owner_id, str(self.source["id"])),
+            )
+        except Exception as exc:
+            logger.exception("Mentor transfer failed.")
+            self._busy = False
+            set_view_controls_disabled(self, disabled=False)
+            await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
+
+
+class MentorDoneView(discord.ui.View):
+    def __init__(self, owner_id: int, source_id: str) -> None:
+        super().__init__(timeout=900)
+        self.owner_id = owner_id
+        self.source_id = source_id
+        back = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Back to Skills", row=0)
+        back.callback = self.back_callback
+        self.add_item(back)
+        hub = discord.ui.Button(style=discord.ButtonStyle.primary, label="Development Hub", row=0)
+        hub.callback = self.hub_callback
+        self.add_item(hub)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This belongs to another manager.", ephemeral=True)
+            return False
+        return True
+
+    async def back_callback(self, interaction: discord.Interaction) -> None:
+        await show_skills_menu(interaction, self.owner_id, preselected_card_id=self.source_id)
+
+    async def hub_callback(self, interaction: discord.Interaction) -> None:
+        await show_hub(interaction, self.owner_id)
+
+
 # --- COG INTERFACE ---
 
 class DevelopmentCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="development", description="Development Center: stat drills, card fusion, evolutions, and skill points.")
+    @app_commands.command(name="development", description="Development Center: drills, fusion, evolutions, skills, and mentor transfer.")
     @app_commands.guild_only()
     @app_commands.check(ensure_registered)
     async def development(self, interaction: discord.Interaction) -> None:

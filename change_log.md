@@ -2,6 +2,137 @@
 
 Hey Managers!
 
+## Retirement lifecycle fixes
+
+Aging, retirement, and the scouting regen market got three balance/UX fixes so late careers and legend reincarnations feel fair.
+
+**Aging curve**
+- From **age 33+**, veterans also lose **DRI** (alongside the existing pace / physique / passing / defending drops).
+- From **age 35+**, **SHO** declines too — no more immortal finishers who only got slower.
+- Retirement age is unchanged (**36**); the curve just makes that exit feel earned.
+
+**Squad holes**
+- When a **starter** retires, an eligible **reserve** (same position role, not already in your XI) is **auto-promoted** into that slot.
+- If nobody can cover the hole, your club is flagged invalid: **bot, league, and friendly** matches won’t start until you fix the lineup in **`/squad`**.
+- `/squad` shows a clear warning when you’re in that state; saving a full valid XI clears it.
+
+**Regen rarity (scouting pool)**
+- Retired **85+ OVR** legends spawn **Epic or Rare** only (**50/50**) — never Common.
+- **80–84** → **60% Rare / 40% Common**
+- **75–79** → **80% Common / 20% Rare**
+- Same market entry as before (OVR 75+ retirees, ages 16–19); only the rarity odds changed.
+
+## Mentor Transfusion
+
+Your legends finally have a late-game purpose. When a card hits its **potential ceiling**, surplus skill points aren't stuck anymore — you can **hand the torch** to the next generation.
+
+**How it works**
+- Open **`/development` → Allocate Skills** on a potential-maxed card with at least **5 SP**.
+- Tap **Mentor Transfer**, pick a developing club mate (any position), choose **1 / 3 / 5 / Max** mentor units, and confirm the level-up preview.
+- Conversion: **5 SP → 1 mentor unit (MP) → 500 XP** on the target. Leftover SP under 5 stays on the mentor.
+- Cap: **3 mentor transfers per club per UTC day** (separate from fusion and skill-allocate limits).
+
+**What you’ll notice**
+- Maxed cards show **Mentor Ready** on Allocate Skills and on **`/player-profile`** (SP → MP / XP conversion).
+- Youth still hit the same potential ceiling; mentoring speeds **leveling**, not how many SP you can spend on stats per day.
+- Injury / fatigue does **not** block mentoring. Coins, energy, match XP rates, and marketplace prices are unchanged.
+
+## Pack identities (Archetypes)
+
+New cards from **`/store` packs**, registration, youth intake, and the scouting pool now roll a **playing style** — not just a position and OVR. Same rarity odds as before; the cards just feel less identical.
+
+**Forward styles**
+- **Poacher** — clinical finishing / physical presence  
+- **Speedster** — pace and dribbling  
+- **Complete Forward** — balanced attacker  
+
+**Mid / Def / GK** also roll distinct styles (e.g. Playmaker, Destroyer, Box-to-Box · Stopper, Wing-Back, Ball-Playing Defender · Shot Stopper, Sweeper Keeper, Classic Keeper).
+
+**What you’ll notice**
+- Style shows as **Role** on pack reveals, onboarding, youth intake, and squad / player profile (same Role Style line you already know).
+- The **OVR on the card matches True OVR** at creation — no more “looks like a 75, plays like a 72.”
+- Daily pack mix is unchanged: **Common 60% · Rare 30% · Epic 8% · Legendary 2%** (5 cards, 22-hour claim).
+- Cards you already owned keep their old Role — only **new** drops get the new styles.
+
+## Live Match Immersion
+
+Watching a match should feel like a match — not a scoreboard that jumped while you blinked.
+
+Applies to **bot**, **league**, and **friendly** live streams:
+
+- **Goal Scroll** sits under the scoreboard and lists every goal (minute + scorer), even after the 5-line commentary ticker has moved on (up to 10 goals shown).
+- **Half-time** inserts a clear `--- HALF TIME ---` break in the ticker at 45'.
+- **Bot / AI opponents** field a full named XI — no more “Opponent Striker” or “Opponent Midfielder”.
+- **Possession & shots** stay believable when you’re outmatched (no more lifeless 0%–100% / 0-shot snowballs).
+
+## Club Profile hub
+
+Your club’s wallet and medical bay live on **`/profile`** now — one glance, then act.
+
+- **Club Finance** — coins and gems at the top of the embed.
+- **Hospital** — level, beds in use, recovery speed, and who’s recovering (or a clear “No Hospital / No injuries” empty state).
+- **Buttons under the embed:**
+  - **Manage Hospital** — upgrade, admit, or discharge (same panel as Store facilities; Back returns to your refreshed profile).
+  - **Finances** — wage forecast + YA / Training Ground / Hospital levels.
+  - **View Club Stats** — jumps to your Squad hub.
+- **`/store` → Club Facilities → Hospital** still works if you start from the Store.
+- **`/club-finances`** still works and reminds you the unified dashboard is on `/profile`.
+
+## Fatigue, Injuries & Hospital
+
+Squad depth matters now. Push the same XI every day and they’ll tire, risk injury, and need Hospital beds — or rotation.
+
+### Fatigue
+- **Per-player fitness (0–100)** on every card — not the same as club **action energy**.
+- **Starters** lose fatigue after **bot** and **league** matches (PHY, tactics stance, and tough opponents affect drain).
+- **Bench** players who sat the match recover a bit of fitness.
+- **Tired players perform worse** in live matches (soft → hard penalties as fatigue drops).
+- **Daily recovery** tops up fitness over real time (faster while admitted to Hospital).
+- See fitness on **`/squad`** and **`/player-profile`**.
+
+### Injuries
+- Only players below **75% fatigue** can be injured, and **at most one** injury per club per match.
+- Tiers: **Minor / Moderate / Major** (no career-ending auto-retire).
+- Injured players are blocked from the **starting XI**, **stat drills**, **fusion**, **evolution start**, and **agent sale** until cleared.
+- Expected return shows on profile and the Hospital panel.
+
+### In-match stoppages (live matches)
+- When an injury hits **before 90'** in a **live bot or league** match, play pauses at a natural stoppage.
+- You get **30 seconds** to **pick a bench substitute** or **Play On** (weaker on the pitch; higher chance the injury worsens).
+- **Timeout** auto-picks the best available bench player (or continues with **10 men** if nobody’s left).
+- **Max 3 subs** per match; **GK** injuries prefer a bench GK, otherwise an emergency outfield keeper.
+- **League auto-sim** and **AI clubs** resolve without a Discord prompt.
+- **90'+** injuries are recorded for after the match — no mid-match prompt.
+
+### Hospital (Club Facility)
+- New facility under **`/store` → Club Facilities** (same hub as Youth Academy & Training Ground) — also reachable from **`/profile` → Manage Hospital**.
+- **Beds** = Hospital level + 1 (level 0 still has **1** first-aid bed).
+- Higher levels = **more beds** and **faster recovery**.
+- Post-match injuries **auto-admit** when a bed is free; if full, you get a **DM or Hospital panel** choice (never silent).
+- **Upgrade costs (coins):** 1,500 / 4,000 / 10,000 / 25,000 / 60,000.
+- Shares the **one facility upgrade per UTC week** slot with YA/TG.
+- **L2** needs **5** career matches; **L4** needs **20** (same spirit as other facilities).
+- No per-treatment coin fee — the upgrade ladder is the sink.
+
+### Unchanged on purpose
+- **Friendlies** stay a sandbox — no fatigue drain, no injuries, no Hospital admits.
+- Club **action energy** / refill shop behavior is unchanged by fatigue recovery.
+
+### For server operators
+- Migration **050** (`fatigue_injury_hospital`) must be applied before deploying this bot build.
+- Daily recovery job runs with the bot scheduler (~**00:05 UTC**).
+
+---
+
+## Match XP + Energy Regen Fix
+
+### What changed
+- **Match XP restored** for bot and league matches (XP pipe hardened after ledger security changes).
+- **Faster energy regen** — **+1 action energy every 4 minutes** (~6h 40m empty→full at 100 max). Hubs and insufficient-energy messages match this rate.
+- Friendlies still grant **no XP** and spend **no energy**.
+
+---
+
 ## Audit Remediation (US-38 follow-up)
 
 Security and fairness hardening from the full codebase audit — mostly invisible, but it protects your progress and coins.
@@ -72,14 +203,14 @@ Every season brings fresh prospects — rebuild without relying only on daily pa
 
 ## Club Facilities (US-33 — Phase C)
 
-Invest coins to improve your academy and training ground over time.
+Invest coins to improve your academy and training ground over time. **Hospital** is a third facility in the same hub — see **Fatigue, Injuries & Hospital** above.
 
 ### What changed
-- **`/store` → Club Facilities** — upgrade **Youth Academy** (better weekly intake) or **Training Ground** (flat drill XP bonus).
+- **`/store` → Club Facilities** — upgrade **Youth Academy** (better weekly intake), **Training Ground** (flat drill XP bonus), or **Hospital** (beds / recovery speed).
 - **Youth Academy:** L1 is the baseline band above; higher levels widen OVR/POT ceilings up to roughly **56–69 OVR / 72–94 POT** at L5, with rising gem-prospect odds.
 - **Training Ground:** **L1 +0 … L5 +4** flat bonus drill XP (shown on the Stat Drills hub).
-- **Costs:** 750 / 2,000 / 5,000 / 12,000 coins per level (same all divisions).
-- **Level 1 is free** — upgrades are optional; max **1 upgrade per UTC week**.
+- **Costs (YA/TG):** 750 / 2,000 / 5,000 / 12,000 coins per level (same all divisions). Hospital uses its own ladder (see above).
+- **Level 1 is free** for YA/TG — upgrades are optional; max **1 upgrade per UTC week** across YA + TG + Hospital.
 - **L2** requires **5** career matches; **L4** requires **20**.
 
 ---
@@ -265,7 +396,7 @@ This update overhauls player growth, unifies action energy, and rebuilds the clu
 ## Unified Action Energy
 
 - **One pool:** `Action Energy` (max **100**) replaces separate match and training energy.
-- **Regen:** **+1 energy every 6 minutes** (synced when you open hubs or run actions).
+- **Regen:** **+1 energy every 4 minutes** (~6h 40m empty→full; synced when you open hubs or run actions).
 - **Costs:**
   - Bot match: **20** energy
   - League match: **10** energy
