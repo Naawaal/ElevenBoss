@@ -16,16 +16,20 @@ Hey Managers!
 
 Injuries and fatigue recover on a Discord-friendly real-time clock.
 
-**Injuries**
+**Injuries (new clocks)**
 - Untreated bases: **Minor 1 day**, **Moderate 4 days**, **Major 7 days** (was 3 / 8 / 20).
 - Hospital still shortens those windows the same way — upgrades matter more when Majors aren’t three weeks long.
-- **Fairness pass:** players already in Hospital (or untreated) under the old clocks were recalculated — time already served counts; if you’d already “served” the new max, they were discharged early. Check `/profile` → Manage Hospital.
+
+**Already injured when this shipped?**
+- Open Hospital stays and untreated injuries were **recalculated fairly**: time you’d already waited counts toward the new clock.
+- ETAs only got **shorter or stayed the same** — never longer.
+- If you’d already served past the new maximum, that player was **discharged / cleared** early. Check **`/profile` → Manage Hospital**.
 
 **Fitness**
-- Daily passive (healthy players): **+25 + (TG level × 5)** — TG1 = +30, TG3 = +40, TG5 = +50.
+- Daily passive (healthy players): **+25 + (TG level × 5)** — TG1 = +30, TG3 = +40, TG5 = +50 (was base +15).
 - Bench rest after competitive matches: **+25** (was +15).
 - Match fatigue base drain: **18** (was 22); PHY / tactics / intensity still apply.
-- Recovery Session (+40 / 5⚡) is unchanged.
+- Recovery Session (+40 / **5⚡**) is unchanged.
 
 ## Active Fatigue Recovery
 
@@ -123,15 +127,16 @@ Squad depth matters now. Push the same XI every day and they’ll tire, risk inj
 
 ### Fatigue
 - **Per-player fitness (0–100)** on every card — not the same as club **action energy**.
-- **Starters** lose fatigue after **bot** and **league** matches (PHY, tactics stance, and tough opponents affect drain).
-- **Bench** players who sat the match recover a bit of fitness.
+- **Starters** lose fatigue after **bot** and **league** matches (base drain **18**; PHY, tactics stance, and tough opponents still modify it).
+- **Bench** players who sat a competitive match recover **+25** fitness (capped at 100).
 - **Tired players perform worse** in live matches (soft → hard penalties as fatigue drops).
-- **Daily recovery** tops up fitness over real time (faster while admitted to Hospital).
+- **Daily recovery** for healthy players: **+25 + (Training Ground level × 5)** (TG1 = +30 … TG5 = +50). Hospital patients use the faster hospital daily rate.
+- **Recovery Session** under `/development` → Training Drills restores **+40** for **5⚡** (0 XP / 0 coins; uses a drill slot).
 - See fitness on **`/squad`** and **`/player-profile`**.
 
 ### Injuries
 - Only players below **75% fatigue** can be injured, and **at most one** injury per club per match.
-- Tiers: **Minor / Moderate / Major** (no career-ending auto-retire).
+- Tiers: **Minor / Moderate / Major** (no career-ending auto-retire) — untreated clocks **1 / 4 / 7** real days; Hospital shortens further.
 - Injured players are blocked from the **starting XI**, **stat drills**, **fusion**, **evolution start**, and **agent sale** until cleared.
 - Expected return shows on profile and the Hospital panel.
 
