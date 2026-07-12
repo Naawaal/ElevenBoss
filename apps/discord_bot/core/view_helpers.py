@@ -70,8 +70,16 @@ async def edit_ephemeral_hub_message(
 ) -> None:
     """Edit ephemeral hub message after defer (shared by development + leaderboard hubs)."""
     if not interaction.response.is_done():
-        await interaction.response.edit_message(embed=embed, view=view)
-        return
+        try:
+            await interaction.response.edit_message(embed=embed, view=view)
+            return
+        except discord.NotFound:
+            logger.warning(
+                "Hub edit_message failed (unknown interaction) for user %s — "
+                "caller should defer before DB work",
+                getattr(interaction.user, "id", "?"),
+            )
+            return
     if interaction.message is not None:
         try:
             await interaction.followup.edit_message(interaction.message.id, embed=embed, view=view)

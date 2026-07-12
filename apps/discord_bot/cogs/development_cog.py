@@ -16,6 +16,7 @@ from apps.discord_bot.core.select_helpers import rebuild_select_options
 from apps.discord_bot.core.view_helpers import (
     disable_view_on_timeout,
     edit_ephemeral_hub_message,
+    safe_defer,
     set_view_controls_disabled,
 )
 from player_engine import (
@@ -121,6 +122,8 @@ STAT_DRILLS = {
 
 # --- Navigation / Switch helpers ---
 async def show_hub(interaction: discord.Interaction, owner_id: int):
+    if not await safe_defer(interaction, ephemeral=True):
+        return
     db = await get_client()
     player_res = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
     player = player_res.data if player_res else None
@@ -229,6 +232,8 @@ class DevelopmentHubView(discord.ui.View):
 # --- 1. STAT DRILL TRAINING ---
 
 async def show_training_menu(interaction: discord.Interaction, owner_id: int) -> None:
+    if not await safe_defer(interaction, ephemeral=True):
+        return
     db = await get_client()
     player_res = await db.table("players").select("daily_drill_count, training_ground_level").eq("discord_id", owner_id).maybe_single().execute()
     energy_row = await sync_action_energy(db, owner_id)
@@ -568,6 +573,8 @@ async def _fetch_card_locks(owner_id: int) -> tuple[set[str], set[str]]:
 
 
 async def show_card_fusion_menu(interaction: discord.Interaction, owner_id: int) -> None:
+    if not await safe_defer(interaction, ephemeral=True):
+        return
     db = await get_client()
     cards_res = await db.table("player_cards").select("*").eq("owner_id", owner_id).order("overall", desc=True).execute()
     cards = cards_res.data or []
@@ -822,6 +829,8 @@ class CardFusionView(discord.ui.View):
 # --- 3. EVOLUTIONS SUB VIEW SYSTEM ---
 
 async def show_club_evolutions_hub(interaction: discord.Interaction, owner_id: int) -> None:
+    if not await safe_defer(interaction, ephemeral=True):
+        return
     db = await get_client()
     status = await fetch_evolution_hub_status(db, owner_id)
     active = status.get("active") or []
@@ -1290,6 +1299,8 @@ class EvolutionsSubView(discord.ui.View):
 # --- 3. SKILL ALLOCATION SUB VIEW SYSTEM ---
 
 async def show_skills_menu(interaction: discord.Interaction, owner_id: int, preselected_card_id: str | None = None):
+    if not await safe_defer(interaction, ephemeral=True):
+        return
     db = await get_client()
     roster_res = await db.table("player_cards").select("id, name, overall").eq("owner_id", owner_id).order("overall", desc=True).execute()
     roster = roster_res.data or []
