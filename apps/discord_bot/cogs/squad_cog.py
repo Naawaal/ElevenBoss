@@ -336,9 +336,30 @@ class SquadSwapView(discord.ui.View):
         
         self.setup_components()
 
+    def _eligible_reserves(self) -> list[dict]:
+        """Reserves that can fill the selected starter's formation slot (and aren't injured)."""
+        healthy = [c for c in self.reserves if not c.get("injury_tier")]
+        if not self.selected_starter_id:
+            return healthy
+        card_to_slot = {card["id"]: slot for slot, card in self.hub_view.assignments.items()}
+        slot = card_to_slot.get(self.selected_starter_id)
+        if slot is None:
+            return healthy
+        formation = self.hub_view.formation
+        return [
+            c
+            for c in healthy
+            if reserve_fits_formation_slot(formation, slot, str(c.get("position") or ""))
+        ]
+
     def setup_components(self) -> None:
         self.clear_items()
         card_to_slot = {card["id"]: slot for slot, card in self.hub_view.assignments.items()}
+        eligible = self._eligible_reserves()
+        if self.selected_reserve_id and not any(
+            c["id"] == self.selected_reserve_id for c in eligible
+        ):
+            self.selected_reserve_id = None
 
         bench_opts = rebuild_select_options(
             self.starters,
@@ -359,22 +380,33 @@ class SquadSwapView(discord.ui.View):
         bench_select.callback = self.on_bench_select
         self.add_item(bench_select)
 
-        if self.reserves:
+        if eligible:
             reserve_opts = rebuild_select_options(
-                self.reserves,
+                eligible,
                 self.selected_reserve_id,
                 label_fn=lambda c: c["name"],
                 description_fn=lambda c: f"{c['position']} | {c['overall']} OVR",
             )
+        elif self.selected_starter_id:
+            reserve_opts = [
+                discord.SelectOption(
+                    label="No compatible reserves for this slot",
+                    value="none",
+                )
+            ]
         else:
             reserve_opts = [discord.SelectOption(label="No reserves available", value="none")]
         start_select = discord.ui.Select(
-            placeholder="Select Player to Start...",
+            placeholder=(
+                "Select compatible reserve..."
+                if self.selected_starter_id
+                else "Select Player to Start..."
+            ),
             options=reserve_opts,
             min_values=1,
             max_values=1,
             custom_id="start_select",
-            disabled=(len(self.reserves) == 0),
+            disabled=(len(eligible) == 0),
         )
         start_select.callback = self.on_start_select
         self.add_item(start_select)
@@ -411,13 +443,23 @@ class SquadSwapView(discord.ui.View):
     def get_embed(self) -> discord.Embed:
         embed = discord.Embed(
             title="🔁 Swap Players",
-            description="Select a player from your Starting XI to Bench, and a player from your Reserves to Start.",
+            description=(
+                "Select a starter to bench, then a **compatible** reserve for that slot "
+                "(e.g. only **GK** can replace the goalkeeper)."
+            ),
             color=0x00FF87
         )
         if self.selected_starter_id:
             starter_card = next((c for c in self.starters if c["id"] == self.selected_starter_id), None)
             starter_name = starter_card["name"] if starter_card else "Unknown"
-            embed.add_field(name="Out", value=f"⬇️ {starter_name}", inline=True)
+            card_to_slot = {card["id"]: slot for slot, card in self.hub_view.assignments.items()}
+            slot = card_to_slot.get(self.selected_starter_id)
+            req = get_slot_position(self.hub_view.formation, slot) if slot else "?"
+            embed.add_field(
+                name="Out",
+                value=f"⬇️ {starter_name} (needs **{req}**)",
+                inline=True,
+            )
         if self.selected_reserve_id:
             reserve_card = next((c for c in self.reserves if c["id"] == self.selected_reserve_id), None)
             reserve_name = reserve_card["name"] if reserve_card else "Unknown"
@@ -428,6 +470,8 @@ class SquadSwapView(discord.ui.View):
         self.selected_starter_id = interaction.data["values"][0]
         if self.selected_starter_id == "none":
             self.selected_starter_id = None
+        # Slot change may invalidate the previously picked reserve.
+        self.selected_reserve_id = None
         self.setup_components()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
@@ -514,10 +558,17 @@ class SquadSwapView(discord.ui.View):
             
             await interaction.edit_original_response(embed=embed, attachments=[pitch_file], view=self.hub_view)
             
-        except Exception as e:
+        except ValueError as e:
+            # Expected validation (position mismatch, injured, missing card) — not a crash.
+            err_embed = self.get_embed()
+            err_embed.description = f"❌ {e}\n\nPick a compatible reserve or click Back."
+            await interaction.edit_original_response(embed=err_embed, view=self)
+        except Exception:
             logger.exception("Failed to swap players.")
             err_embed = self.get_embed()
-            err_embed.description = f"❌ **Error swapping players:** {str(e)}\n\nTry again or click Back."
+            err_embed.description = (
+                "❌ **Error swapping players.** Try again or click Back."
+            )
             await interaction.edit_original_response(embed=err_embed, view=self)
 
 
