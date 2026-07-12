@@ -107,6 +107,8 @@ BEGIN
       ('table:public.youth_intake_log'),
       ('table:public.mentor_transfer_log'),
       ('function:transfer_mentor_xp'),
+      ('function:process_recovery_session'),
+      ('function:backfill_injury_eta_fairness'),
       ('policy:public.mentor_transfer_log.mentor_transfer_log_select'),
       ('policy:public.mentor_transfer_log.mentor_transfer_log_insert'),
       ('policy:public.league_members.league_members_select'),
@@ -189,6 +191,8 @@ BEGIN
         WHEN 'process_youth_intake' THEN to_regprocedure('public.process_youth_intake(bigint,jsonb)')
         WHEN 'formation_slot_role' THEN to_regprocedure('public.formation_slot_role(text,integer)')
         WHEN 'transfer_mentor_xp' THEN to_regprocedure('public.transfer_mentor_xp(bigint,uuid,uuid,integer)')
+        WHEN 'process_recovery_session' THEN to_regprocedure('public.process_recovery_session(bigint,uuid)')
+        WHEN 'backfill_injury_eta_fairness' THEN to_regprocedure('public.backfill_injury_eta_fairness()')
         ELSE NULL
       END IS NOT NULL
     )

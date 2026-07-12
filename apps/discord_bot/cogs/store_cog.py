@@ -29,7 +29,7 @@ async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
 
     energy_row = await sync_action_energy(db, owner_id)
     ae = energy_row.get("action_energy", 0)
-    max_e = energy_row.get("max_energy", 100)
+    max_e = energy_row.get("max_energy", 120)
     gems = player.get("tokens", 0)
     streak = player.get("login_streak", 0)
     last_login = player.get("last_daily_login")
@@ -167,7 +167,7 @@ class StoreHubView(discord.ui.View):
             data = res.data or {}
             await interaction.followup.send(
                 embed=success_embed(
-                    f"Refilled energy. Balance: **{data.get('action_energy', '?')}/{data.get('max_energy', 100)}**"
+                    f"Refilled energy. Balance: **{data.get('action_energy', '?')}/{data.get('max_energy', 120)}**"
                 ),
                 ephemeral=True,
             )

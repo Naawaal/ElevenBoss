@@ -1911,7 +1911,7 @@ match_energy_bot\, ...) or get_game_config_int(db, \drill_basic_energy\, ...) so
 | `profile_cog.py` | `show_profile` + `ProfileHubView` (Manage Hospital / Finances / Club Stats) |
 | `embeds/profile_embeds.py` | Finance + hospital summary formatters |
 | `views/store_facilities.py` | `HospitalPanelView` `origin=profile|facilities` + Upgrade on panel |
-| `economy_cog.py` | Shared finances embed; soft-pointer on `/club-finances` |
+| `economy_cog.py` | Shared finances embed for `/profile` Finances (slash `/club-finances` removed in 010) |
 | `squad_cog.py` | `show_squad_hub` shared with profile Club Stats |
 
 No new migration/RPC/slash command. Hospital math remains US-39 / migration 050.
@@ -1931,3 +1931,19 @@ No new migration/RPC/slash command. Hospital math remains US-39 / migration 050.
 | `api_errors.py` | Manager-facing mentor reject copy |
 
 Daily cap: 3 transfers/club/UTC day. No coins/energy. No new slash command.
+
+---
+
+## 35. Active Fatigue Recovery (US-39 extension / 009)
+
+**Design:** `specs/009-fatigue-recovery/`
+
+| Piece | Role |
+|-------|------|
+| `packages/player_engine/fatigue.py` | `passive_recovery_amount`, `apply_recovery_session`, TG-aware `apply_passive_recovery` |
+| `supabase/migrations/054_fatigue_recovery.sql` | `process_recovery_session` + TG-scaled `process_daily_recovery` + `game_config` seeds |
+| `development_cog.py` | Training Drills: Recovery Session vs skill drills |
+| `api_errors.py` | Fully rested / injured recovery copy |
+| `scheduler_jobs.py` | Existing `daily_recovery_job` (unchanged caller) |
+
+Recovery is **instant** (no async drill jobs). +40 fatigue, 0 XP, 0 coins, Basic-drill energy, shares drill caps. Passive = `15 + TG×5`. Bench +15 unchanged. No Store physio SKU. No new slash command.

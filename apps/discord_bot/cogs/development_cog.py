@@ -10,7 +10,6 @@ from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.core.api_errors import api_error_message
-from apps.discord_bot.core.debug_session_log import debug_log
 from apps.discord_bot.core.card_payload import effective_card_age
 from apps.discord_bot.core.drill_rpc import parse_stat_drill_result
 from apps.discord_bot.core.select_helpers import rebuild_select_options
@@ -37,6 +36,7 @@ from player_engine import (
     is_mentor_target,
     level_from_xp,
     mentor_max_units,
+    passive_recovery_amount,
     preview_mentor_transfer,
     simulate_apply_card_xp,
     sp_to_mentor_units,
@@ -127,7 +127,7 @@ async def show_hub(interaction: discord.Interaction, owner_id: int):
 
     energy_row = await sync_action_energy(db, owner_id)
     ae = energy_row.get("action_energy", 0)
-    max_e = energy_row.get("max_energy", 100)
+    max_e = energy_row.get("max_energy", 120)
 
     pending_count = await unclaimed_reward_count(owner_id)
 
@@ -233,10 +233,12 @@ async def show_training_menu(interaction: discord.Interaction, owner_id: int) ->
     player_res = await db.table("players").select("daily_drill_count, training_ground_level").eq("discord_id", owner_id).maybe_single().execute()
     energy_row = await sync_action_energy(db, owner_id)
     training_energy = energy_row.get("action_energy", energy_row.get("training_energy", 0))
+    max_e = int(energy_row.get("max_energy", 120) or 120)
     regen_per_min = float(energy_row.get("regen_per_min") or (1 / 6))
     daily_count = player_res.data.get("daily_drill_count", 0) if player_res and player_res.data else 0
     tg_level = int((player_res.data or {}).get("training_ground_level", 1))
     daily_limit = 20
+    daily_passive = passive_recovery_amount(tg_level)
 
     # Config-driven drill tier values (mirror process_stat_drill).
     adv_min_level = await get_game_config_int(db, "drill_advanced_min_level", 10)
@@ -244,6 +246,8 @@ async def show_training_menu(interaction: discord.Interaction, owner_id: int) ->
     adv_energy_cfg = await get_game_config_int(db, "drill_advanced_energy", 15)
     basic_xp_cfg = await get_game_config_int(db, "drill_basic_xp", 30)
     adv_xp_cfg = await get_game_config_int(db, "drill_advanced_xp", 80)
+    recovery_amount = await get_game_config_int(db, "fatigue_recovery_session", 40)
+    recovery_energy = await get_game_config_int(db, "fatigue_recovery_energy", 5)
 
     roster_res = await db.table("player_cards").select("*").eq("owner_id", owner_id).order("overall", desc=True).execute()
     roster = roster_res.data or []
@@ -262,11 +266,13 @@ async def show_training_menu(interaction: discord.Interaction, owner_id: int) ->
     embed = discord.Embed(
         title="🏋️ Stat Training Drills",
         description=(
-            "Spend **action energy** and coins to earn **player XP**. "
-            "Level-ups grant **skill points** — allocate them under **Allocate Skills**.\n\n"
-            f"🏋️ **Training Ground L{tg_level}** — +{max(0, tg_level - 1)} bonus drill XP\n"
-            f"⚡ **Action Energy**: `{training_energy}/100` *(+1 per {int(round(1 / regen_per_min))} min)*\n"
+            "Spend **action energy** on **Skill Drills** (XP + coins) or a **Recovery Session** "
+            "(fatigue restore, **0 XP**, **0 coins**). Both use the same daily drill slots.\n\n"
+            f"🏋️ **Training Ground L{tg_level}** — +{max(0, tg_level - 1)} bonus drill XP · "
+            f"**+{daily_passive}** daily passive fatigue\n"
+            f"⚡ **Action Energy**: `{training_energy}/{max_e}` *(+1 per {int(round(1 / regen_per_min))} min)*\n"
             f"📅 **Daily Drills**: `{daily_count}/{daily_limit}`\n"
+            f"💚 **Recovery Session**: `+{recovery_amount}` fatigue · `{recovery_energy}⚡` · 0 coins · 0 XP\n"
             f"💪 **Basic drill** (Lv 1+): `{basic_energy}⚡` + `{basic_coins}` coins @ 60 OVR\n"
             f"💪 **Advanced drill** (Lv {adv_min_level}+): `{adv_energy}⚡` + `{adv_coins}` coins @ 60 OVR"
         ),
@@ -292,11 +298,15 @@ async def show_training_menu(interaction: discord.Interaction, owner_id: int) ->
             adv_energy=adv_energy_cfg,
             basic_xp_base=basic_xp_cfg,
             adv_xp_base=adv_xp_cfg,
+            recovery_amount=recovery_amount,
+            recovery_energy=recovery_energy,
         ),
     )
 
 
 class StatDrillView(discord.ui.View):
+    RECOVERY_DRILL_ID = "__recovery__"
+
     def __init__(
         self,
         owner_id: int,
@@ -308,6 +318,8 @@ class StatDrillView(discord.ui.View):
         adv_energy: int = 15,
         basic_xp_base: int = 30,
         adv_xp_base: int = 80,
+        recovery_amount: int = 40,
+        recovery_energy: int = 5,
     ) -> None:
         super().__init__(timeout=900)
         self.owner_id = owner_id
@@ -320,7 +332,22 @@ class StatDrillView(discord.ui.View):
         self.adv_energy = int(adv_energy)
         self.basic_xp_base = int(basic_xp_base)
         self.adv_xp_base = int(adv_xp_base)
+        self.recovery_amount = int(recovery_amount)
+        self.recovery_energy = int(recovery_energy)
         self._build_items()
+
+    def _selected_player(self) -> dict | None:
+        return next(
+            (p for p in self.eligible_players if str(p["id"]) == str(self.selected_card_id)),
+            None,
+        )
+
+    def _recovery_eligible(self, player: dict | None) -> bool:
+        if not player:
+            return False
+        if player.get("injury_tier") or player.get("in_hospital"):
+            return False
+        return int(player.get("fatigue", 100)) < 100
 
     def _build_items(self) -> None:
         self.clear_items()
@@ -329,7 +356,9 @@ class StatDrillView(discord.ui.View):
                 self.eligible_players,
                 self.selected_card_id,
                 label_fn=lambda p: p["name"],
-                description_fn=lambda p: f"{p['overall']} OVR | Lvl {p['level']} | {p['position']}",
+                description_fn=lambda p: (
+                    f"{p['overall']} OVR | Lvl {p['level']} | Fatigue {int(p.get('fatigue', 100))}"
+                ),
             )
             self.player_select = discord.ui.Select(
                 placeholder="Select a player to train...",
@@ -341,13 +370,27 @@ class StatDrillView(discord.ui.View):
             self.player_select.callback = self.player_select_callback
             self.add_item(self.player_select)
 
-            selected = next(
-                (p for p in self.eligible_players if str(p["id"]) == str(self.selected_card_id)),
-                None,
-            )
+            selected = self._selected_player()
             player_level = int((selected or {}).get("level", 1))
+            recovery_ok = self._recovery_eligible(selected)
 
-            drill_options = []
+            drill_options: list[discord.SelectOption] = []
+            recovery_desc = (
+                f"+{self.recovery_amount} fatigue · 0 XP · {self.recovery_energy}⚡"
+            )
+            if selected and not recovery_ok:
+                if selected.get("injury_tier") or selected.get("in_hospital"):
+                    recovery_desc = "Injured — use Hospital"
+                elif int(selected.get("fatigue", 100)) >= 100:
+                    recovery_desc = "Already fully rested"
+            drill_options.append(
+                discord.SelectOption(
+                    label="💚 Recovery Session",
+                    value=self.RECOVERY_DRILL_ID,
+                    description=recovery_desc[:100],
+                    default=(self.selected_drill == self.RECOVERY_DRILL_ID),
+                )
+            )
             for drill_id, name in STAT_DRILLS.items():
                 tier_xp_base = self.adv_xp_base if player_level >= self.adv_min_level else self.basic_xp_base
                 tier_energy = self.adv_energy if player_level >= self.adv_min_level else self.basic_energy
@@ -368,7 +411,7 @@ class StatDrillView(discord.ui.View):
                     )
                 )
             self.drill_select = discord.ui.Select(
-                placeholder="Select stat drill...",
+                placeholder="Skill drill or Recovery Session...",
                 min_values=1,
                 max_values=1,
                 options=drill_options,
@@ -377,8 +420,12 @@ class StatDrillView(discord.ui.View):
             self.drill_select.callback = self.drill_select_callback
             self.add_item(self.drill_select)
 
+            is_recovery = self.selected_drill == self.RECOVERY_DRILL_ID
             self.run_btn = discord.ui.Button(
-                style=discord.ButtonStyle.success, label="Run Drill ⚡", disabled=True, row=2
+                style=discord.ButtonStyle.success,
+                label="Recover Fitness ⚡" if is_recovery else "Run Drill ⚡",
+                disabled=True,
+                row=2,
             )
             self.run_btn.callback = self.run_drill_callback
             self.add_item(self.run_btn)
@@ -407,10 +454,10 @@ class StatDrillView(discord.ui.View):
         if not (self.selected_card_id and self.selected_drill):
             self.run_btn.disabled = True
             return
-        selected = next(
-            (p for p in self.eligible_players if str(p["id"]) == str(self.selected_card_id)),
-            None,
-        )
+        selected = self._selected_player()
+        if self.selected_drill == self.RECOVERY_DRILL_ID:
+            self.run_btn.disabled = not self._recovery_eligible(selected)
+            return
         player_level = int((selected or {}).get("level", 1))
         self.run_btn.disabled = not drill_unlocked(self.selected_drill, player_level)
 
@@ -436,17 +483,43 @@ class StatDrillView(discord.ui.View):
                 return
 
             selected_p = next(p for p in self.eligible_players if str(p["id"]) == str(self.selected_card_id))
-            if selected_p.get("injury_tier"):
+            if selected_p.get("injury_tier") or selected_p.get("in_hospital"):
                 set_view_controls_disabled(self, disabled=False)
                 await interaction.followup.send(
-                    embed=error_embed("This player is injured and cannot train. Check Hospital in `/store` → Club Facilities."),
+                    embed=error_embed(
+                        "This player is injured — treat them in Hospital "
+                        "(`/profile` → Manage Hospital), not Training Drills."
+                    ),
                     ephemeral=True,
                 )
                 return
-            drill_stat_key = {
-                "pac_sprint": "pac", "sho_finishing": "sho", "pas_distribution": "pas",
-                "dri_dribble": "dri", "def_tackling": "def", "phy_strength": "phy",
-            }.get(self.selected_drill, "pac")
+
+            if self.selected_drill == self.RECOVERY_DRILL_ID:
+                if int(selected_p.get("fatigue", 100)) >= 100:
+                    set_view_controls_disabled(self, disabled=False)
+                    await interaction.followup.send(
+                        embed=error_embed("That player is already at **full fitness**."),
+                        ephemeral=True,
+                    )
+                    return
+                res = await db.rpc("process_recovery_session", {
+                    "p_owner_id": self.owner_id,
+                    "p_player_card_id": self.selected_card_id,
+                }).execute()
+                result = res.data or {}
+                gained = int(result.get("fatigue_gained", 0) or 0)
+                new_fatigue = int(result.get("new_fatigue", selected_p.get("fatigue", 0)) or 0)
+                energy_spent = int(result.get("energy_spent", self.recovery_energy) or 0)
+                xp_gained = int(result.get("xp_gained", 0) or 0)
+                msg = (
+                    f"**{selected_p['name']}** completed a **Recovery Session**.\n"
+                    f"• Fatigue: `+{gained}` → **{new_fatigue}%**\n"
+                    f"• XP gained: `{xp_gained}` (none — fitness over development)\n"
+                    f"• Spent: `{energy_spent} energy` + `🪙 0 coins`"
+                )
+                await interaction.followup.send(embed=success_embed(msg), ephemeral=True)
+                await show_training_menu(interaction, self.owner_id)
+                return
 
             res = await db.rpc("process_stat_drill", {
                 "p_owner_id": self.owner_id,
@@ -477,15 +550,7 @@ class StatDrillView(discord.ui.View):
             await show_training_menu(interaction, self.owner_id)
 
         except Exception as exc:
-            logger.exception("Failed running stat drill.")
-            # #region agent log
-            debug_log(
-                "C",
-                "development_cog.py:run_drill_callback",
-                "process_stat_drill failed",
-                {"error": str(exc)[:300], "drill_id": self.selected_drill},
-            )
-            # #endregion
+            logger.exception("Failed running stat drill / recovery session.")
             set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
 
@@ -790,10 +855,11 @@ async def show_club_evolutions_hub(interaction: discord.Interaction, owner_id: i
     embed.add_field(name="Cooldown", value=cooldown_text, inline=True)
 
     training_energy = status.get("training_energy", 0)
+    energy_max = int(status.get("max_energy", status.get("action_energy_max", 120)) or 120)
     embed.add_field(
         name="Resources",
         value=(
-            f"⚡ Training Energy: `{training_energy}/100`\n"
+            f"⚡ Training Energy: `{training_energy}/{energy_max}`\n"
             f"💰 Start cost: `{EVOLUTION_START_ENERGY} energy` + `10×OVR` coins per track"
         ),
         inline=False,

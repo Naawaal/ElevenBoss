@@ -2,6 +2,45 @@
 
 Hey Managers!
 
+## Hub cleanup & energy tweaks
+
+**Recovery Session** now costs **5⚡** (was 10) — still 0 coins / 0 XP / +40 fatigue.
+
+**Action energy max** is **120** (was 100). Regen rate is unchanged; you can just bank more.
+
+**Hospital** moves fully under **`/profile` → Manage Hospital**. Store → Club Facilities is YA + Training Ground only.
+
+**`/club-finances`** is removed. Use **`/profile` → Finances** for wallet, wages, and facility summary.
+
+## Recovery QoL (injury & fitness clocks)
+
+Injuries and fatigue recover on a Discord-friendly real-time clock.
+
+**Injuries**
+- Untreated bases: **Minor 1 day**, **Moderate 4 days**, **Major 7 days** (was 3 / 8 / 20).
+- Hospital still shortens those windows the same way — upgrades matter more when Majors aren’t three weeks long.
+- **Fairness pass:** players already in Hospital (or untreated) under the old clocks were recalculated — time already served counts; if you’d already “served” the new max, they were discharged early. Check `/profile` → Manage Hospital.
+
+**Fitness**
+- Daily passive (healthy players): **+25 + (TG level × 5)** — TG1 = +30, TG3 = +40, TG5 = +50.
+- Bench rest after competitive matches: **+25** (was +15).
+- Match fatigue base drain: **18** (was 22); PHY / tactics / intensity still apply.
+- Recovery Session (+40 / 5⚡) is unchanged.
+
+## Active Fatigue Recovery
+
+Fitness management is no longer “bench them or wait five days.”
+
+**Recovery Session** (`/development` → Training Drills)
+- Pick a tired player, choose **💚 Recovery Session** instead of a skill drill, and confirm.
+- Restores **+40 fatigue** (capped at 100), grants **0 XP**, costs **0 coins**, and uses **5⚡** plus one daily drill slot.
+- Injured players still go to **Hospital** — Recovery is for fatigue only.
+- Fully rested players (100%) cannot start a Recovery Session.
+
+**Training Ground passive**
+- Daily fatigue recovery scales with your Training Ground: **+25 + (TG level × 5)** per day for healthy players (TG1 = +30; TG5 = +50).
+- Hospital patients still use the hospital daily rate. Bench rest after competitive matches is **+25**.
+
 ## Retirement lifecycle fixes
 
 Aging, retirement, and the scouting regen market got three balance/UX fixes so late careers and legend reincarnations feel fair.
@@ -72,11 +111,11 @@ Your club’s wallet and medical bay live on **`/profile`** now — one glance, 
 - **Club Finance** — coins and gems at the top of the embed.
 - **Hospital** — level, beds in use, recovery speed, and who’s recovering (or a clear “No Hospital / No injuries” empty state).
 - **Buttons under the embed:**
-  - **Manage Hospital** — upgrade, admit, or discharge (same panel as Store facilities; Back returns to your refreshed profile).
+  - **Manage Hospital** — upgrade, admit, or discharge (Back returns to your refreshed profile).
   - **Finances** — wage forecast + YA / Training Ground / Hospital levels.
   - **View Club Stats** — jumps to your Squad hub.
-- **`/store` → Club Facilities → Hospital** still works if you start from the Store.
-- **`/club-finances`** still works and reminds you the unified dashboard is on `/profile`.
+- Hospital is **Profile-only** (not under Store → Club Facilities).
+- Finances live on **`/profile`** (the old `/club-finances` command is removed).
 
 ## Fatigue, Injuries & Hospital
 
@@ -105,7 +144,7 @@ Squad depth matters now. Push the same XI every day and they’ll tire, risk inj
 - **90'+** injuries are recorded for after the match — no mid-match prompt.
 
 ### Hospital (Club Facility)
-- New facility under **`/store` → Club Facilities** (same hub as Youth Academy & Training Ground) — also reachable from **`/profile` → Manage Hospital**.
+- New facility under **`/profile` → Manage Hospital** (beds / recovery speed). Youth Academy & Training Ground remain under **`/store` → Club Facilities**.
 - **Beds** = Hospital level + 1 (level 0 still has **1** first-aid bed).
 - Higher levels = **more beds** and **faster recovery**.
 - Post-match injuries **auto-admit** when a bed is free; if full, you get a **DM or Hospital panel** choice (never silent).
@@ -128,7 +167,7 @@ Squad depth matters now. Push the same XI every day and they’ll tire, risk inj
 
 ### What changed
 - **Match XP restored** for bot and league matches (XP pipe hardened after ledger security changes).
-- **Faster energy regen** — **+1 action energy every 4 minutes** (~6h 40m empty→full at 100 max). Hubs and insufficient-energy messages match this rate.
+- **Faster energy regen** — **+1 action energy every 4 minutes** (~8h empty→full at 120 max). Hubs and insufficient-energy messages match this rate.
 - Friendlies still grant **no XP** and spend **no energy**.
 
 ---
@@ -206,7 +245,7 @@ Every season brings fresh prospects — rebuild without relying only on daily pa
 Invest coins to improve your academy and training ground over time. **Hospital** is a third facility in the same hub — see **Fatigue, Injuries & Hospital** above.
 
 ### What changed
-- **`/store` → Club Facilities** — upgrade **Youth Academy** (better weekly intake), **Training Ground** (flat drill XP bonus), or **Hospital** (beds / recovery speed).
+- **`/store` → Club Facilities** — upgrade **Youth Academy** (better weekly intake) or **Training Ground** (flat drill XP bonus). **Hospital** is on **`/profile` → Manage Hospital**.
 - **Youth Academy:** L1 is the baseline band above; higher levels widen OVR/POT ceilings up to roughly **56–69 OVR / 72–94 POT** at L5, with rising gem-prospect odds.
 - **Training Ground:** **L1 +0 … L5 +4** flat bonus drill XP (shown on the Stat Drills hub).
 - **Costs (YA/TG):** 750 / 2,000 / 5,000 / 12,000 coins per level (same all divisions). Hospital uses its own ladder (see above).
@@ -395,7 +434,7 @@ This update overhauls player growth, unifies action energy, and rebuilds the clu
 
 ## Unified Action Energy
 
-- **One pool:** `Action Energy` (max **100**) replaces separate match and training energy.
+- **One pool:** `Action Energy` (max **120**) replaces separate match and training energy.
 - **Regen:** **+1 energy every 4 minutes** (~6h 40m empty→full; synced when you open hubs or run actions).
 - **Costs:**
   - Bot match: **20** energy
@@ -471,8 +510,7 @@ Retroactive level rewards were scaled (75%, cap 18 per player) for veterans with
 | `/store` | Daily login, energy refills, **Club Facilities** upgrades |
 | `/development` | Stat drills (age + TG bonus), fusion, evolutions, skills, claim rewards |
 | `/marketplace` | **Search Market** (regens), **Sell Player** (agent, 10/day) |
-| `/club-finances` | Wallet, wage forecast, facility level summary |
-| `/profile` | Club resources, records, weekly tier progress |
+| `/profile` | Club finance, Hospital, resources, records |
 | `/battle how-it-works` | Match engine transparency |
 
 ---

@@ -57,7 +57,7 @@ async def show_profile(interaction: discord.Interaction, owner_id: int) -> None:
 
     energy_row = await sync_action_energy(db, owner_id)
     curr_energy = energy_row.get("action_energy", player.get("action_energy", player.get("energy", 0)))
-    max_energy = energy_row.get("max_energy", player.get("max_energy", 100))
+    max_energy = energy_row.get("max_energy", player.get("max_energy", 120))
     energy_status = await format_action_energy_status_async(db, curr_energy, max_energy)
     gems = int(player.get("tokens", 0))
 

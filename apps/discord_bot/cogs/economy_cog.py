@@ -1,17 +1,13 @@
 # apps/discord_bot/cogs/economy_cog.py
 from __future__ import annotations
-import logging
+
 import discord
-from discord import app_commands
 from discord.ext import commands
 
 from economy import GameConfig, calculate_weekly_wages
 from apps.discord_bot.db.client import get_client
-from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed
 from apps.discord_bot.core.view_helpers import disable_view_on_timeout, edit_ephemeral_hub_message
-
-logger = logging.getLogger(__name__)
 
 
 def build_club_finances_embed(
@@ -106,22 +102,6 @@ async def show_club_finances_panel(interaction: discord.Interaction, owner_id: i
 class EconomyCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-
-    @app_commands.command(name="club-finances", description="View club balance ledger, wage sheets, and finance forecasts.")
-    @app_commands.guild_only()
-    @app_commands.check(ensure_registered)
-    async def club_finances(self, interaction: discord.Interaction) -> None:
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-        try:
-            embed = await fetch_club_finances_embed(interaction.user.id, profile_pointer=True)
-            if embed is None:
-                await interaction.followup.send(embed=error_embed("Player profile not found."), ephemeral=True)
-                return
-            await interaction.followup.send(embed=embed, ephemeral=True)
-        except Exception as e:
-            logger.exception("Failed to fetch club finances.")
-            await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:

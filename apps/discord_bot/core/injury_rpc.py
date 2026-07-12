@@ -197,7 +197,7 @@ async def notify_injury_overflow(
                 f"{TIER_NAMES.get(tier, 'Injury')} (no bed free)"
             )
         await user.send(
-            "**Hospital beds full.** Open `/store` → Club Facilities → Hospital "
+            "**Hospital beds full.** Open `/profile` → **Manage Hospital** "
             "to discharge a patient or leave untreated.\n" + "\n".join(lines)
         )
     except Exception:

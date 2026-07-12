@@ -36,9 +36,8 @@ ElevenBoss/
 | `/development` | Drills, fusion, evolutions, skill points, claim rewards |
 | `/store` | Daily login, energy refills, free pack |
 | `/marketplace` | Agent sales, scouting |
-| `/profile`, `/player-profile` | Club and card views |
+| `/profile`, `/player-profile` | Club (finance + hospital) and card views |
 | `/leaderboard` | Division, global LP, season standings |
-| `/club-finances` | Wage forecast |
 | `/admin` | Bot owner league configuration (DM) |
 
 **Progression and economy pipes**

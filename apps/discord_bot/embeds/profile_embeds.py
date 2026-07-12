@@ -7,7 +7,7 @@ from economy import hospital_bed_capacity, hospital_recovery_multiplier
 from apps.discord_bot.embeds.hospital_embeds import format_recovery_eta
 
 HOSPITAL_UNAVAILABLE = "Hospital status unavailable — try again or open Manage Hospital."
-L0_EMPTY = "No Hospital – build one in the Store!"
+L0_EMPTY = "No Hospital yet — open Manage Hospital on your club Profile to build one."
 MAX_PATIENT_LINES = 5
 
 

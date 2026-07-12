@@ -287,7 +287,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 **Acceptance Criteria:**
 - **AC-06a:** The club's wallet supports both Coins and Tokens.
-- **AC-06b:** Running `/club-finances` displays current Coins/Tokens balances and a calculated weekly wage bill forecast based on the OVR of the manager's current starting 11 squad. *(Amended — also soft-points to `/profile` as the unified finance + hospital dashboard; Finances button on `/profile` shows the same content.)*
+- **AC-06b:** `/profile` → **Finances** displays current Coins/Tokens balances and a calculated weekly wage bill forecast based on the OVR of the manager's current starting 11 squad. *(Amended 010 — dedicated `/club-finances` slash command removed.)*
 - **AC-06c:** Entering the **Sell Player** sub-menu of the `/marketplace` hub displays a dropdown of owned players. Selecting a player calculates their agent sale value based on OVR and rarity, presenting a "Confirm Sale" button.
 - **AC-06d:** Clicking "Confirm Sale" transactionally removes the player card from the manager's roster, credits the sale value in coins to the club, and logs the details to the transaction ledger.
 - **AC-06e:** Players currently assigned to the starting 11 squad, in training, or in active evolutions cannot be sold.
@@ -1292,18 +1292,21 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 > **I want** per-card fatigue, post-match injuries with Hospital care, and squad rotation pressure,
 > **So that** matches reward depth and rest without breaking the coin economy.
 
-**Status:** Phases 1–3 shipped (Phase 3 = in-match substitution UI / US4).
+**Status:** Phases 1–3 shipped (Phase 3 = in-match substitution UI / US4). **Extended by `specs/009-fatigue-recovery/`** (Active Fatigue Recovery: Recovery Session + TG-scaled passive).
 
-**Design:** `specs/002-injury-fatigue-hospital/` (spec, plan, plan-phase3, tasks T043–T062). Clarifications: hospital costs 1.5k–60k shared weekly facility slot; no career-ending; injury soft-cap A+C (fatigue &lt; 75, max 1 injury/club/match); live pause via `async for` + `MatchState` mutation (not `generator.send()`).
+**Design:** `specs/002-injury-fatigue-hospital/` (spec, plan, plan-phase3, tasks T043–T062); recovery extension `specs/009-fatigue-recovery/`. Clarifications: hospital costs 1.5k–60k shared weekly facility slot; no career-ending; injury soft-cap A+C (fatigue &lt; 75, max 1 injury/club/match); live pause via `async for` + `MatchState` mutation (not `generator.send()`).
 
 **Acceptance Criteria (shipped):**
 - **AC-39a:** `player_cards.fatigue` drains after bot/league matches; bench rest + daily recovery; NSS applies fatigue penalties via phase-attr multiplier.
 - **AC-39b:** Fatigue does not replace or refill club `action_energy`.
-- **AC-39c:** Post-match injuries persist; Hospital facility under `/store` Club Facilities **and** `/profile` → Manage Hospital; auto-admit / overflow; daily `process_daily_recovery`.
+- **AC-39c:** Post-match injuries persist; Hospital facility under `/profile` → Manage Hospital (010: not Store facilities); auto-admit / overflow; daily `process_daily_recovery`.
 - **AC-39d:** Injured cards blocked from XI, drills, fusion, evolution start, and agent sale.
 - **AC-39e:** Friendlies remain sandbox (no fatigue/injury writes).
 - **AC-39f:** Live bot/league injuries before 90' pause ≤30s for Select/Play On; auto-sim/AI auto-resolve; mid-match recordings skip a second A+C roll.
-
+- **AC-39g (009/010):** `/development` Training Drills offers **Recovery Session** — instant, +40 fatigue (config), 0 XP, 0 coins, shares club/card daily drill caps; RPC `process_recovery_session`. Energy cost **5**.
+- **AC-39h (011/012):** Non-hospital daily passive = `25 + (training_ground_level × 5)` via `process_daily_recovery`; hospital daily rate unchanged; bench rest **+25**; match base drain **18**. Injury untreated bases **Minor 1 / Moderate 4 / Major 7** days (Hospital curve unchanged). Mid-injury open stays fair-recalculated by `backfill_injury_eta_fairness` (012; never lengthen; credit time served).
+- **AC-39i (011):** Migration `056_recovery_qol_balance` upserts fatigue config + replaces injury CASE in `process_post_match_injuries` / `admit_to_hospital`.
+- **AC-39j (012):** Migration `057_hospital_eta_backfill` adds idempotent `backfill_injury_eta_fairness()` for open Hospital ETAs + overflow untreated clocks; early recovery matches daily hospital clear (+25 fatigue); DMs best-effort via ops script.
 ### US-40: Profile Finance & Hospital Hub
 
 > **As a** football club manager,
@@ -1316,8 +1319,9 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 **Acceptance Criteria:**
 - **AC-40a:** `/profile` includes Club Finance (coins + gems) and Hospital summary (L0 empty-state, or level/beds/recovery/patients).
-- **AC-40b:** Hub buttons: Manage Hospital (reuses Store hospital panel with `origin=profile` + upgrade), Finances (wage/facility detail), View Club Stats (Squad hub).
-- **AC-40c:** No new `/hospital` slash command; Store → Facilities → Hospital path remains; `/club-finances` kept with pointer to `/profile`.
+- **AC-40b:** Hub buttons: Manage Hospital (`HospitalPanelView` with `origin=profile` + upgrade), Finances (wage/facility detail), View Club Stats (Squad hub).
+- **AC-40c:** No new `/hospital` slash command; Hospital is Profile-only (Store → Facilities is YA + TG only — amended 010). Dedicated `/club-finances` removed; Finances remain on `/profile`.
+- **AC-40d (010):** Action energy max **120**; Recovery Session energy cost **5**.
 
 ### US-41: Mentor Transfusion
 

@@ -2,8 +2,10 @@
 """Post-match injury chance, tiers, hospital recovery (A+C soft-cap)."""
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any, Sequence
 
 INJURY_ELIGIBLE_FATIGUE_BELOW = 75  # soft-cap C
@@ -14,7 +16,7 @@ TIER_MODERATE = 2
 TIER_MAJOR = 3
 
 TIER_NAMES = {1: "Minor", 2: "Moderate", 3: "Major"}
-BASE_RECOVERY_DAYS = {1: 3, 2: 8, 3: 20}
+BASE_RECOVERY_DAYS = {1: 1, 2: 4, 3: 7}
 
 
 @dataclass(frozen=True)
@@ -51,9 +53,60 @@ def hospital_recovery_multiplier(hospital_level: int) -> float:
 
 
 def recovery_days_for_tier(tier: int, hospital_level: int) -> int:
-    base = BASE_RECOVERY_DAYS.get(tier, 8)
+    base = BASE_RECOVERY_DAYS.get(tier, 4)
     days = base / (1.0 + 0.2 * max(0, int(hospital_level)))
-    return max(1, int(__import__("math").ceil(days)))
+    return max(1, int(math.ceil(days)))
+
+
+def new_total_recovery_days(tier: int, hospital_level: int) -> int:
+    """CEIL(base / (1 + 0.2 * H)); alias of recovery_days_for_tier for backfill clarity."""
+    return recovery_days_for_tier(tier, hospital_level)
+
+
+def fair_hospital_candidate_eta(
+    *,
+    admission: datetime,
+    tier: int,
+    hospital_level: int,
+) -> datetime:
+    """admission + new_total_recovery_days (calendar days)."""
+    return admission + timedelta(days=new_total_recovery_days(tier, hospital_level))
+
+
+def fair_hospital_final_eta(
+    *,
+    admission: datetime,
+    current_eta: datetime,
+    tier: int,
+    hospital_level: int,
+) -> datetime:
+    """Never lengthen: min(current_eta, admission + new_total)."""
+    candidate = fair_hospital_candidate_eta(
+        admission=admission, tier=tier, hospital_level=hospital_level
+    )
+    return min(current_eta, candidate)
+
+
+def should_early_discharge(*, now: datetime, final_eta: datetime) -> bool:
+    return now >= final_eta
+
+
+def fair_overflow_remaining_days(
+    *,
+    tier: int,
+    injury_started_at: datetime | None,
+    current_remaining: int,
+    now: datetime,
+) -> int:
+    """
+    min(current, max(0, ceil(base - elapsed_days))).
+    Null start → elapsed 0 (full new untreated base, still never lengthen).
+    """
+    base = float(BASE_RECOVERY_DAYS.get(tier, 4))
+    start = injury_started_at if injury_started_at is not None else now
+    elapsed = max(0.0, (now - start).total_seconds() / 86400.0)
+    remain = max(0, int(math.ceil(base - elapsed)))
+    return min(max(0, int(current_remaining)), remain)
 
 
 def select_post_match_injury(

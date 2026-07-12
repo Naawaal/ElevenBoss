@@ -109,7 +109,7 @@ async def get_match_energy_cost(db: Any, match_type: str, *, v2: bool = True) ->
 
 def minutes_to_full_action_energy(
     current: int,
-    maximum: int = 100,
+    maximum: int = 120,
     *,
     regen_per_min: float | None = None,
 ) -> int:
@@ -124,7 +124,7 @@ def minutes_to_full_action_energy(
 
 def format_action_energy_status(
     current: int,
-    maximum: int = 100,
+    maximum: int = 120,
     *,
     regen_per_min: float | None = None,
 ) -> str:
@@ -138,7 +138,7 @@ def format_action_energy_status(
 async def format_action_energy_status_async(
     db: Any,
     current: int,
-    maximum: int = 100,
+    maximum: int = 120,
 ) -> str:
     """Status line using live game_config.energy_regen_per_min when available."""
     rate = await get_game_config_numeric(db, "energy_regen_per_min", REGEN_PER_MIN)

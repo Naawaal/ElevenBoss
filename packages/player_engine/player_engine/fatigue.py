@@ -1,14 +1,18 @@
 # packages/player_engine/player_engine/fatigue.py
-"""Per-card fatigue drain, recovery, and match stat penalties (US fatigue Phase 1)."""
+"""Per-card fatigue drain, recovery, and match stat penalties (US fatigue Phase 1 + 009)."""
 from __future__ import annotations
 
 from typing import Literal
 
-# Defaults mirror game_config seeds (050_fatigue_injury_hospital.sql)
-FATIGUE_BASE_DRAIN = 22
-FATIGUE_PASSIVE_PER_DAY = 20
+# Defaults mirror game_config (056_recovery_qol_balance.sql)
+FATIGUE_BASE_DRAIN = 18
+FATIGUE_PASSIVE_BASE = 25
+FATIGUE_PASSIVE_TG_PER_LEVEL = 5
+# Deprecated flat alias: equals TG level 1 passive (25 + 5*1 = 30)
+FATIGUE_PASSIVE_PER_DAY = FATIGUE_PASSIVE_BASE + FATIGUE_PASSIVE_TG_PER_LEVEL
 FATIGUE_HOSPITAL_PER_DAY = 45
-FATIGUE_BENCH_PER_MATCH = 15
+FATIGUE_BENCH_PER_MATCH = 25
+FATIGUE_RECOVERY_SESSION = 40
 FATIGUE_MIN = 0
 FATIGUE_MAX = 100
 
@@ -55,7 +59,7 @@ def match_fatigue_drain(
 ) -> int:
     """
     Drain = Base - (PHY * 0.15) + tactic + intensity.
-    Example: PHY 70, Attack, intensity → round(22 - 10.5 + 8 + 5) = 25.
+    Example: PHY 70, Attack, intensity → round(18 - 10.5 + 8 + 5) = 21.
     """
     raw = base_drain - (phy * 0.15) + tactic_modifier(stance) + (5 if intensity else 0)
     # Half-up so GDD example 24.5 → 25 (avoid banker's round)
@@ -70,9 +74,29 @@ def apply_bench_rest(current: int, amount: int = FATIGUE_BENCH_PER_MATCH) -> int
     return clamp_fatigue(current + amount)
 
 
-def apply_passive_recovery(current: int, *, in_hospital: bool = False) -> int:
-    bump = FATIGUE_HOSPITAL_PER_DAY if in_hospital else FATIGUE_PASSIVE_PER_DAY
+def passive_recovery_amount(tg_level: int) -> int:
+    """Non-hospital daily passive: base 25 + (TG level × 5). Schema TG is 1–5."""
+    return max(0, FATIGUE_PASSIVE_BASE + max(int(tg_level), 0) * FATIGUE_PASSIVE_TG_PER_LEVEL)
+
+
+def apply_passive_recovery(
+    current: int,
+    *,
+    in_hospital: bool = False,
+    tg_level: int = 1,
+) -> int:
+    if in_hospital:
+        bump = FATIGUE_HOSPITAL_PER_DAY
+    else:
+        bump = passive_recovery_amount(tg_level)
     return clamp_fatigue(current + bump)
+
+
+def apply_recovery_session(
+    current: int,
+    amount: int = FATIGUE_RECOVERY_SESSION,
+) -> int:
+    return clamp_fatigue(current + amount)
 
 
 def fatigue_stat_multiplier(fatigue: int, stat_key: str) -> float:

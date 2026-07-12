@@ -1,0 +1,103 @@
+# tests/test_injury_eta_backfill.py
+"""Pure fair-recalc helpers for 012 hospital ETA backfill."""
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+from player_engine.injury_math import (
+    fair_hospital_candidate_eta,
+    fair_hospital_final_eta,
+    fair_overflow_remaining_days,
+    new_total_recovery_days,
+    should_early_discharge,
+)
+
+
+def test_new_total_major_h0_is_7() -> None:
+    assert new_total_recovery_days(3, 0) == 7
+    assert new_total_recovery_days(1, 0) == 1
+    assert new_total_recovery_days(2, 3) == 3  # ceil(4/1.6)
+
+
+def test_fair_hospital_shortens_never_lengthens() -> None:
+    admission = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    far = admission + timedelta(days=20)
+    final = fair_hospital_final_eta(
+        admission=admission,
+        current_eta=far,
+        tier=3,
+        hospital_level=0,
+    )
+    assert final == admission + timedelta(days=7)
+
+    already_short = admission + timedelta(days=3)
+    kept = fair_hospital_final_eta(
+        admission=admission,
+        current_eta=already_short,
+        tier=3,
+        hospital_level=0,
+    )
+    assert kept == already_short
+
+
+def test_candidate_anchored_idempotent() -> None:
+    admission = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    c1 = fair_hospital_candidate_eta(admission=admission, tier=2, hospital_level=0)
+    c2 = fair_hospital_candidate_eta(admission=admission, tier=2, hospital_level=0)
+    assert c1 == c2 == admission + timedelta(days=4)
+    final = fair_hospital_final_eta(
+        admission=admission, current_eta=c1, tier=2, hospital_level=0
+    )
+    assert final == c1
+
+
+def test_early_discharge_gate() -> None:
+    now = datetime(2026, 7, 10, tzinfo=timezone.utc)
+    assert should_early_discharge(now=now, final_eta=now) is True
+    assert should_early_discharge(now=now, final_eta=now - timedelta(hours=1)) is True
+    assert should_early_discharge(now=now, final_eta=now + timedelta(hours=1)) is False
+
+
+def test_overflow_remaining_credits_elapsed() -> None:
+    now = datetime(2026, 7, 12, tzinfo=timezone.utc)
+    started = now - timedelta(days=6)
+    # Major base 7, 6 elapsed → 1 left; never increase past current 14
+    assert (
+        fair_overflow_remaining_days(
+            tier=3,
+            injury_started_at=started,
+            current_remaining=14,
+            now=now,
+        )
+        == 1
+    )
+    # Already at 0 stays 0
+    assert (
+        fair_overflow_remaining_days(
+            tier=3,
+            injury_started_at=started,
+            current_remaining=0,
+            now=now,
+        )
+        == 0
+    )
+    # Past new base → clear
+    assert (
+        fair_overflow_remaining_days(
+            tier=3,
+            injury_started_at=now - timedelta(days=8),
+            current_remaining=5,
+            now=now,
+        )
+        == 0
+    )
+    # Null start → elapsed 0 → min(current, base)
+    assert (
+        fair_overflow_remaining_days(
+            tier=1,
+            injury_started_at=None,
+            current_remaining=3,
+            now=now,
+        )
+        == 1
+    )

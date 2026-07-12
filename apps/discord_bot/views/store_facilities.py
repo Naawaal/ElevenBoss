@@ -1,5 +1,5 @@
 # apps/discord_bot/views/store_facilities.py
-"""Club Facilities sub-hub under /store (Phase C + Hospital)."""
+"""Club Facilities sub-hub under /store (YA + Training Ground). Hospital is on /profile."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -101,7 +101,6 @@ def _training_next_preview(level: int) -> str:
 def facilities_embed(player: dict) -> discord.Embed:
     youth_lv = int(player.get("youth_academy_level", 1))
     tg_lv = int(player.get("training_ground_level", 1))
-    hosp_lv = int(player.get("hospital_level", 0))
     youth_tier = youth_academy_tier(youth_lv)
     tg_bonus = training_ground_drill_xp_bonus(tg_lv)
 
@@ -110,7 +109,8 @@ def facilities_embed(player: dict) -> discord.Embed:
         description=(
             "Optional long-term coin investments.\n"
             f"🪙 **Balance**: `{int(player.get('coins', 0)):,}` coins\n"
-            "Max **1 upgrade per UTC week** across YA, Training Ground, and Hospital"
+            "Max **1 upgrade per UTC week** across YA and Training Ground "
+            "(Hospital upgrades are on `/profile` → Manage Hospital)"
         ),
         color=0x00FF87,
     )
@@ -137,19 +137,7 @@ def facilities_embed(player: dict) -> discord.Embed:
         ),
         inline=False,
     )
-    embed.add_field(
-        name=f"🏥 Hospital — Level {hosp_lv}/{HOSPITAL_MAX_LEVEL}",
-        value=(
-            "Speeds injury recovery and adds beds. Level 0 = basic first-aid (1 bed).\n"
-            f"**Now:** 🛏️ **{hospital_bed_capacity(hosp_lv)}** beds · "
-            f"**{hospital_recovery_multiplier(hosp_lv):.2f}×** recovery time\n"
-            + _next_upgrade_line(player, "hospital")
-        ),
-        inline=False,
-    )
-    embed.set_footer(
-        text="OVR = current rating · POT = growth ceiling · Open Hospital panel for patients"
-    )
+    embed.set_footer(text="OVR = current rating · POT = growth ceiling · Hospital: /profile")
     return embed
 
 
@@ -173,16 +161,7 @@ class FacilitiesHubView(discord.ui.View):
     async def upgrade_training(self, interaction: discord.Interaction, _btn: discord.ui.Button) -> None:
         await self._upgrade(interaction, "training_ground")
 
-    @discord.ui.button(style=discord.ButtonStyle.primary, label="⬆️ Upgrade Hospital", row=1)
-    async def upgrade_hospital(self, interaction: discord.Interaction, _btn: discord.ui.Button) -> None:
-        await self._upgrade(interaction, "hospital")
-
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="🏥 Hospital Panel", row=1)
-    async def hospital_panel(self, interaction: discord.Interaction, _btn: discord.ui.Button) -> None:
-        await interaction.response.defer(ephemeral=True)
-        await show_hospital_panel(interaction, self.owner_id)
-
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="⬅️ Back to Store", row=2)
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="⬅️ Back to Store", row=1)
     async def back(self, interaction: discord.Interaction, _btn: discord.ui.Button) -> None:
         from apps.discord_bot.cogs.store_cog import show_store
         await show_store(interaction, self.owner_id)
@@ -242,7 +221,7 @@ class HospitalPanelView(discord.ui.View):
         self.player = player
         self.patients = patients
         self.waiting = waiting
-        self.origin = origin if origin in ("facilities", "profile") else "facilities"
+        self.origin = origin if origin in ("facilities", "profile") else "profile"
         if patients:
             opts = [
                 discord.SelectOption(

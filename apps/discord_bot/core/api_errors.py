@@ -10,6 +10,9 @@ _FRIENDLY: dict[str, str] = {
         "Not enough **action energy**. Regenerates +1 every 4 minutes, or buy a refill in `/store`."
     ),
     "Daily drill limit reached": "You've hit today's **club drill limit** (20). Try again tomorrow.",
+    "Daily drill limit reached for this player": (
+        "This player has hit today's **per-card drill limit** (5). Pick another card or try tomorrow."
+    ),
     "Insufficient coins": "Not enough **coins** for this drill. Play matches or claim daily login in `/store`.",
     "Match XP could not be applied": (
         "Match finished, but **player XP could not be saved**. Coins may already be credited — "
@@ -31,6 +34,13 @@ _FRIENDLY: dict[str, str] = {
     "Target card not found or not owned": "Target card not found on your club.",
     "Source and target must differ": "Pick a **different** player as the mentor target.",
     "Invalid mentor unit amount": "Choose at least **1 mentor unit**.",
+    "Player is already fully rested": (
+        "That player is already at **full fitness**. Pick someone tired, or wait for match drain."
+    ),
+    "Player is injured — use Hospital": (
+        "That player is **injured** — treat them in **Hospital** via `/profile` → **Manage Hospital**, "
+        "not Recovery Session."
+    ),
 }
 
 
