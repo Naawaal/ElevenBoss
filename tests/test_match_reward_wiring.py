@@ -120,8 +120,16 @@ async def test_apply_bot_match_rewards_calls_career_stats_rpc(monkeypatch: pytes
         "apps.discord_bot.core.match_rewards.compute_bot_match_coins",
         lambda *_a, **_k: 75,
     )
+    monkeypatch.setattr(
+        "apps.discord_bot.core.match_rewards.apply_post_match_fitness",
+        AsyncMock(return_value={"injuries": {"overflow": []}}),
+    )
+    monkeypatch.setattr(
+        "apps.discord_bot.core.match_rewards.mark_match_fatigue_applied",
+        AsyncMock(),
+    )
 
-    coins = await apply_bot_match_rewards(
+    coins, _summary = await apply_bot_match_rewards(
         db,
         player_id=1,
         player_row={
@@ -156,16 +164,25 @@ async def test_apply_bot_match_rewards_calls_career_stats_rpc(monkeypatch: pytes
 
 
 @pytest.mark.asyncio
-async def test_apply_bot_match_rewards_skips_when_xp_applied(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_apply_bot_match_rewards_skips_when_xp_and_fatigue_applied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     db = _MockDb()
     monkeypatch.setattr(
         "apps.discord_bot.core.match_rewards.fetch_match_reward_row",
-        AsyncMock(return_value={"id": "h1", "coins_earned": 42, "xp_applied_at": "2026-01-01T00:00:00Z"}),
+        AsyncMock(
+            return_value={
+                "id": "h1",
+                "coins_earned": 42,
+                "xp_applied_at": "2026-01-01T00:00:00Z",
+                "fatigue_applied_at": "2026-01-01T00:01:00Z",
+            }
+        ),
     )
     economy = AsyncMock()
     monkeypatch.setattr("apps.discord_bot.core.match_rewards.apply_match_economy", economy)
 
-    coins = await apply_bot_match_rewards(
+    coins, summary = await apply_bot_match_rewards(
         db,
         player_id=1,
         player_row={},
@@ -185,6 +202,7 @@ async def test_apply_bot_match_rewards_skips_when_xp_applied(monkeypatch: pytest
     )
 
     assert coins == 42
+    assert summary.get("already_applied") is True
     economy.assert_not_called()
 
 
@@ -223,8 +241,16 @@ async def test_apply_league_human_rewards_calls_league_career_rpc(monkeypatch: p
         "apps.discord_bot.core.league_rewards.compute_league_match_coins",
         lambda *_a, **_k: 60,
     )
+    monkeypatch.setattr(
+        "apps.discord_bot.core.league_rewards.apply_post_match_fitness",
+        AsyncMock(return_value={"injuries": {"overflow": []}}),
+    )
+    monkeypatch.setattr(
+        "apps.discord_bot.core.league_rewards.mark_match_fatigue_applied",
+        AsyncMock(),
+    )
 
-    coins, pts = await apply_league_human_rewards(
+    coins, pts, _summary = await apply_league_human_rewards(
         db,
         player_id=2,
         player_row={"matches_played": 1, "wins": 0, "draws": 0, "losses": 1, "division": "Grassroots"},

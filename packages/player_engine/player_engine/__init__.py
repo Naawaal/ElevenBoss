@@ -112,6 +112,12 @@ from .fatigue import (
     stance_from_tactics_modifier,
     tactic_modifier,
 )
+from .drill_caps import (
+    CARD_DAILY_DRILL_LIMIT,
+    CLUB_DAILY_DRILL_LIMIT,
+    effective_daily_drill_count,
+)
+from .bench_rest import BENCH_REST_LIMIT, pick_bench_rest_ids
 from .injury_math import (
     BASE_RECOVERY_DAYS,
     INJURY_ELIGIBLE_FATIGUE_BELOW,
@@ -263,8 +269,13 @@ __all__ = [
     "stance_from_tactics_modifier",
     "tactic_modifier",
     "BASE_RECOVERY_DAYS",
+    "CARD_DAILY_DRILL_LIMIT",
+    "CLUB_DAILY_DRILL_LIMIT",
+    "BENCH_REST_LIMIT",
     "INJURY_ELIGIBLE_FATIGUE_BELOW",
     "TIER_NAMES",
+    "effective_daily_drill_count",
+    "pick_bench_rest_ids",
     "fair_hospital_final_eta",
     "fair_overflow_remaining_days",
     "injury_chance",

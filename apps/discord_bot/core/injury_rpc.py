@@ -13,11 +13,24 @@ from match_engine.substitution_resolve import play_on_tier_upgrade
 from player_engine import (
     TIER_NAMES,
     match_fatigue_drain,
+    pick_bench_rest_ids,
     select_post_match_injury,
     stance_from_tactics_modifier,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def format_bench_rest_line(ok: bool, bench_count: int) -> str:
+    """Short post-match copy for competitive bench rest / fitness failure."""
+    if not ok:
+        return (
+            "⚠️ Fitness update failed — rewards still counted. "
+            "Fatigue may update on retry."
+        )
+    if bench_count <= 0:
+        return "Bench rest: no healthy reserves to rest."
+    return f"Bench rest: +25 fitness for {bench_count} reserves (cap 100)."
 
 
 def build_starter_drains(
@@ -141,19 +154,10 @@ async def apply_post_match_fitness(
 
 async def fetch_bench_ids(db: Any, owner_id: int, starter_ids: list[str]) -> list[str]:
     """Owned non-retired cards not in the starting XI (for bench rest)."""
-    starter_set = {str(i) for i in starter_ids}
-    rows = await db.table("player_cards").select("id, injury_tier").eq(
-        "owner_id", owner_id
-    ).eq("is_retired", False).execute()
-    out: list[str] = []
-    for r in rows.data or []:
-        cid = str(r["id"])
-        if cid in starter_set:
-            continue
-        if r.get("injury_tier"):
-            continue
-        out.append(cid)
-    return out[:7]
+    rows = await db.table("player_cards").select(
+        "id, injury_tier, overall, is_retired"
+    ).eq("owner_id", owner_id).eq("is_retired", False).execute()
+    return pick_bench_rest_ids(rows.data or [], starter_ids)
 
 
 async def fetch_bench_cards(

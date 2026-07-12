@@ -190,11 +190,11 @@ async def fetch_match_reward_row(
     """Return match_history reward row for idempotent economy/XP application."""
     if fixture_id:
         res = await db.table("match_history").select(
-            "id, coins_earned, points_earned, xp_applied_at"
+            "id, coins_earned, points_earned, xp_applied_at, fatigue_applied_at"
         ).eq("player_id", player_id).eq("fixture_id", fixture_id).maybe_single().execute()
     elif run_id:
         res = await db.table("match_history").select(
-            "id, coins_earned, points_earned, xp_applied_at"
+            "id, coins_earned, points_earned, xp_applied_at, fatigue_applied_at"
         ).eq("player_id", player_id).eq("run_id", run_id).maybe_single().execute()
     else:
         return None
@@ -204,3 +204,8 @@ async def fetch_match_reward_row(
 async def mark_match_xp_applied(db, history_id: str) -> None:
     now = datetime.now(timezone.utc).isoformat()
     await db.table("match_history").update({"xp_applied_at": now}).eq("id", history_id).execute()
+
+
+async def mark_match_fatigue_applied(db, history_id: str) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    await db.table("match_history").update({"fatigue_applied_at": now}).eq("id", history_id).execute()

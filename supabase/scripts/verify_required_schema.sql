@@ -50,6 +50,7 @@ BEGIN
       ('column:public.players.last_daily_login'),
       ('column:public.match_history.run_id'),
       ('column:public.match_history.xp_applied_at'),
+      ('column:public.match_history.fatigue_applied_at'),
       ('column:public.economy_ledger.idempotency_key'),
       ('function:apply_card_xp'),
       ('function:apply_club_economy'),
@@ -109,6 +110,7 @@ BEGIN
       ('function:transfer_mentor_xp'),
       ('function:process_recovery_session'),
       ('function:backfill_injury_eta_fairness'),
+      ('function:repair_daily_drill_counts'),
       ('policy:public.mentor_transfer_log.mentor_transfer_log_select'),
       ('policy:public.mentor_transfer_log.mentor_transfer_log_insert'),
       ('policy:public.league_members.league_members_select'),
@@ -193,6 +195,7 @@ BEGIN
         WHEN 'transfer_mentor_xp' THEN to_regprocedure('public.transfer_mentor_xp(bigint,uuid,uuid,integer)')
         WHEN 'process_recovery_session' THEN to_regprocedure('public.process_recovery_session(bigint,uuid)')
         WHEN 'backfill_injury_eta_fairness' THEN to_regprocedure('public.backfill_injury_eta_fairness()')
+        WHEN 'repair_daily_drill_counts' THEN to_regprocedure('public.repair_daily_drill_counts()')
         ELSE NULL
       END IS NOT NULL
     )

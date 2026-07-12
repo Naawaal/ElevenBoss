@@ -12,12 +12,23 @@ from apps.discord_bot.core.economy_rpc import (
     get_match_energy_cost,
     sync_action_energy,
 )
-from apps.discord_bot.core.match_runs import fetch_match_reward_row
+from apps.discord_bot.core.match_runs import (
+    fetch_match_reward_row,
+    mark_match_fatigue_applied,
+)
 from apps.discord_bot.core.match_xp import apply_match_xp_if_needed
-from apps.discord_bot.core.injury_rpc import apply_post_match_fitness, notify_injury_overflow
+from apps.discord_bot.core.injury_rpc import (
+    apply_post_match_fitness,
+    format_bench_rest_line,
+    notify_injury_overflow,
+)
 from leagues import season_fixture_points
 
 logger = logging.getLogger(__name__)
+
+
+def _fitness_already() -> dict[str, Any]:
+    return {"ok": True, "bench_count": 0, "already_applied": True}
 
 
 async def league_familiarity_multiplier(
@@ -102,18 +113,27 @@ async def apply_league_human_rewards(
     tactics_modifier: float = 1.0,
     bot: Any | None = None,
     recorded_injuries: list[dict] | None = None,
-) -> tuple[int, int]:
+) -> tuple[int, int, dict[str, Any]]:
     """
     Apply league rewards for one human manager.
-    Returns (coins_earned, season_pts) — season_pts for display only, not written to players.league_points.
+    Returns (coins_earned, season_pts, fitness_summary).
     """
     existing = await fetch_match_reward_row(db, player_id, fixture_id=fixture_id)
-    if existing and existing.get("xp_applied_at"):
-        return int(existing.get("coins_earned") or 0), int(existing.get("points_earned") or 0)
+    if (
+        existing
+        and existing.get("xp_applied_at")
+        and existing.get("fatigue_applied_at")
+    ):
+        return (
+            int(existing.get("coins_earned") or 0),
+            int(existing.get("points_earned") or 0),
+            _fitness_already(),
+        )
 
     v2 = await economy_v2_enabled(db)
     division = player_row.get("division", "Grassroots")
     auto_sim = not deduct_energy
+    bench_count = len(bench_ids or [])
     if existing:
         coins = int(existing.get("coins_earned") or 0)
         season_pts = int(existing.get("points_earned") or 0)
@@ -167,6 +187,15 @@ async def apply_league_human_rewards(
         team_rating=team_rating,
     )
 
+    if existing and existing.get("fatigue_applied_at"):
+        return coins, season_pts, _fitness_already()
+
+    fitness_summary: dict[str, Any] = {
+        "ok": False,
+        "bench_count": bench_count,
+        "error": None,
+        "line": None,
+    }
     try:
         fitness = await apply_post_match_fitness(
             db,
@@ -178,13 +207,26 @@ async def apply_league_human_rewards(
             apply_injuries=True,
             recorded_injuries=recorded_injuries,
         )
+        await mark_match_fatigue_applied(db, history_id)
+        fitness_summary = {
+            "ok": True,
+            "bench_count": bench_count,
+            "error": None,
+            "line": format_bench_rest_line(True, bench_count),
+        }
         overflow = (fitness.get("injuries") or {}).get("overflow") or []
         if overflow and bot is not None:
             await notify_injury_overflow(bot, player_id, overflow)
     except Exception:
         logger.exception("post-match fatigue/injury failed for %s", player_id)
+        fitness_summary = {
+            "ok": False,
+            "bench_count": bench_count,
+            "error": "fitness_failed",
+            "line": format_bench_rest_line(False, bench_count),
+        }
 
-    return coins, season_pts
+    return coins, season_pts, fitness_summary
 
 
 async def check_matchday_milestone(

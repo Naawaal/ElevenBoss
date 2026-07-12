@@ -22,6 +22,7 @@ from economy import (
     training_ground_drill_xp_bonus,
     youth_academy_tier,
 )
+from player_engine import passive_recovery_amount
 
 
 def _level_for(player: dict, facility_key: str) -> int:
@@ -94,8 +95,13 @@ def _youth_next_preview(level: int) -> str:
 def _training_next_preview(level: int) -> str:
     if level >= FACILITY_MAX_LEVEL:
         return ""
-    bonus = training_ground_drill_xp_bonus(level + 1)
-    return f"After upgrade: **+{bonus}** bonus drill XP per drill\n"
+    nxt = level + 1
+    bonus = training_ground_drill_xp_bonus(nxt)
+    passive = passive_recovery_amount(nxt)
+    return (
+        f"After upgrade: **+{bonus}** bonus drill XP · "
+        f"**+{passive}** daily passive fatigue\n"
+    )
 
 
 def facilities_embed(player: dict) -> discord.Embed:
@@ -103,6 +109,7 @@ def facilities_embed(player: dict) -> discord.Embed:
     tg_lv = int(player.get("training_ground_level", 1))
     youth_tier = youth_academy_tier(youth_lv)
     tg_bonus = training_ground_drill_xp_bonus(tg_lv)
+    tg_passive = passive_recovery_amount(tg_lv)
 
     embed = discord.Embed(
         title="🏗️ Club Facilities",
@@ -129,9 +136,12 @@ def facilities_embed(player: dict) -> discord.Embed:
     embed.add_field(
         name=f"🏋️ Training Ground — Level {tg_lv}/{FACILITY_MAX_LEVEL}",
         value=(
-            "Adds flat **bonus XP** to every stat drill in `/development` "
-            "(L1 = baseline, no bonus).\n"
-            f"**Now:** **+{tg_bonus}** bonus drill XP per drill\n"
+            "Adds flat **bonus XP** to every stat drill in `/development`, and speeds "
+            "**daily passive fatigue** recovery for healthy players "
+            f"(`25 + TG×5`, capped at 100).\n"
+            f"**Now:** **+{tg_bonus}** bonus drill XP · "
+            f"**+{tg_passive}** daily passive fatigue "
+            f"(TG L{tg_lv})\n"
             + _training_next_preview(tg_lv)
             + _next_upgrade_line(player, "training_ground")
         ),

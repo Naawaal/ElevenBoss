@@ -2,7 +2,7 @@
 from __future__ import annotations
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -30,6 +30,7 @@ from player_engine import (
     drill_spec,
     drill_unlocked,
     drill_xp_reward,
+    effective_daily_drill_count,
     evolution_start_cost,
     evolution_unlocked,
     format_cooldown_remaining,
@@ -235,13 +236,24 @@ async def show_training_menu(interaction: discord.Interaction, owner_id: int) ->
     if not await safe_defer(interaction, ephemeral=True):
         return
     db = await get_client()
-    player_res = await db.table("players").select("daily_drill_count, training_ground_level").eq("discord_id", owner_id).maybe_single().execute()
+    player_res = await db.table("players").select(
+        "daily_drill_count, daily_drill_reset_at, training_ground_level"
+    ).eq("discord_id", owner_id).maybe_single().execute()
     energy_row = await sync_action_energy(db, owner_id)
     training_energy = energy_row.get("action_energy", energy_row.get("training_energy", 0))
     max_e = int(energy_row.get("max_energy", 120) or 120)
     regen_per_min = float(energy_row.get("regen_per_min") or (1 / 6))
-    daily_count = player_res.data.get("daily_drill_count", 0) if player_res and player_res.data else 0
-    tg_level = int((player_res.data or {}).get("training_ground_level", 1))
+    raw_count = int((player_res.data or {}).get("daily_drill_count", 0) or 0) if player_res else 0
+    reset_raw = (player_res.data or {}).get("daily_drill_reset_at") if player_res else None
+    reset_at = None
+    if reset_raw:
+        if isinstance(reset_raw, str):
+            reset_at = date.fromisoformat(reset_raw[:10])
+        elif hasattr(reset_raw, "year"):
+            reset_at = reset_raw if isinstance(reset_raw, date) else reset_raw.date()
+    today_utc = datetime.now(timezone.utc).date()
+    daily_count = effective_daily_drill_count(raw_count, reset_at, today=today_utc)
+    tg_level = int((player_res.data or {}).get("training_ground_level", 1)) if player_res else 1
     daily_limit = 20
     daily_passive = passive_recovery_amount(tg_level)
 

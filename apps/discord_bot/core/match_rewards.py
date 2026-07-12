@@ -2,9 +2,13 @@
 """Bot match rewards — economy v2, XP, ladder stats (US-29)."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from apps.discord_bot.core.match_runs import fetch_match_reward_row
+from apps.discord_bot.core.match_runs import (
+    fetch_match_reward_row,
+    mark_match_fatigue_applied,
+)
 from apps.discord_bot.core.economy_rpc import (
     apply_match_economy,
     compute_bot_match_coins,
@@ -13,7 +17,17 @@ from apps.discord_bot.core.economy_rpc import (
     sync_action_energy,
 )
 from apps.discord_bot.core.match_xp import apply_match_xp_if_needed
-from apps.discord_bot.core.injury_rpc import apply_post_match_fitness, notify_injury_overflow
+from apps.discord_bot.core.injury_rpc import (
+    apply_post_match_fitness,
+    format_bench_rest_line,
+    notify_injury_overflow,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _fitness_already() -> dict[str, Any]:
+    return {"ok": True, "bench_count": 0, "already_applied": True}
 
 
 async def apply_bot_match_rewards(
@@ -38,14 +52,19 @@ async def apply_bot_match_rewards(
     tactics_modifier: float = 1.0,
     bot: Any | None = None,
     recorded_injuries: list[dict] | None = None,
-) -> int:
-    """Apply bot match payouts. Returns coins earned."""
+) -> tuple[int, dict[str, Any]]:
+    """Apply bot match payouts. Returns (coins_earned, fitness_summary)."""
     existing = await fetch_match_reward_row(db, player_id, run_id=run_id) if run_id else None
-    if existing and existing.get("xp_applied_at"):
-        return int(existing.get("coins_earned") or 0)
+    if (
+        existing
+        and existing.get("xp_applied_at")
+        and existing.get("fatigue_applied_at")
+    ):
+        return int(existing.get("coins_earned") or 0), _fitness_already()
 
     v2 = await economy_v2_enabled(db)
     coins = int(existing.get("coins_earned") or 0) if existing else 0
+    bench_count = len(bench_ids or [])
 
     if not existing:
         await sync_action_energy(db, player_id)
@@ -92,7 +111,16 @@ async def apply_bot_match_rewards(
         team_rating=team_rating,
     )
 
+    if existing and existing.get("fatigue_applied_at"):
+        return coins, _fitness_already()
+
     intensity = float(opponent_rating) >= float(team_rating) + 8.0
+    fitness_summary: dict[str, Any] = {
+        "ok": False,
+        "bench_count": bench_count,
+        "error": None,
+        "line": None,
+    }
     try:
         fitness = await apply_post_match_fitness(
             db,
@@ -104,11 +132,23 @@ async def apply_bot_match_rewards(
             apply_injuries=True,
             recorded_injuries=recorded_injuries,
         )
+        await mark_match_fatigue_applied(db, history_id)
+        fitness_summary = {
+            "ok": True,
+            "bench_count": bench_count,
+            "error": None,
+            "line": format_bench_rest_line(True, bench_count),
+        }
         overflow = (fitness.get("injuries") or {}).get("overflow") or []
         if overflow and bot is not None:
             await notify_injury_overflow(bot, player_id, overflow)
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception("post-match fatigue/injury failed for %s", player_id)
+        logger.exception("post-match fatigue/injury failed for %s", player_id)
+        fitness_summary = {
+            "ok": False,
+            "bench_count": bench_count,
+            "error": "fitness_failed",
+            "line": format_bench_rest_line(False, bench_count),
+        }
 
-    return coins
+    return coins, fitness_summary

@@ -2,6 +2,12 @@
 
 Hey Managers!
 
+## Bench rest reliability
+
+After **bot** and **league** matches, unused healthy reserves get **+25** fitness (cap 100). Post-match press conference now shows a **Fitness** line when rest ran (or if the fitness update failed — rewards still count and fatigue can retry).
+
+Highest-overall unused players rest first (up to **7**). Friendlies stay a sandbox (no fatigue).
+
 ## Hub cleanup & energy tweaks
 
 **Recovery Session** now costs **5⚡** (was 10) — still 0 coins / 0 XP / +40 fatigue.
@@ -11,6 +17,12 @@ Hey Managers!
 **Hospital** moves fully under **`/profile` → Manage Hospital**. Store → Club Facilities is YA + Training Ground only.
 
 **`/club-finances`** is removed. Use **`/profile` → Finances** for wallet, wages, and facility summary.
+
+## Training Drills limit clarity
+
+- Hitting a **single player’s** daily drill/recovery cap (**5**) now shows the correct per-card message — not the club-wide “20” message.
+- Daily Drills `used/20` on the Training hub follows the same **UTC day** reset as the server (no leftover yesterday count).
+- Stuck club counters were reconciled against today’s real drill log.
 
 ## Recovery QoL (injury & fitness clocks)
 

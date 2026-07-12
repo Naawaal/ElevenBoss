@@ -76,7 +76,8 @@ def api_error_message(exc: Exception) -> str:
         return _FRIENDLY["Match XP could not be applied"]
     if "permission denied" in raw.lower() and "player_xp_log" in raw.lower():
         return _FRIENDLY["Match XP could not be applied"]
-    for key, friendly in _FRIENDLY.items():
+    # Longest key first so per-card drill limit is not mapped as club limit.
+    for key, friendly in sorted(_FRIENDLY.items(), key=lambda kv: len(kv[0]), reverse=True):
         if key in raw:
             return friendly
     return raw

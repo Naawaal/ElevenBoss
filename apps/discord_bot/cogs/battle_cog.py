@@ -424,6 +424,9 @@ class StandardMatchHandler(IMatchOutputHandler):
             value=rewards_value,
             inline=True
         )
+        fitness_line = (kwargs.get("fitness_summary") or {}).get("line")
+        if fitness_line:
+            press_embed.add_field(name="💪 Fitness", value=fitness_line, inline=False)
         press_embed.set_footer(
             text=f"✅ Rewards saved. Check `/leaderboard` for rankings. {MATCH_ENGINE_FOOTER}"
         )
@@ -602,6 +605,10 @@ class LeagueMatchHandler(IMatchOutputHandler):
 
         if rewards_text:
             press_embed.add_field(name="🎁 Match Rewards", value=rewards_text.strip(), inline=True)
+
+        fitness_line = (kwargs.get("fitness_summary") or {}).get("line")
+        if fitness_line:
+            press_embed.add_field(name="💪 Fitness", value=fitness_line, inline=False)
 
         press_embed.set_footer(
             text=f"✅ Season Pts updated. `/leaderboard` → Season tab. {MATCH_ENGINE_FOOTER}"
@@ -1051,12 +1058,14 @@ async def run_league_match_simulation(
     h_coins = a_coins = 0
     h_pts = a_pts = 0
     h_milestone = a_milestone = None
+    h_fitness: dict = {}
+    a_fitness: dict = {}
 
     if not home_p["is_ai"]:
         h_bench = await fetch_bench_ids(
             db, int(fixture["home_team_id"]), [str(c["id"]) for c in home_cards]
         )
-        h_coins, h_pts = await apply_league_human_rewards(
+        h_coins, h_pts, h_fitness = await apply_league_human_rewards(
             db,
             player_id=int(fixture["home_team_id"]),
             player_row=home_p,
@@ -1086,7 +1095,7 @@ async def run_league_match_simulation(
         a_bench = await fetch_bench_ids(
             db, int(fixture["away_team_id"]), [str(c["id"]) for c in away_cards]
         )
-        a_coins, a_pts = await apply_league_human_rewards(
+        a_coins, a_pts, a_fitness = await apply_league_human_rewards(
             db,
             player_id=int(fixture["away_team_id"]),
             player_row=away_p,
@@ -1207,6 +1216,9 @@ async def run_league_match_simulation(
         away_pts=a_pts if not away_p["is_ai"] else None,
         home_milestone=h_milestone,
         away_milestone=a_milestone,
+        fitness_summary=(
+            h_fitness if active_player_id == fixture["home_team_id"] else a_fitness
+        ),
     )
 
     if run_id:
@@ -1549,7 +1561,7 @@ class BattleCog(commands.Cog):
             poss_h, poss_a, shots_h, shots_a = _match_stats_from_state(state)
             motm = state.live_stats.pick_motm(random.choice(match_cards).name)
 
-            coins_earned = await apply_bot_match_rewards(
+            coins_earned, fitness_summary = await apply_bot_match_rewards(
                 db,
                 player_id=interaction.user.id,
                 player_row=player,
@@ -1608,6 +1620,7 @@ class BattleCog(commands.Cog):
                 total_lp=new_lp,
                 weekly_total=weekly_total,
                 global_divisions=divisions,
+                fitness_summary=fitness_summary,
             )
             if bot_run_id:
                 await complete_run(db, bot_run_id, home_score=state.home_score, away_score=state.away_score)

@@ -807,6 +807,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AND** final drill XP = `base_xp × (1 / (1 + 0.05 × (level − 1)))` (diminishing returns).
 - **AND** drills below the player's level tier appear grayed/locked in the UI; server rejects under-level attempts.
 - **AND** daily drill limit (20) and training energy checks remain enforced.
+- **AND (013):** Club vs per-card drill limit errors map to distinct player-facing copy; Training Drills hub displays `effective_daily_drill_count` (UTC soft-reset); `process_stat_drill` null-safe day reset; ops `repair_daily_drill_counts` reconciles counters from today’s `player_drill_daily_log`.
 
 #### AC-23g: Content Gating by Player Level
 - **GIVEN** evolution tracks in `EVOLUTION_TRACKS`,
@@ -1307,6 +1308,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-39h (011/012):** Non-hospital daily passive = `25 + (training_ground_level × 5)` via `process_daily_recovery`; hospital daily rate unchanged; bench rest **+25**; match base drain **18**. Injury untreated bases **Minor 1 / Moderate 4 / Major 7** days (Hospital curve unchanged). Mid-injury open stays fair-recalculated by `backfill_injury_eta_fairness` (012; never lengthen; credit time served).
 - **AC-39i (011):** Migration `056_recovery_qol_balance` upserts fatigue config + replaces injury CASE in `process_post_match_injuries` / `admit_to_hospital`.
 - **AC-39j (012):** Migration `057_hospital_eta_backfill` adds idempotent `backfill_injury_eta_fairness()` for open Hospital ETAs + overflow untreated clocks; early recovery matches daily hospital clear (+25 fatigue); DMs best-effort via ops script.
+- **AC-39k (014):** `match_history.fatigue_applied_at` gates post-match fitness separately from `xp_applied_at` (bot + league). Bench rest candidates = top **7** unused healthy by overall DESC. Match-end Fitness line; friendlies remain sandbox.
 ### US-40: Profile Finance & Hospital Hub
 
 > **As a** football club manager,
