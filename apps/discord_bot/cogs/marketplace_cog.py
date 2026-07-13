@@ -97,6 +97,7 @@ async def show_sell_menu(interaction: discord.Interaction, owner_id: int):
     eligible_players = [
         p for p in roster
         if not p.get("is_retired")
+        and not p.get("in_academy")
         and p["id"] not in starting_card_ids
         and p["id"] not in evo_card_ids
         and p["id"] not in training_card_ids

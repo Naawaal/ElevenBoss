@@ -341,32 +341,33 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-31e:** Contract renewal is blocked server-side for players age 35+. Agent sale offers factor in player age.
 - **AC-31f:** Phase B youth intake and Phase C club facilities remain separate follow-ups (not required for Phase A).
 
-### US-32: Youth Academy Intake (Phase B)
+### US-32: Youth Academy Intake (Phase B) — holding phase (015)
 
 > **As a** football club manager,
-> **I want** fresh youth prospects each season,
-> **So that** I can rebuild my squad as veterans retire without relying only on packs.
+> **I want** fresh youth prospects each week that seat in my academy,
+> **So that** I can develop and promote them without bloating the senior XI.
 
 **Acceptance Criteria:**
-- **AC-32a:** Every **Monday 00:00 UTC**, each human manager receives **3** new youth cards (ages 16–19, OVR 50–65, POT 72–82, Common) via RPC `process_youth_intake`.
-- **AC-32b:** Intake cards are added to the roster **without** auto squad assignment.
-- **AC-32c:** Intake is **idempotent** per manager per UTC week (`youth_intake_log` primary key).
-- **AC-32d:** Managers receive a **DM embed** listing new prospects when DMs are enabled.
-- **AC-32e:** Flat **academy L1** quality for all clubs — no facility upgrade required (Phase C scales intake later).
+- **AC-32a:** Every **Monday 00:00 UTC**, each human manager receives up to **3** new youth cards (ages 16–19; quality scaled by YA level; L1 baseline OVR 50–65 / POT 72–82) via RPC `process_youth_intake`.
+- **AC-32b:** New intake seats into free **academy slots** (`player_cards.in_academy = true`) — **not** auto-assigned to the starting XI and not senior-match-eligible until promoted. Pre-015 cards already on the senior roster remain grandfathered (`in_academy = false`).
+- **AC-32c:** Intake is **idempotent** per manager per UTC week (`youth_intake_log` primary key). Full/partial-full academy → partial-seat free slots and skip the rest with a clear skipped count (no replace prompt).
+- **AC-32d:** Managers receive a **DM embed** listing seated prospects when DMs are enabled; DMs-off clubs still see prospects in Manage Academy.
+- **AC-32e:** Intake quality scales with **Youth Academy** level (US-33); Manage Academy under **`/profile`** is the primary surface (no `/academy` slash). Upgrades remain under `/store` → Club Facilities.
 
-### US-33: Club Facilities (Phase C)
+### US-33: Club Facilities (Phase C) — academy gameplay (015)
 
 > **As a** football club manager,
-> **I want** to invest coins in club facilities,
-> **So that** my youth intake and training improve over time.
+> **I want** to invest coins in club facilities and manage my academy,
+> **So that** my youth pipeline and training improve over time.
 
 **Acceptance Criteria:**
 - **AC-33a:** `players` stores `youth_academy_level` and `training_ground_level` (default 1, max 5).
-- **AC-33b:** `/store` hub includes **Club Facilities** with upgrade buttons for both facilities.
+- **AC-33b:** `/store` hub includes **Club Facilities** with upgrade buttons for YA + Training Ground. **Manage Academy** (slots, growth, promote/release, hybrid paid scouting) lives under **`/profile`**.
 - **AC-33c:** Upgrades cost **750 / 2,000 / 5,000 / 12,000** coins per step (server-validated via `upgrade_club_facility` RPC).
 - **AC-33d:** **Training Ground** grants **+0…+4** flat drill XP (L1 = today); wired in `process_stat_drill` and drill preview.
-- **AC-33e:** **Youth Academy** improves next weekly intake POT/OVR ceiling and gem chance (does not affect daily packs).
+- **AC-33e:** **Youth Academy** improves intake POT/OVR/gem bands, slot caps (4/5/6/8/10), and daily academy growth (does not affect daily packs). Academy growth is **not** `apply_card_xp`.
 - **AC-33f:** Max **1 facility upgrade per UTC week**; L2 requires **5** career matches, L4 requires **20**.
+- **AC-33g:** Senior soft cap for promotion uses `game_config.senior_roster_cap` (default 48).
 
 ### US-34: Scouting Pool / Regen Market (Phase D)
 
@@ -1305,10 +1306,11 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-39e:** Friendlies remain sandbox (no fatigue/injury writes).
 - **AC-39f:** Live bot/league injuries before 90' pause ≤30s for Select/Play On; auto-sim/AI auto-resolve; mid-match recordings skip a second A+C roll.
 - **AC-39g (009/010):** `/development` Training Drills offers **Recovery Session** — instant, +40 fatigue (config), 0 XP, 0 coins, shares club/card daily drill caps; RPC `process_recovery_session`. Energy cost **5**.
-- **AC-39h (011/012):** Non-hospital daily passive = `25 + (training_ground_level × 5)` via `process_daily_recovery`; hospital daily rate unchanged; bench rest **+25**; match base drain **18**. Injury untreated bases **Minor 1 / Moderate 4 / Major 7** days (Hospital curve unchanged). Mid-injury open stays fair-recalculated by `backfill_injury_eta_fairness` (012; never lengthen; credit time served).
-- **AC-39i (011):** Migration `056_recovery_qol_balance` upserts fatigue config + replaces injury CASE in `process_post_match_injuries` / `admit_to_hospital`.
-- **AC-39j (012):** Migration `057_hospital_eta_backfill` adds idempotent `backfill_injury_eta_fairness()` for open Hospital ETAs + overflow untreated clocks; early recovery matches daily hospital clear (+25 fatigue); DMs best-effort via ops script.
+- **AC-39h (011/012/016):** Non-hospital daily passive = intensity-tier base (**35 / 25 / 15**) + `(training_ground_level × 2)` via `process_daily_recovery`; hospital daily rate unchanged; bench rest **+25**. Match drain uses intensity-tier bases **8 / 12 / 16** with PHY×0.10 and tactics +4/−2/0 (rating-gap +5 surcharge removed). Injury untreated bases use Moderate anchors **3 / 5 / 8** × severity (0.33 / 1.0 / 2.5) ÷ Hospital curve. Mid-injury open stays fair-recalculated by `backfill_tier_fatigue_rebalance` (016; never lengthen; credit time served; uninjured fatigue floor ≥50). Legacy `backfill_injury_eta_fairness` (012) remains for historical 011 clocks.
+- **AC-39i (011):** Migration `056_recovery_qol_balance` upserts fatigue config + replaces injury CASE in `process_post_match_injuries` / `admit_to_hospital` (superseded live numbers by **061**).
+- **AC-39j (012/016):** Migration `057` / `061` fair backfill RPCs for open Hospital ETAs + overflow; early recovery matches daily hospital clear (+25 fatigue); DMs best-effort via ops script.
 - **AC-39k (014):** `match_history.fatigue_applied_at` gates post-match fitness separately from `xp_applied_at` (bot + league). Bench rest candidates = top **7** unused healthy by overall DESC. Match-end Fitness line; friendlies remain sandbox.
+- **AC-39l (016):** `players.intensity_tier` (1–3) from Division Rank 2-2-2 map; Monday weekly reset refreshes it. Hospital / profile intensity copy; pre-match heavy-fatigue warning. Soft-lock emergency fillers out of scope.
 ### US-40: Profile Finance & Hospital Hub
 
 > **As a** football club manager,

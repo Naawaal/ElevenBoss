@@ -1,5 +1,5 @@
 # apps/discord_bot/core/injury_rpc.py
-"""Fatigue + post-match injury RPC wrappers (Phases 1–3)."""
+"""Fatigue + post-match injury RPC wrappers (016 intensity tier)."""
 from __future__ import annotations
 
 import logging
@@ -37,7 +37,7 @@ def build_starter_drains(
     cards: list[dict[str, Any]],
     *,
     tactics_modifier: float = 1.0,
-    intensity: bool = False,
+    intensity_tier: int = 1,
 ) -> dict[str, int]:
     stance = stance_from_tactics_modifier(tactics_modifier)
     drains: dict[str, int] = {}
@@ -46,7 +46,9 @@ def build_starter_drains(
         if not cid:
             continue
         phy = int(card.get("phy", 50))
-        drains[cid] = match_fatigue_drain(phy, stance=stance, intensity=intensity)
+        drains[cid] = match_fatigue_drain(
+            phy, stance=stance, intensity_tier=intensity_tier
+        )
     return drains
 
 
@@ -92,7 +94,7 @@ async def apply_post_match_fitness(
     starter_cards: list[dict[str, Any]],
     bench_ids: list[str] | None = None,
     tactics_modifier: float = 1.0,
-    intensity: bool = False,
+    intensity_tier: int = 1,
     apply_injuries: bool = True,
     recorded_injuries: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -102,7 +104,9 @@ async def apply_post_match_fitness(
     skip a second A+C roll. Otherwise keep Phase 2 post-match roll.
     """
     drains = build_starter_drains(
-        starter_cards, tactics_modifier=tactics_modifier, intensity=intensity
+        starter_cards,
+        tactics_modifier=tactics_modifier,
+        intensity_tier=intensity_tier,
     )
     fatigue_result = await apply_match_fatigue_rpc(
         db, owner_id, starter_drains=drains, bench_ids=bench_ids
@@ -132,7 +136,9 @@ async def apply_post_match_fitness(
                         "phy": int(row.get("phy", c.get("phy", 50))),
                         "age": effective_card_age(row),
                     })
-            hit = select_post_match_injury(refreshed)
+            hit = select_post_match_injury(
+                refreshed, intensity_tier=intensity_tier
+            )
             if hit:
                 payload_injuries = [
                     {"player_card_id": hit.player_card_id, "tier": hit.tier}

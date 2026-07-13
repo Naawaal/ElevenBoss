@@ -196,6 +196,8 @@ class MatchState(BaseModel):
     injury_used_home: bool = False
     injury_used_away: bool = False
     sub_resolution: dict | None = None
+    # 016 — shared intensity for injury rolls (human owner's tier in bot matches)
+    intensity_tier: int = 1
 
     def update_tags(self) -> None:
         tags: list[str] = []
@@ -517,7 +519,11 @@ def _try_authoritative_injury(
         return None
     from player_engine import select_post_match_injury
 
-    hit = select_post_match_injury(_starters_for_injury_roll(team.squad), rng=rng)
+    hit = select_post_match_injury(
+        _starters_for_injury_roll(team.squad),
+        rng=rng,
+        intensity_tier=int(getattr(state, "intensity_tier", 1) or 1),
+    )
     if not hit:
         return None
     injured = _find_player(team.squad, hit.player_card_id)

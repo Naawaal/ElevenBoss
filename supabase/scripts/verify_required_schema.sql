@@ -110,7 +110,26 @@ BEGIN
       ('function:transfer_mentor_xp'),
       ('function:process_recovery_session'),
       ('function:backfill_injury_eta_fairness'),
+      ('column:public.players.intensity_tier'),
+      ('function:backfill_tier_fatigue_rebalance'),
+      ('function:intensity_recovery_days'),
       ('function:repair_daily_drill_counts'),
+      ('column:public.player_cards.in_academy'),
+      ('column:public.player_cards.academy_progress'),
+      ('column:public.player_cards.academy_seated_at'),
+      ('column:public.players.scouting_finishes_at'),
+      ('column:public.players.scouting_active_tier'),
+      ('table:public.scouting_reports'),
+      ('policy:public.scouting_reports.scouting_reports_select'),
+      ('policy:public.scouting_reports.scouting_reports_insert'),
+      ('policy:public.scouting_reports.scouting_reports_update'),
+      ('function:academy_slot_cap'),
+      ('function:promote_academy_player'),
+      ('function:release_academy_player'),
+      ('function:process_daily_academy_growth'),
+      ('function:dispatch_youth_scout'),
+      ('function:finalize_youth_scout_report'),
+      ('function:sign_youth_scout_prospect'),
       ('policy:public.mentor_transfer_log.mentor_transfer_log_select'),
       ('policy:public.mentor_transfer_log.mentor_transfer_log_insert'),
       ('policy:public.league_members.league_members_select'),
@@ -195,7 +214,16 @@ BEGIN
         WHEN 'transfer_mentor_xp' THEN to_regprocedure('public.transfer_mentor_xp(bigint,uuid,uuid,integer)')
         WHEN 'process_recovery_session' THEN to_regprocedure('public.process_recovery_session(bigint,uuid)')
         WHEN 'backfill_injury_eta_fairness' THEN to_regprocedure('public.backfill_injury_eta_fairness()')
+        WHEN 'backfill_tier_fatigue_rebalance' THEN to_regprocedure('public.backfill_tier_fatigue_rebalance()')
+        WHEN 'intensity_recovery_days' THEN to_regprocedure('public.intensity_recovery_days(integer,integer,integer)')
         WHEN 'repair_daily_drill_counts' THEN to_regprocedure('public.repair_daily_drill_counts()')
+        WHEN 'academy_slot_cap' THEN to_regprocedure('public.academy_slot_cap(integer)')
+        WHEN 'promote_academy_player' THEN to_regprocedure('public.promote_academy_player(bigint,uuid)')
+        WHEN 'release_academy_player' THEN to_regprocedure('public.release_academy_player(bigint,uuid)')
+        WHEN 'process_daily_academy_growth' THEN to_regprocedure('public.process_daily_academy_growth()')
+        WHEN 'dispatch_youth_scout' THEN to_regprocedure('public.dispatch_youth_scout(bigint,text)')
+        WHEN 'finalize_youth_scout_report' THEN to_regprocedure('public.finalize_youth_scout_report(bigint,jsonb,text)')
+        WHEN 'sign_youth_scout_prospect' THEN to_regprocedure('public.sign_youth_scout_prospect(bigint,uuid,integer)')
         ELSE NULL
       END IS NOT NULL
     )

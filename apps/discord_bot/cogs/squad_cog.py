@@ -155,7 +155,10 @@ class SquadHubView(discord.ui.View):
             
             # Fetch all cards sorted by overall descending
             cards_res = await db.table("player_cards").select("*").eq("owner_id", self.user_id).order("overall", desc=True).execute()
-            all_cards = cards_res.data or []
+            all_cards = [
+                c for c in (cards_res.data or [])
+                if not c.get("is_retired") and not c.get("in_academy")
+            ]
             
             # Get assigned IDs
             assigned_ids = {c["id"] for c in self.assignments.values()}
@@ -176,7 +179,10 @@ class SquadHubView(discord.ui.View):
         try:
             db = await get_client()
             cards_res = await db.table("player_cards").select("*").eq("owner_id", self.user_id).order("overall", desc=True).execute()
-            all_cards = cards_res.data or []
+            all_cards = [
+                c for c in (cards_res.data or [])
+                if not c.get("in_academy")
+            ]
             
             roster_view = SquadRosterView(self.user_id, self, all_cards)
             page_cards = all_cards[:8]
@@ -250,9 +256,12 @@ class SquadFormationView(discord.ui.View):
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
             
-            # Fetch all owned players
+            # Fetch all owned players (exclude academy holding + retired)
             res = await db.table("player_cards").select("*").eq("owner_id", self.user_id).execute()
-            all_cards = res.data or []
+            all_cards = [
+                c for c in (res.data or [])
+                if not c.get("is_retired") and not c.get("in_academy")
+            ]
             
             assigned_cards = {}  # slot -> card
             used_ids = set()

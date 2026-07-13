@@ -1806,37 +1806,44 @@ See `spec.md` US-31 / US-32 for acceptance criteria.
 
 ---
 
-## 30. Youth Academy Intake (US-32 ? Phase B)
+## 30. Youth Academy Intake (US-32 — Phase B + 015 holding)
 
-### Migration 042
+### Migration 042 (baseline)
 
-- Table `youth_intake_log (owner_id, intake_week)` ? idempotency + notification tracking
-- RPC `process_youth_intake(p_owner_id, p_cards JSONB)` ? insert cards, no squad slots
-- RPC `current_intake_week()` ? Monday UTC week key
+- Table `youth_intake_log (owner_id, intake_week)` — idempotency + notification tracking
+- RPC `process_youth_intake(p_owner_id, p_cards JSONB)` — insert cards, no squad slots
+- RPC `current_intake_week()` — Monday UTC week key
 - `game_config`: `youth_intake_count` (3), `youth_intake_academy_level` (1)
+
+### Migration 060 (holding phase)
+
+- `player_cards.in_academy`, `academy_progress`, `academy_seated_at`
+- `process_youth_intake` seats into free academy slots; partial-seat + skip when full
+- Daily `process_daily_academy_growth` + age-out promote/release
+- Promote / release RPCs; senior soft cap via `senior_roster_cap`
+- Hybrid scouting: `dispatch_youth_scout` / `finalize_youth_scout_report` / `sign_youth_scout_prospect`
+- Primary UI: `/profile` → **Manage Academy** (see `specs/015-youth-academy/`)
 
 ### Packages
 
 | Module | Role |
 |--------|------|
-| `youth_intake.py` | `generate_youth_intake_cards()` ? flat L1 curve |
-| `gacha/generator.py` | `generate_youth_intake()` ? names + GachaPlayer wrapper |
+| `youth_intake.py` / `gacha` | Intake generation scaled by YA level |
+| `player_engine/youth_math.py` | Academy daily points / ready / age-out |
+| `economy/facility_effects.py` | Slot caps + scout cost/hours |
 
 ### Bot wiring
 
 | File | Role |
 |------|------|
-| `youth_intake_notifier.py` | Batch all human managers, RPC persist, DM embed |
-| `youth_intake_embeds.py` | Prospect list embed |
-| `scheduler_jobs.py` | `youth_intake_job` Monday 00:00 UTC after aging |
-
-### Phase C hook
-
-`intake_config_for_academy(level)` returns L1 curve until migration 043 adds facility columns on `players`.
+| `youth_intake_notifier.py` | Batch humans, seating RPC, DM embed |
+| `academy_hub.py` / `academy_embeds.py` | Manage Academy hub |
+| `academy_growth_job.py` | Daily growth + age-out / scout-ready DMs |
+| `scheduler_jobs.py` | `youth_intake_job` + `academy_growth_job` |
 
 ---
 
-## 31. Club Facilities (US-33 ? Phase C)
+## 31. Club Facilities (US-33 — Phase C + Manage Academy)
 
 ### Migration 043
 

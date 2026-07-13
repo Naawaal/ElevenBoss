@@ -114,7 +114,7 @@ async def apply_bot_match_rewards(
     if existing and existing.get("fatigue_applied_at"):
         return coins, _fitness_already()
 
-    intensity = float(opponent_rating) >= float(team_rating) + 8.0
+    intensity_tier = int(player_row.get("intensity_tier") or 1)
     fitness_summary: dict[str, Any] = {
         "ok": False,
         "bench_count": bench_count,
@@ -128,7 +128,7 @@ async def apply_bot_match_rewards(
             starter_cards=cards,
             bench_ids=bench_ids,
             tactics_modifier=tactics_modifier,
-            intensity=intensity,
+            intensity_tier=intensity_tier,
             apply_injuries=True,
             recorded_injuries=recorded_injuries,
         )

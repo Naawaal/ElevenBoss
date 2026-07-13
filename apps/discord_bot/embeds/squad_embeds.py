@@ -35,7 +35,10 @@ def starting_11_embed(formation: str, assignments: dict[int, dict]) -> discord.E
             fit = "🩹" if card.get("injury_tier") else fatigue_indicator(fat)
             inj = ""
             if card.get("injury_tier"):
-                inj = f"\n🩹 **{TIER_NAMES.get(int(card['injury_tier']), 'Injured')}**"
+                sev = int(card["injury_tier"])
+                inj = f"\n🩹 **{TIER_NAMES.get(sev, 'Injured')}**"
+                if card.get("injury_recovery_days") is not None:
+                    inj += f" · ~{int(card.get('injury_recovery_days') or 0)}d"
             ps_list = card.get("playstyles")
             ps_str = f"\n✨ {', '.join(ps_list)}" if ps_list else ""
             value = (

@@ -33,6 +33,27 @@ YOUTH_ACADEMY_TIERS: dict[int, YouthAcademyTier] = {
     5: YouthAcademyTier(5, 72, 94, 56, 69, 0.20),
 }
 
+# Spec 015 — academy holding slots by YA level
+ACADEMY_SLOT_CAPS: dict[int, int] = {1: 4, 2: 5, 3: 6, 4: 8, 5: 10}
+
+# Spec 015 — paid scout tiers (mirrors game_config defaults)
+SCOUT_TIER_COSTS: dict[str, int] = {"quick": 3000, "standard": 10000, "deep": 25000}
+SCOUT_TIER_HOURS: dict[str, int] = {"quick": 2, "standard": 8, "deep": 24}
+
+
+def academy_slot_cap(academy_level: int) -> int:
+    """Max academy seats for YA level (clamped 1–5)."""
+    level = max(1, min(FACILITY_MAX_LEVEL, int(academy_level)))
+    return ACADEMY_SLOT_CAPS[level]
+
+
+def scout_tier_cost(tier: str) -> int | None:
+    return SCOUT_TIER_COSTS.get(tier)
+
+
+def scout_tier_hours(tier: str) -> int | None:
+    return SCOUT_TIER_HOURS.get(tier)
+
 
 def facility_upgrade_cost(current_level: int) -> int | None:
     """Coin cost to upgrade YA/TG from current_level to current_level + 1."""

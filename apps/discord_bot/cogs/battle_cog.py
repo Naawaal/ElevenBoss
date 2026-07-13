@@ -260,7 +260,7 @@ class ChallengeView(discord.ui.View):
 
 class IMatchOutputHandler(abc.ABC):
     @abc.abstractmethod
-    async def initialize(self, interaction: discord.Interaction | None, home_name: str, away_name: str, matchday: int = None, energy_cost: int | None = None) -> discord.abc.Messageable:
+    async def initialize(self, interaction: discord.Interaction | None, home_name: str, away_name: str, matchday: int = None, energy_cost: int | None = None, fatigue_warning: str | None = None) -> discord.abc.Messageable:
         """Post initial ticket, optional thread, and return the target channel/thread for posting commentary."""
         pass
 
@@ -294,13 +294,17 @@ class StandardMatchHandler(IMatchOutputHandler):
         self.thread = None
         self.ticker_msg = None
 
-    async def initialize(self, interaction: discord.Interaction | None, home_name: str, away_name: str, matchday: int = None, energy_cost: int | None = None) -> discord.abc.Messageable:
+    async def initialize(self, interaction: discord.Interaction | None, home_name: str, away_name: str, matchday: int = None, energy_cost: int | None = None, fatigue_warning: str | None = None) -> discord.abc.Messageable:
         if not interaction:
             raise ValueError("StandardMatchHandler requires an active interaction context.")
 
+        desc = "A new match has kicked off! Live commentary is streaming now."
+        if fatigue_warning:
+            desc = f"{desc}\n\n{fatigue_warning}"
+
         ticket_embed = discord.Embed(
             title=f"🎫 Match Ticket: {home_name} vs {away_name}",
-            description="A new match has kicked off! Live commentary is streaming now.",
+            description=desc,
             color=0x00FF87
         )
         if matchday:
@@ -504,7 +508,7 @@ class LeagueMatchHandler(IMatchOutputHandler):
         except Exception:
             logger.debug("Prematch pitch render skipped", exc_info=True)
 
-    async def initialize(self, interaction: discord.Interaction | None, home_name: str, away_name: str, matchday: int = None, energy_cost: int | None = None) -> discord.abc.Messageable:
+    async def initialize(self, interaction: discord.Interaction | None, home_name: str, away_name: str, matchday: int = None, energy_cost: int | None = None, fatigue_warning: str | None = None) -> discord.abc.Messageable:
         return self.commentary_thread
 
     async def start_match(self, target: discord.abc.Messageable, home_name: str, away_name: str, touchline_view: discord.ui.View | None) -> None:
@@ -924,6 +928,11 @@ async def run_league_match_simulation(
 
     state = MatchState(home_rating=home_rating, away_rating=away_rating)
     state.injuries_enabled = True
+    # Sim injury rolls: prefer active human's intensity; each side still persists own tier
+    active_row = home_p if int(home_p.get("discord_id") or 0) == int(active_player_id) else away_p
+    if active_row.get("is_ai"):
+        active_row = home_p if not home_p.get("is_ai") else away_p
+    state.intensity_tier = int(active_row.get("intensity_tier") or 1)
     interactive: list[str] = []
     if not home_p["is_ai"]:
         interactive.append("home")
@@ -1456,6 +1465,7 @@ class BattleCog(commands.Cog):
             state = MatchState(home_rating=my_rating, away_rating=opp_rating)
             state.injuries_enabled = True
             state.interactive_sides = ["home"]
+            state.intensity_tier = int(player.get("intensity_tier") or 1)
             state.bench_home = await fetch_bench_cards(
                 db, interaction.user.id, [str(c["id"]) for c in active_cards]
             )
@@ -1464,8 +1474,24 @@ class BattleCog(commands.Cog):
             # Instantiate StandardMatchHandler
             handler = StandardMatchHandler(self.bot, league_mode=False)
 
+            from player_engine import count_heavily_fatigued
+
+            heavy_n = count_heavily_fatigued(active_cards)
+            fatigue_warning = None
+            if heavy_n > 0:
+                fatigue_warning = (
+                    f"⚠️ Warning: **{heavy_n}** players are heavily fatigued. "
+                    "High risk of injury."
+                )
+
             # Initialize target channel
-            target = await handler.initialize(interaction, player["club_name"], opp_name, energy_cost=needed)
+            target = await handler.initialize(
+                interaction,
+                player["club_name"],
+                opp_name,
+                energy_cost=needed,
+                fatigue_warning=fatigue_warning,
+            )
 
             sim_seed = generate_sim_seed()
             run_row = await create_ephemeral_run(

@@ -2,6 +2,58 @@
 
 Hey Managers!
 
+## League Intensity — Fatigue & Hospital Rebalance
+
+Match fitness and injuries now scale with your **Division Rank** (updated Mondays with promotions/relegations).
+
+| Intensity | Divisions | Match drain feel | Daily recovery | Hospital (Moderate base) |
+|-----------|-----------|------------------|----------------|--------------------------|
+| **Low** | Grassroots, Amateur | Light | Strong (+35 base + TG) | Shorter clocks |
+| **Medium** | Semi-Pro, Professional | Rotation starts to matter | Mid | Mid |
+| **High** | Elite, Legendary | Deep squad demanded | Tighter | Longer — Hospital upgrades shine |
+
+Check **`/store` → Club Facilities → Hospital** for your intensity header, and injured players on **`/profile`** for return-date math (base vs facility bonus). Competitive match tickets warn if starters are under **30%** fatigue.
+
+**Migration fairness:** Open hospital stays were recalculated (never made longer). Uninjured squads got a one-time fatigue floor of **50** so you can feel the new drain curve immediately.
+
+Soft-lock “emergency fillers” are **not** in this patch — we’re monitoring whether they’re still needed after the forgiving lower tiers.
+
+---
+
+## Youth Academy — Manage Academy
+
+Youth prospects now train in the academy before they join your senior club. Upgrade YA still matters — and you finally have a place to *run* it.
+
+### Where to go
+**`/profile` → Manage Academy** — slots, prospect list, Ready badges, next free intake, promote / release / scout. Upgrade YA level still lives under **`/store` → Club Facilities**. No new slash command.
+
+### Holding phase
+- **Monday intake** (00:00 UTC) seats into free academy slots — **not** your starting XI.
+- Slots by YA level: **L1 = 4 · L2 = 5 · L3 = 6 · L4 = 8 · L5 = 10**.
+- Academy full? Free seats still fill; the rest are **skipped** (you’ll see how many). No replace prompt.
+- **Daily growth** while seated (faster / higher ceilings at higher YA). **Ready** guideline at **65 OVR** — you can promote earlier.
+- **Promote** moves them to the senior club (soft cap **48** seniors). **Release** frees a slot (they leave the club).
+- Age **20** without promote → auto-promote if there’s senior space, otherwise released (DM when possible).
+
+### Paid scouting (optional)
+Supplement Monday intake — shortlist of **3**, sign **up to 1** into a free academy slot.
+
+| Tier | Cost | Wait |
+|------|------|------|
+| Quick | 3,000 | 2h |
+| Standard | 10,000 | 8h |
+| Deep | 25,000 | 24h |
+
+Finish one report (or let it expire) before dispatching another. Scout-ready DMs when enabled; otherwise check Manage Academy.
+
+### What stays out of academy
+Academy prospects can’t go into `/squad`, marketplace sell lists, or `/development` drills / fusion / skill allocation until promoted.
+
+### Already had youth on the roster?
+Cards from before this update stay **senior** (grandfathered). Only **new** intake and scout signings use the holding phase.
+
+---
+
 ## Bench rest reliability
 
 After **bot** and **league** matches, unused healthy reserves get **+25** fitness (cap 100). Post-match press conference now shows a **Fitness** line when rest ran (or if the fitness update failed — rewards still count and fatigue can retry).
@@ -14,7 +66,7 @@ Highest-overall unused players rest first (up to **7**). Friendlies stay a sandb
 
 **Action energy max** is **120** (was 100). Regen rate is unchanged; you can just bank more.
 
-**Hospital** moves fully under **`/profile` → Manage Hospital**. Store → Club Facilities is YA + Training Ground only.
+**Hospital** moves fully under **`/profile` → Manage Hospital**. **Manage Academy** is also on **`/profile`**. Store → Club Facilities is YA + Training Ground upgrades only.
 
 **`/club-finances`** is removed. Use **`/profile` → Finances** for wallet, wages, and facility summary.
 
@@ -246,24 +298,24 @@ Training Ground bonus (+0 to +4 flat drill XP) stacks on top — see Club Facili
 
 ## Youth Academy Intake (US-32 — Phase B)
 
-Every season brings fresh prospects — rebuild without relying only on daily packs.
+Every week brings fresh prospects — rebuild without relying only on daily packs.
 
 ### What changed
 - **3 youth prospects** (default) arrive each **Monday 00:00 UTC** for every manager (ages 16–19).
 - **L1 Youth Academy baseline:** OVR 50–65, POT 72–82.
 - **Higher Youth Academy levels** (`/store` → Club Facilities) raise intake OVR/POT ceilings and add a small **gem prospect** chance from L2 upward.
-- New intake players join your **roster** — they are **not** auto-assigned to your starting XI.
-- You'll get a **DM** listing the new prospects when DMs are enabled.
+- New intake seats into **Manage Academy** (holding phase) — **not** auto-assigned to your starting XI. See **Youth Academy — Manage Academy** at the top of this changelog.
+- You'll get a **DM** listing seated prospects when DMs are enabled.
 
 ---
 
 ## Club Facilities (US-33 — Phase C)
 
-Invest coins to improve your academy and training ground over time. **Hospital** is a third facility in the same hub — see **Fatigue, Injuries & Hospital** above.
+Invest coins to improve your academy and training ground over time. **Hospital** is a third facility — see **Fatigue, Injuries & Hospital** above.
 
 ### What changed
-- **`/store` → Club Facilities** — upgrade **Youth Academy** (better weekly intake) or **Training Ground** (flat drill XP bonus). **Hospital** is on **`/profile` → Manage Hospital**.
-- **Youth Academy:** L1 is the baseline band above; higher levels widen OVR/POT ceilings up to roughly **56–69 OVR / 72–94 POT** at L5, with rising gem-prospect odds.
+- **`/store` → Club Facilities** — upgrade **Youth Academy** / **Training Ground**. Open **`/profile` → Manage Academy** for seating, growth, promote/release, and paid scouting.
+- **Youth Academy:** L1 is the baseline band above; higher levels widen OVR/POT ceilings up to roughly **56–69 OVR / 72–94 POT** at L5, with rising gem-prospect odds, more slots, and faster academy growth.
 - **Training Ground:** **L1 +0 … L5 +4** flat bonus drill XP (shown on the Stat Drills hub).
 - **Costs (YA/TG):** 750 / 2,000 / 5,000 / 12,000 coins per level (same all divisions). Hospital uses its own ladder (see above).
 - **Level 1 is free** for YA/TG — upgrades are optional; max **1 upgrade per UTC week** across YA + TG + Hospital.

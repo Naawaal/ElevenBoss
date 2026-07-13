@@ -237,7 +237,7 @@ async def show_training_menu(interaction: discord.Interaction, owner_id: int) ->
         return
     db = await get_client()
     player_res = await db.table("players").select(
-        "daily_drill_count, daily_drill_reset_at, training_ground_level"
+        "daily_drill_count, daily_drill_reset_at, training_ground_level, intensity_tier"
     ).eq("discord_id", owner_id).maybe_single().execute()
     energy_row = await sync_action_energy(db, owner_id)
     training_energy = energy_row.get("action_energy", energy_row.get("training_energy", 0))
@@ -254,8 +254,9 @@ async def show_training_menu(interaction: discord.Interaction, owner_id: int) ->
     today_utc = datetime.now(timezone.utc).date()
     daily_count = effective_daily_drill_count(raw_count, reset_at, today=today_utc)
     tg_level = int((player_res.data or {}).get("training_ground_level", 1)) if player_res else 1
+    intensity_tier = int((player_res.data or {}).get("intensity_tier") or 1) if player_res else 1
     daily_limit = 20
-    daily_passive = passive_recovery_amount(tg_level)
+    daily_passive = passive_recovery_amount(tg_level, intensity_tier=intensity_tier)
 
     # Config-driven drill tier values (mirror process_stat_drill).
     adv_min_level = await get_game_config_int(db, "drill_advanced_min_level", 10)
@@ -267,7 +268,7 @@ async def show_training_menu(interaction: discord.Interaction, owner_id: int) ->
     recovery_energy = await get_game_config_int(db, "fatigue_recovery_energy", 5)
 
     roster_res = await db.table("player_cards").select("*").eq("owner_id", owner_id).order("overall", desc=True).execute()
-    roster = roster_res.data or []
+    roster = [c for c in (roster_res.data or []) if not c.get("in_academy") and not c.get("is_retired")]
 
     evo_res = await db.table("active_evolutions").select("card_id").eq("status", "active").execute()
     evo_ids = {e["card_id"] for e in (evo_res.data or [])}
@@ -589,7 +590,7 @@ async def show_card_fusion_menu(interaction: discord.Interaction, owner_id: int)
         return
     db = await get_client()
     cards_res = await db.table("player_cards").select("*").eq("owner_id", owner_id).order("overall", desc=True).execute()
-    cards = cards_res.data or []
+    cards = [c for c in (cards_res.data or []) if not c.get("in_academy") and not c.get("is_retired")]
 
     if len(cards) < 2:
         embed = error_embed("You need at least 2 player cards to fuse (one to upgrade and one to sacrifice).")
@@ -1002,8 +1003,8 @@ async def show_evols_menu(interaction: discord.Interaction, owner_id: int, prese
     gate = evolution_start_gate_message(hub_status)
 
     # 1. Fetch roster
-    roster_res = await db.table("player_cards").select("id, name, overall").eq("owner_id", owner_id).order("overall", desc=True).execute()
-    roster = roster_res.data or []
+    roster_res = await db.table("player_cards").select("id, name, overall, in_academy").eq("owner_id", owner_id).order("overall", desc=True).execute()
+    roster = [c for c in (roster_res.data or []) if not c.get("in_academy")]
 
     if not roster:
         embed = discord.Embed(title="🧬 Evolutions Hub", description="No players in your roster to evolve.", color=0x00FF87)
@@ -1314,11 +1315,11 @@ async def show_skills_menu(interaction: discord.Interaction, owner_id: int, pres
     if not await safe_defer(interaction, ephemeral=True):
         return
     db = await get_client()
-    roster_res = await db.table("player_cards").select("id, name, overall").eq("owner_id", owner_id).order("overall", desc=True).execute()
-    roster = roster_res.data or []
+    roster_res = await db.table("player_cards").select("id, name, overall, in_academy").eq("owner_id", owner_id).order("overall", desc=True).execute()
+    roster = [c for c in (roster_res.data or []) if not c.get("in_academy")]
 
     if not roster:
-        embed = discord.Embed(title="⭐ Skill Allocation", description="No roster players found.", color=0x00FF87)
+        embed = discord.Embed(title="⭐ Skill Allocation", description="No senior roster players found.", color=0x00FF87)
         view = SkillsSubView(owner_id, None, roster)
         await edit_ephemeral_hub_message(interaction, embed, view)
         return
@@ -1326,6 +1327,10 @@ async def show_skills_menu(interaction: discord.Interaction, owner_id: int, pres
     target_card_id = preselected_card_id or roster[0]["id"]
     card_res = await db.table("player_cards").select("*").eq("id", target_card_id).maybe_single().execute()
     card = card_res.data if card_res else None
+    if card and card.get("in_academy"):
+        target_card_id = roster[0]["id"]
+        card_res = await db.table("player_cards").select("*").eq("id", target_card_id).maybe_single().execute()
+        card = card_res.data if card_res else None
 
     skill_pts = int((card or {}).get("skill_points", 0) or 0)
     overall = int((card or {}).get("overall", 0) or 0)
@@ -1482,12 +1487,13 @@ class SkillPointButton(discord.ui.Button):
 
 async def _load_mentor_targets(db, owner_id: int, source_id: str) -> list[dict]:
     res = await db.table("player_cards").select(
-        "id, name, overall, potential, level, xp, skill_points"
+        "id, name, overall, potential, level, xp, skill_points, in_academy"
     ).eq("owner_id", owner_id).order("level").execute()
     rows = res.data or []
     return [
         r for r in rows
-        if is_mentor_target(
+        if not r.get("in_academy")
+        and is_mentor_target(
             overall=int(r.get("overall") or 0),
             potential=int(r.get("potential") or 0),
             level=int(r.get("level") or 1),

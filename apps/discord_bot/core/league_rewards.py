@@ -203,7 +203,7 @@ async def apply_league_human_rewards(
             starter_cards=cards,
             bench_ids=bench_ids,
             tactics_modifier=tactics_modifier,
-            intensity=False,
+            intensity_tier=int(player_row.get("intensity_tier") or 1),
             apply_injuries=True,
             recorded_injuries=recorded_injuries,
         )

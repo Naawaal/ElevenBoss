@@ -121,6 +121,8 @@ async def show_profile(interaction: discord.Interaction, owner_id: int) -> None:
             int(player.get("hospital_level", 0)),
             patients,
             unavailable=hospital_unavailable,
+            intensity_tier=int(player.get("intensity_tier") or 0) or None,
+            division=player.get("division"),
         ),
         inline=False,
     )
@@ -200,13 +202,19 @@ class ProfileHubView(discord.ui.View):
         from apps.discord_bot.views.store_facilities import show_hospital_panel
         await show_hospital_panel(interaction, self.owner_id, origin="profile")
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="💰 Finances", row=0)
+    @discord.ui.button(style=discord.ButtonStyle.success, label="🌱 Manage Academy", row=0)
+    async def manage_academy(self, interaction: discord.Interaction, _btn: discord.ui.Button) -> None:
+        await interaction.response.defer(ephemeral=True)
+        from apps.discord_bot.views.academy_hub import show_academy_hub
+        await show_academy_hub(interaction, self.owner_id, origin="profile")
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="💰 Finances", row=1)
     async def finances(self, interaction: discord.Interaction, _btn: discord.ui.Button) -> None:
         await interaction.response.defer(ephemeral=True)
         from apps.discord_bot.cogs.economy_cog import show_club_finances_panel
         await show_club_finances_panel(interaction, self.owner_id)
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="📊 View Club Stats", row=0)
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="📊 View Club Stats", row=1)
     async def club_stats(self, interaction: discord.Interaction, _btn: discord.ui.Button) -> None:
         await interaction.response.defer(ephemeral=True)
         from apps.discord_bot.cogs.squad_cog import show_squad_hub
@@ -220,7 +228,10 @@ class ProfileCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="profile", description="View your club's profile, finances, hospital, and record.")
+    @app_commands.command(
+        name="profile",
+        description="View your club's profile, academy, hospital, finances, and record.",
+    )
     @app_commands.guild_only()
     @app_commands.check(ensure_registered)
     async def profile(self, interaction: discord.Interaction) -> None:

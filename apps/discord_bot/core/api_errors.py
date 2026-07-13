@@ -13,7 +13,7 @@ _FRIENDLY: dict[str, str] = {
     "Daily drill limit reached for this player": (
         "This player has hit today's **per-card drill limit** (5). Pick another card or try tomorrow."
     ),
-    "Insufficient coins": "Not enough **coins** for this drill. Play matches or claim daily login in `/store`.",
+    "Insufficient coins": "Not enough **coins**. Play matches or claim daily login in `/store`.",
     "Match XP could not be applied": (
         "Match finished, but **player XP could not be saved**. Coins may already be credited — "
         "try again later or contact an admin if this keeps happening."
@@ -41,6 +41,17 @@ _FRIENDLY: dict[str, str] = {
         "That player is **injured** — treat them in **Hospital** via `/profile` → **Manage Hospital**, "
         "not Recovery Session."
     ),
+    "Not an academy player": "That player is not in your **academy**. Open Manage Academy from `/profile`.",
+    "Senior roster is full": (
+        "Your **senior roster is full** (soft cap). Sell or release a senior player before promoting."
+    ),
+    "Academy slots full": "Your **academy is full**. Release or promote a prospect to free a slot.",
+    "Claimable scout report already open": (
+        "You already have a **scout report** waiting. Open it in Manage Academy before dispatching again."
+    ),
+    "Scout already in progress": "A scout assignment is **already running**. Wait for it to finish.",
+    "Report expired": "That scout report has **expired**. Dispatch a new scout.",
+    "Report already signed": "You already signed from that scout report.",
 }
 
 

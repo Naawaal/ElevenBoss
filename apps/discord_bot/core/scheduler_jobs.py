@@ -61,6 +61,17 @@ async def daily_recovery_job(bot: commands.Bot) -> None:
         logger.exception("Daily recovery job failed.")
 
 
+async def academy_growth_job(bot: commands.Bot) -> None:
+    """Daily 00:10 UTC — academy passive growth + age-out promote/release."""
+    logger.info("Executing daily academy growth...")
+    try:
+        from apps.discord_bot.tasks.academy_growth_job import run_daily_academy_growth
+
+        await run_daily_academy_growth(bot)
+    except Exception:
+        logger.exception("Academy growth job failed.")
+
+
 async def weekly_league_reset_job(bot: commands.Bot) -> None:
     """
     APScheduler cron job (Monday 00:00 UTC) to:
@@ -156,6 +167,15 @@ async def weekly_league_reset_job(bot: commands.Bot) -> None:
                 new_div = DIVISIONS[max(DIVISIONS.index(old_div) - 1, 0)]
                 await db.table("players").update({"division": new_div}).eq("discord_id", pid).execute()
                 releg_new_div[pid] = new_div
+
+        # 4a. Drift-proof intensity_tier from settled division (016)
+        from player_engine import intensity_tier_for_division
+
+        for div_name in DIVISIONS:
+            tier = intensity_tier_for_division(div_name)
+            await db.table("players").update({"intensity_tier": tier}).eq(
+                "division", div_name
+            ).execute()
 
         # 4b. Weekly summary DMs
         for div_name in DIVISIONS:

@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from economy import hospital_bed_capacity, hospital_recovery_multiplier
+from player_engine import TIER_NAMES, intensity_label, intensity_tier_for_division
 
-from apps.discord_bot.embeds.hospital_embeds import format_recovery_eta
+from apps.discord_bot.embeds.hospital_embeds import (
+    format_recovery_eta,
+    injury_breakdown_line,
+)
 
 HOSPITAL_UNAVAILABLE = "Hospital status unavailable — try again or open Manage Hospital."
 L0_EMPTY = "No Hospital yet — open Manage Hospital on your club Profile to build one."
@@ -20,6 +24,8 @@ def format_hospital_summary(
     patients: list[dict] | None,
     *,
     unavailable: bool = False,
+    intensity_tier: int | None = None,
+    division: str | None = None,
 ) -> str:
     """Profile Hospital section copy. L0 never invents bed fractions (FR-004)."""
     if unavailable:
@@ -34,9 +40,14 @@ def format_hospital_summary(
     beds = hospital_bed_capacity(level)
     mult = hospital_recovery_multiplier(level)
     faster = int(round((1.0 - mult) * 100))
+    tier = intensity_tier
+    if tier is None:
+        tier = intensity_tier_for_division(division)
     header = (
         f"**Level {level}** · 🛏️ **{occupied}/{beds}** beds · "
-        f"Recovery **{mult:.2f}×** ({faster}% faster than untreated)"
+        f"Recovery **{mult:.2f}×** ({faster}% faster than untreated)\n"
+        f"League Intensity: **{intensity_label(tier)}**"
+        + (f" ({division})" if division else "")
     )
 
     if not rows:
@@ -46,8 +57,18 @@ def format_hospital_summary(
     for p in rows[:MAX_PATIENT_LINES]:
         card = p.get("player_cards") or p
         name = card.get("name", "Player")
+        sev = int(p.get("injury_tier") or card.get("injury_tier") or 1)
         eta = format_recovery_eta(p.get("expected_recovery_date"))
-        lines.append(f"• **{name}** — back {eta}")
+        breakdown = injury_breakdown_line(
+            severity=sev,
+            intensity_tier=int(tier),
+            hospital_level=level,
+            in_hospital=True,
+            division=division,
+        )
+        lines.append(
+            f"• **{name}** — {TIER_NAMES.get(sev, 'Injured')} · back {eta}\n  {breakdown}"
+        )
 
     overflow = occupied - MAX_PATIENT_LINES
     if overflow > 0:

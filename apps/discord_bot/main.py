@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from apps.discord_bot.core.thread_manager import ThreadManager
-from apps.discord_bot.core.scheduler_jobs import weekly_league_reset_job, auto_sim_expired_fixtures_job, league_matchday_reminder_job, season_aging_job, youth_intake_job, regen_pool_job, daily_recovery_job
+from apps.discord_bot.core.scheduler_jobs import weekly_league_reset_job, auto_sim_expired_fixtures_job, league_matchday_reminder_job, season_aging_job, youth_intake_job, regen_pool_job, daily_recovery_job, academy_growth_job
 
 # Configure logging
 logging.basicConfig(
@@ -252,6 +252,7 @@ class ElevenBossBot(commands.Bot):
         # 3. League matchday closing reminders (hourly, deduped per matchday)
         self.scheduler.add_job(league_matchday_reminder_job, "interval", hours=1, args=[self])
         self.scheduler.add_job(daily_recovery_job, "cron", hour=0, minute=5, args=[self])
+        self.scheduler.add_job(academy_growth_job, "cron", hour=0, minute=10, args=[self])
         self.scheduler.start()
         logger.info("APScheduler initialized and jobs started.")
 

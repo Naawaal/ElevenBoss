@@ -13,6 +13,7 @@ from apps.discord_bot.core.view_helpers import disable_view_on_timeout, set_view
 from economy import (
     FACILITY_MAX_LEVEL,
     HOSPITAL_MAX_LEVEL,
+    academy_slot_cap,
     facility_label,
     facility_upgrade_cost,
     hospital_bed_capacity,
@@ -22,7 +23,7 @@ from economy import (
     training_ground_drill_xp_bonus,
     youth_academy_tier,
 )
-from player_engine import passive_recovery_amount
+from player_engine import academy_daily_points, passive_recovery_amount
 
 
 def _level_for(player: dict, facility_key: str) -> int:
@@ -92,24 +93,32 @@ def _youth_next_preview(level: int) -> str:
     )
 
 
-def _training_next_preview(level: int) -> str:
+def _training_next_preview(level: int, *, intensity_tier: int = 1) -> str:
     if level >= FACILITY_MAX_LEVEL:
         return ""
     nxt = level + 1
     bonus = training_ground_drill_xp_bonus(nxt)
-    passive = passive_recovery_amount(nxt)
+    passive = passive_recovery_amount(nxt, intensity_tier=intensity_tier)
     return (
         f"After upgrade: **+{bonus}** bonus drill XP · "
         f"**+{passive}** daily passive fatigue\n"
     )
 
 
-def facilities_embed(player: dict) -> discord.Embed:
+def facilities_embed(player: dict, *, academy_used: int | None = None) -> discord.Embed:
     youth_lv = int(player.get("youth_academy_level", 1))
     tg_lv = int(player.get("training_ground_level", 1))
+    intensity_tier = int(player.get("intensity_tier") or 1)
     youth_tier = youth_academy_tier(youth_lv)
     tg_bonus = training_ground_drill_xp_bonus(tg_lv)
-    tg_passive = passive_recovery_amount(tg_lv)
+    tg_passive = passive_recovery_amount(tg_lv, intensity_tier=intensity_tier)
+    slots_cap = academy_slot_cap(youth_lv)
+    slots_line = (
+        f"Slots **{academy_used}/{slots_cap}**"
+        if academy_used is not None
+        else f"Slots max **{slots_cap}**"
+    )
+    growth_pts = academy_daily_points(youth_lv, youth_tier.pot_max)
 
     embed = discord.Embed(
         title="🏗️ Club Facilities",
@@ -124,10 +133,12 @@ def facilities_embed(player: dict) -> discord.Embed:
     embed.add_field(
         name=f"🌱 Youth Academy — Level {youth_lv}/{FACILITY_MAX_LEVEL}",
         value=(
-            "Improves your **weekly youth intake** (Monday UTC prospects join your roster). "
+            "Improves **weekly youth intake** quality and academy growth. "
+            "Prospects seat in **/profile → Manage Academy** (not your starting XI). "
             "Does **not** affect daily gacha packs.\n"
-            f"**Now:** OVR **{youth_tier.ovr_min}–{youth_tier.ovr_max}** · POT cap **{youth_tier.pot_max}** · "
-            f"Gem chance **{int(youth_tier.gem_chance * 100)}%**\n"
+            f"**Now:** {slots_line} · OVR **{youth_tier.ovr_min}–{youth_tier.ovr_max}** · "
+            f"POT cap **{youth_tier.pot_max}** · Gem **{int(youth_tier.gem_chance * 100)}%** · "
+            f"~**{growth_pts}** growth pts/day\n"
             + _youth_next_preview(youth_lv)
             + _next_upgrade_line(player, "youth_academy")
         ),
@@ -138,24 +149,27 @@ def facilities_embed(player: dict) -> discord.Embed:
         value=(
             "Adds flat **bonus XP** to every stat drill in `/development`, and speeds "
             "**daily passive fatigue** recovery for healthy players "
-            f"(`25 + TG×5`, capped at 100).\n"
+            f"(intensity base + TG×2, capped at 100).\n"
             f"**Now:** **+{tg_bonus}** bonus drill XP · "
             f"**+{tg_passive}** daily passive fatigue "
             f"(TG L{tg_lv})\n"
-            + _training_next_preview(tg_lv)
+            + _training_next_preview(tg_lv, intensity_tier=intensity_tier)
             + _next_upgrade_line(player, "training_ground")
         ),
         inline=False,
     )
-    embed.set_footer(text="OVR = current rating · POT = growth ceiling · Hospital: /profile")
+    embed.set_footer(
+        text="OVR = current rating · POT = growth ceiling · Academy / Hospital: /profile"
+    )
     return embed
 
 
 class FacilitiesHubView(discord.ui.View):
-    def __init__(self, owner_id: int, player: dict) -> None:
+    def __init__(self, owner_id: int, player: dict, *, academy_used: int = 0) -> None:
         super().__init__(timeout=900)
         self.owner_id = owner_id
         self.player = player
+        self.academy_used = academy_used
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -202,12 +216,7 @@ class FacilitiesHubView(discord.ui.View):
                 ),
                 ephemeral=True,
             )
-            player_res = await db.table("players").select("*").eq("discord_id", self.owner_id).maybe_single().execute()
-            self.player = player_res.data or self.player
-            embed = facilities_embed(self.player)
-            view = FacilitiesHubView(self.owner_id, self.player)
-            if interaction.message:
-                await interaction.message.edit(embed=embed, view=view)
+            await show_facilities(interaction, self.owner_id)
         except Exception as exc:
             set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(embed=error_embed(str(exc)), ephemeral=True)
@@ -385,8 +394,17 @@ async def show_facilities(interaction: discord.Interaction, owner_id: int) -> No
     if not player:
         await interaction.followup.send(embed=error_embed("Player profile not found."), ephemeral=True)
         return
-    embed = facilities_embed(player)
-    view = FacilitiesHubView(owner_id, player)
+    used_res = (
+        await db.table("player_cards")
+        .select("id", count="exact")
+        .eq("owner_id", owner_id)
+        .eq("in_academy", True)
+        .eq("is_retired", False)
+        .execute()
+    )
+    academy_used = int(used_res.count or 0) if used_res.count is not None else len(used_res.data or [])
+    embed = facilities_embed(player, academy_used=academy_used)
+    view = FacilitiesHubView(owner_id, player, academy_used=academy_used)
     if interaction.response.is_done():
         if interaction.message:
             await interaction.followup.edit_message(interaction.message.id, embed=embed, view=view)
