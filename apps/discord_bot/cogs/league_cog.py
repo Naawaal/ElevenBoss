@@ -74,29 +74,37 @@ async def _display_entry_fee(db, season: dict | None, division: str = "Grassroot
 
 
 # --- STANDINGS HELPER ---
-async def fetch_standings(db, season_id: str) -> list[dict]:
+async def fetch_standings(
+    db, season_id: str, division_tier: int | None = None
+) -> list[dict]:
     """
     Fetch aggregated standings for the given season.
     Sort order: Points DESC, Goal Difference DESC, Goals For DESC, Username ASC.
+    When ``division_tier`` is set, only participants in that seasonal tier are included.
     """
     parts_res = await db.table("league_participants").select("*, players(*)").eq("season_id", season_id).execute()
     participants = parts_res.data or []
-    
+    if division_tier is not None:
+        participants = [
+            p for p in participants
+            if int(p.get("division_tier") or 1) == int(division_tier)
+        ]
+
     fixtures_res = await db.table("league_fixtures").select("*").eq("season_id", season_id).eq("is_played", True).execute()
     fixtures = fixtures_res.data or []
-    
+
     standings = []
     for part in participants:
         player = part["players"]
         pid = player["discord_id"]
-        
+
         wins = 0
         draws = 0
         losses = 0
         goals_for = 0
         goals_against = 0
         matches_played = 0
-        
+
         for f in fixtures:
             if f["home_team_id"] == pid:
                 matches_played += 1
@@ -118,10 +126,10 @@ async def fetch_standings(db, season_id: str) -> list[dict]:
                     draws += 1
                 else:
                     losses += 1
-                    
+
         points = wins * 3 + draws * 1
         gd = goals_for - goals_against
-        
+
         standings.append({
             "discord_id": pid,
             "username": player["username"],
@@ -130,6 +138,7 @@ async def fetch_standings(db, season_id: str) -> list[dict]:
             "is_ai": player.get("is_ai", False),
             "ai_rating": player.get("ai_rating"),
             "is_active": part.get("is_active", True),
+            "division_tier": int(part.get("division_tier") or 1),
             "wins": wins,
             "draws": draws,
             "losses": losses,
@@ -142,6 +151,76 @@ async def fetch_standings(db, season_id: str) -> list[dict]:
         })
 
     return sort_standings(standings, fixtures)
+
+
+async def _award_and_post_momd(
+    db,
+    season_id: str,
+    matchday: int,
+    bot: commands.Bot | None = None,
+) -> None:
+    """Call MoMD RPC for a settled matchday; post Journal on ``awarded``."""
+    try:
+        res = await db.rpc(
+            "award_manager_of_the_matchday",
+            {"p_season_id": season_id, "p_matchday": matchday},
+        ).execute()
+        data = res.data or {}
+        if isinstance(data, str):
+            import json
+            data = json.loads(data)
+    except Exception:
+        logger.exception("award_manager_of_the_matchday failed season=%s md=%s", season_id, matchday)
+        return
+
+    if not data or data.get("status") != "awarded" or not bot:
+        return
+
+    try:
+        from apps.discord_bot.core.league_journal import post_momd_award, resolve_season_threads
+
+        season_res = await db.table("league_seasons").select("league_id, journal_thread_id, thread_format").eq(
+            "id", season_id
+        ).maybe_single().execute()
+        season = season_res.data if season_res else None
+        if not season:
+            return
+        league_res = await db.table("leagues").select("guild_id").eq("id", season["league_id"]).maybe_single().execute()
+        guild_id = (league_res.data or {}).get("guild_id") if league_res else None
+        if not guild_id:
+            return
+        guild = bot.get_guild(int(guild_id))
+        if not guild:
+            try:
+                guild = await bot.fetch_guild(int(guild_id))
+            except Exception:
+                return
+
+        threads = await resolve_season_threads(bot, db, guild, season_id)
+        journal = threads.journal_thread if threads else None
+        if not journal:
+            return
+
+        pid = data.get("player_id")
+        club_name = f"Club {pid}"
+        if pid is not None:
+            p_res = await db.table("players").select("club_name").eq("discord_id", int(pid)).maybe_single().execute()
+            if p_res and p_res.data:
+                club_name = p_res.data.get("club_name") or club_name
+
+        scoreline = "?"
+        fixture_id = data.get("fixture_id")
+        if fixture_id:
+            f_res = await db.table("league_fixtures").select(
+                "home_score, away_score"
+            ).eq("id", fixture_id).maybe_single().execute()
+            if f_res and f_res.data:
+                scoreline = f"{f_res.data.get('home_score', 0)}–{f_res.data.get('away_score', 0)}"
+
+        coins = int(data.get("coins") or 2000)
+        await post_momd_award(bot, journal, club_name, scoreline, coins)
+    except Exception:
+        logger.exception("MoMD Journal post failed season=%s md=%s", season_id, matchday)
 
 
 # --- AUTO SIMULATION OF EXPIRED MATCHDAY WINDOWS ---
@@ -242,17 +321,20 @@ async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> in
                 logger.exception(f"Failed to auto-simulate fixture {f['id']}: {e}")
                 
     if simulated_count > 0:
-        completed_md = await update_current_matchday(db, season_id)
+        completed_md = await update_current_matchday(db, season_id, bot=bot)
         if completed_md:
             from apps.discord_bot.core.league_journal import notify_matchday_complete
             await notify_matchday_complete(bot, guild, db, season_id, completed_md)
         
     return simulated_count
 
-async def update_current_matchday(db, season_id: str) -> int | None:
+async def update_current_matchday(
+    db, season_id: str, bot: commands.Bot | None = None
+) -> int | None:
     """Advance season matchday when all fixtures in the current week are played.
 
     Returns the completed matchday number when advanced, else ``None``.
+    Awards Manager of the Matchday before advancing (idempotent RPC).
     """
     season_res = await db.table("league_seasons").select("*").eq("id", season_id).maybe_single().execute()
     season = season_res.data if season_res else None
@@ -263,6 +345,7 @@ async def update_current_matchday(db, season_id: str) -> int | None:
     
     unplayed_res = await db.table("league_fixtures").select("id").eq("season_id", season_id).eq("matchday", curr).eq("is_played", False).execute()
     if not unplayed_res.data:
+        await _award_and_post_momd(db, season_id, curr, bot=bot)
         if curr < total:
             await db.table("league_seasons").update({"current_matchday": curr + 1}).eq("id", season_id).execute()
             logger.info(f"Season {season_id} advanced to matchday {curr + 1}")
@@ -274,6 +357,7 @@ async def update_current_matchday(db, season_id: str) -> int | None:
             }).eq("id", season_id).execute()
 
             try:
+                # RPC pays per-tier prizes and runs seasonal promo/releg for Dynamics
                 await db.rpc("distribute_season_prizes", {"p_season_id": season_id}).execute()
                 logger.info("Distributed season prizes for %s", season_id)
             except Exception:
@@ -644,12 +728,28 @@ class LeagueCog(commands.Cog):
             await interaction.edit_original_response(embed=error_embed("No active league season."), view=hub_view)
             return
 
-        standings = await fetch_standings(db, season["id"])
         fixtures_res = await db.table("league_fixtures").select("*").eq("season_id", season["id"]).execute()
         all_fixtures = fixtures_res.data or []
 
+        title = f"📊 League Standings — Season {season['season_number']}"
+        dynamics = (season.get("pacing_mode") or "") == "dynamics"
+        if dynamics:
+            part_res = await (
+                db.table("league_participants")
+                .select("division_tier")
+                .eq("season_id", season["id"])
+                .eq("player_id", interaction.user.id)
+                .maybe_single()
+                .execute()
+            )
+            viewer_tier = int((part_res.data or {}).get("division_tier") or 1) if part_res else 1
+            standings = await fetch_standings(db, season["id"], division_tier=viewer_tier)
+            title = f"📊 Seasonal Division {viewer_tier} — Season {season['season_number']}"
+        else:
+            standings = await fetch_standings(db, season["id"])
+
         embed = discord.Embed(
-            title=f"📊 League Standings — Season {season['season_number']}",
+            title=title,
             color=0x00FF87
         )
         table_str = format_standings_table(standings, all_fixtures)
@@ -685,7 +785,8 @@ class LeagueCog(commands.Cog):
         
         playable_fixture = None
         now = datetime.now(timezone.utc)
-        
+        dynamics = (season.get("pacing_mode") or "") == "dynamics"
+
         fixture_lines = []
         for f in fixtures:
             home_name = f["home"]["club_name"] + (" (AI)" if f["home"].get("is_ai") else "")
@@ -702,7 +803,10 @@ class LeagueCog(commands.Cog):
                 elif now > window_end:
                     status_str = "Expired (Pending Auto-Sim)"
                 else:
-                    status_str = f"⏰ Active (Ends <t:{int(window_end.timestamp())}:R>)"
+                    if dynamics:
+                        status_str = f"⏰ Play before 00:00 UTC (Ends <t:{int(window_end.timestamp())}:R>)"
+                    else:
+                        status_str = f"⏰ Active (Ends <t:{int(window_end.timestamp())}:R>)"
                     if interaction.user.id in [f["home_team_id"], f["away_team_id"]]:
                         playable_fixture = f
             
@@ -863,23 +967,36 @@ class LeagueCog(commands.Cog):
             max_size = season["config_json"].get("max_clubs", 8)
 
         if season and season.get("status") == "registration":
-            deadline = season.get("end_time")
+            cfg = season.get("config_json") or {}
+            if not isinstance(cfg, dict):
+                cfg = {}
+            deadline = cfg.get("registration_closes_at") or season.get("end_time")
             deadline_str = ""
             if deadline:
-                dt = datetime.fromisoformat(deadline.replace("Z", "+00:00"))
+                dt = datetime.fromisoformat(str(deadline).replace("Z", "+00:00"))
                 deadline_str = f"\n⏳ **Registration closes**: <t:{int(dt.timestamp())}:R>"
             min_matches, min_days = await _league_join_limits(db)
             p_res = await db.table("players").select("division").eq("discord_id", user_id).maybe_single().execute()
             division = (p_res.data or {}).get("division", "Grassroots") if p_res else "Grassroots"
             fee_str = await _display_entry_fee(db, season, division)
+            if cfg.get("automation"):
+                start_note = (
+                    "Click **Register** to join.\n"
+                    "The season **starts automatically** when registration closes "
+                    "(if enough managers have joined)."
+                )
+                footer = "ElevenBoss League • Automated registration"
+            else:
+                start_note = "Click **Register** to join the upcoming season roster."
+                footer = "ElevenBoss League • Registration phase"
             embed.description = (
                 f"📝 **Registration Open** — Season #{season.get('season_number', '?')}\n\n"
                 f"Registered: **{reg_count}/{max_size}** managers{deadline_str}\n\n"
                 f"💰 Entry fee: {fee_str}\n"
                 f"📋 Requires: **{min_matches}** matches played, club **{min_days}**+ days old\n\n"
-                "Click **Register** to join the upcoming season roster."
+                f"{start_note}"
             )
-            embed.set_footer(text="ElevenBoss League • Registration phase")
+            embed.set_footer(text=footer)
             return embed
 
         if not season:
@@ -896,12 +1013,30 @@ class LeagueCog(commands.Cog):
             embed.description = "⏸️ **Season Paused** — matchdays are frozen until an admin resumes."
             return embed
 
-        standings = await fetch_standings(db, season["id"])
-        fixtures_res = await db.table("league_fixtures").select("*").eq("season_id", season["id"]).execute()
-        all_fixtures = fixtures_res.data or []
-
         curr = season["current_matchday"]
         total = season["total_matchdays"]
+        dynamics = (season.get("pacing_mode") or "") == "dynamics"
+
+        viewer_tier: int | None = None
+        if dynamics:
+            part_res = await (
+                db.table("league_participants")
+                .select("division_tier")
+                .eq("season_id", season["id"])
+                .eq("player_id", user_id)
+                .maybe_single()
+                .execute()
+            )
+            if part_res and part_res.data:
+                viewer_tier = int(part_res.data.get("division_tier") or 1)
+            else:
+                viewer_tier = 1
+            standings = await fetch_standings(db, season["id"], division_tier=viewer_tier)
+        else:
+            standings = await fetch_standings(db, season["id"])
+
+        fixtures_res = await db.table("league_fixtures").select("*").eq("season_id", season["id"]).execute()
+        all_fixtures = fixtures_res.data or []
 
         my_rank = "—"
         my_row = next((r for r in standings if r["discord_id"] == user_id), None)
@@ -909,6 +1044,8 @@ class LeagueCog(commands.Cog):
             my_rank = str(standings.index(my_row) + 1)
 
         embed.description = f"🟢 **Matchday {curr}/{total}** — Season #{season['season_number']}"
+        if dynamics and viewer_tier is not None:
+            embed.description += f"\n📊 **Seasonal Division {viewer_tier}**"
 
         if my_row:
             embed.add_field(
@@ -935,13 +1072,23 @@ class LeagueCog(commands.Cog):
             embed.add_field(name="⚔️ Next Match", value=f"**{opp_name}** ({ha}) — Matchday {curr}", inline=False)
 
         table_preview = format_standings_table(standings, all_fixtures, limit=5)
-        embed.add_field(name="📊 Standings (Top 5)", value=f"```\n{table_preview}\n```", inline=False)
+        standings_title = (
+            f"📊 Division {viewer_tier} Standings (Top 5)"
+            if dynamics and viewer_tier is not None
+            else "📊 Standings (Top 5)"
+        )
+        embed.add_field(name=standings_title, value=f"```\n{table_preview}\n```", inline=False)
 
         fixtures_md = await db.table("league_fixtures").select("window_end").eq("season_id", season["id"]).eq("matchday", curr).limit(1).execute()
         window_end_str = ""
         if fixtures_md.data:
             window_end = datetime.fromisoformat(fixtures_md.data[0]["window_end"].replace("Z", "+00:00"))
-            window_end_str = f"⏳ **Window closes**: <t:{int(window_end.timestamp())}:R>\n"
+            if dynamics:
+                window_end_str = (
+                    f"⏰ **Play before 00:00 UTC** — closes <t:{int(window_end.timestamp())}:R>\n"
+                )
+            else:
+                window_end_str = f"⏳ **Window closes**: <t:{int(window_end.timestamp())}:R>\n"
 
         embed.add_field(
             name="📅 Season Progress",

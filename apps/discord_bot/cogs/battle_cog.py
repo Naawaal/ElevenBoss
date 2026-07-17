@@ -26,18 +26,20 @@ from apps.discord_bot.core.economy_rpc import (
     sync_action_energy,
     economy_v2_enabled,
     get_match_energy_cost,
+    wages_friendly_block_message,
 )
 from apps.discord_bot.core.league_rewards import apply_league_human_rewards
-from apps.discord_bot.core.match_rewards import apply_bot_match_rewards
-from apps.discord_bot.core.injury_rpc import fetch_bench_ids, fetch_bench_cards, recorded_for_side
-from apps.discord_bot.core.match_injury_stream import handle_injury_event
-from apps.discord_bot.core.match_xp import hydrate_cards_for_match_xp
 from apps.discord_bot.core.squad_validity import (
     RETIREMENT_XI_MSG,
+    club_xi_block_reason,
     fetch_xi_state,
     human_club_xi_ok,
     xi_block_message,
 )
+from apps.discord_bot.core.match_rewards import apply_bot_match_rewards
+from apps.discord_bot.core.injury_rpc import fetch_bench_ids, fetch_bench_cards, recorded_for_side
+from apps.discord_bot.core.match_injury_stream import handle_injury_event
+from apps.discord_bot.core.match_xp import hydrate_cards_for_match_xp
 from apps.discord_bot.core.competitive_display import format_bot_rewards_block, format_season_reward_line
 from leagues import division_rank_points, global_lp_delta, clamp_global_lp
 from apps.discord_bot.core.thread_permissions import (
@@ -788,8 +790,13 @@ async def run_league_match_simulation(
     away_p = fixture["away"]
     fixture_id = fixture["id"]
 
-    if fixture.get("is_played") and not recovery:
-        logger.info("Fixture %s already played; skipping simulation.", fixture_id)
+    # Skip if already played — on recovery avoids wiping resolved_by / re-settling.
+    if fixture.get("is_played"):
+        logger.info(
+            "Fixture %s already played; skipping %s.",
+            fixture_id,
+            "recovery" if recovery else "simulation",
+        )
         return
 
     home_squad: list[MatchPlayerCard] = []
@@ -857,8 +864,7 @@ async def run_league_match_simulation(
             )
             if not silent and active_player_id and active_player_id == int(fixture["home_team_id"]):
                 try:
-                    cnt, inv = await fetch_xi_state(db, active_player_id)
-                    msg = xi_block_message(cnt, inv) or RETIREMENT_XI_MSG
+                    msg = await club_xi_block_reason(db, active_player_id) or RETIREMENT_XI_MSG
                     user = await bot.fetch_user(active_player_id)
                     await user.send(embed=error_embed(msg))
                 except Exception:
@@ -874,8 +880,7 @@ async def run_league_match_simulation(
             )
             if not silent and active_player_id and active_player_id == int(fixture["away_team_id"]):
                 try:
-                    cnt, inv = await fetch_xi_state(db, active_player_id)
-                    msg = xi_block_message(cnt, inv) or RETIREMENT_XI_MSG
+                    msg = await club_xi_block_reason(db, active_player_id) or RETIREMENT_XI_MSG
                     user = await bot.fetch_user(active_player_id)
                     await user.send(embed=error_embed(msg))
                 except Exception:
@@ -1134,7 +1139,8 @@ async def run_league_match_simulation(
         "home_score": state.home_score,
         "away_score": state.away_score,
         "is_played": True,
-        "played_at": datetime.now(timezone.utc).isoformat()
+        "played_at": datetime.now(timezone.utc).isoformat(),
+        "resolved_by": "manual" if active_player_id else "auto_sim",
     }).eq("id", fixture_id).eq("is_played", False).execute()
 
     # Live standings + result line in journal (dual_v2) or commentary thread (legacy)
@@ -1338,11 +1344,24 @@ class BattleCog(commands.Cog):
 
         db = await get_client()
 
+        wage_msg = await wages_friendly_block_message(db, challenger.id)
+        if wage_msg:
+            await interaction.followup.send(embed=error_embed(wage_msg), ephemeral=True)
+            return
+
         # Check if opponent is registered
         opp_res = await db.table("players").select("*").eq("discord_id", opponent.id).maybe_single().execute()
         opp_player = opp_res.data if opp_res else None
         if not opp_player:
             await interaction.followup.send(embed=error_embed(f"The manager {opponent.display_name} is not registered yet!"), ephemeral=True)
+            return
+
+        opp_wage = await wages_friendly_block_message(db, opponent.id)
+        if opp_wage:
+            await interaction.followup.send(
+                embed=error_embed(f"{opponent.display_name} cannot play friendlies: {opp_wage}"),
+                ephemeral=True,
+            )
             return
 
         # Check if either player is already locked in a match
@@ -1408,7 +1427,7 @@ class BattleCog(commands.Cog):
             active_cards = [a["player_cards"] for a in assignments if a.get("player_cards")]
             count = len(active_cards)
             _, squad_invalid = await fetch_xi_state(db, interaction.user.id)
-            block = xi_block_message(count, squad_invalid)
+            block = await club_xi_block_reason(db, interaction.user.id, card_count=count)
             if block:
                 await interaction.followup.send(embed=error_embed(block), ephemeral=True)
                 return
@@ -1720,7 +1739,7 @@ class BattleCog(commands.Cog):
 
             # 11-player XI guard (+ retirement invalid flag)
             xi_count, squad_invalid = await fetch_xi_state(db, user_id)
-            block = xi_block_message(xi_count, squad_invalid)
+            block = await club_xi_block_reason(db, user_id, card_count=xi_count)
             if block:
                 await interaction.followup.send(embed=error_embed(block), ephemeral=True)
                 return
@@ -1775,7 +1794,7 @@ class BattleCog(commands.Cog):
             # Check matchday advancement
             from apps.discord_bot.cogs.league_cog import update_current_matchday
             from apps.discord_bot.core.league_journal import notify_matchday_complete
-            completed_md = await update_current_matchday(db, f["season_id"])
+            completed_md = await update_current_matchday(db, f["season_id"], bot=self.bot)
             if completed_md and interaction.guild:
                 await notify_matchday_complete(self.bot, interaction.guild, db, f["season_id"], completed_md)
         except Exception as e:
@@ -1813,10 +1832,8 @@ class BattleCog(commands.Cog):
             await invitation_msg.channel.send(embed=error_embed("One or both managers are not registered."))
             return
 
-        c_count, c_invalid = await fetch_xi_state(db, challenger.id)
-        o_count, o_invalid = await fetch_xi_state(db, opponent.id)
-        c_block = xi_block_message(c_count, c_invalid)
-        o_block = xi_block_message(o_count, o_invalid)
+        c_block = await club_xi_block_reason(db, challenger.id)
+        o_block = await club_xi_block_reason(db, opponent.id)
         if c_block or o_block:
             parts = []
             if c_block:
@@ -1827,6 +1844,17 @@ class BattleCog(commands.Cog):
                 embed=error_embed("Friendly match cancelled:\n" + "\n".join(parts))
             )
             return
+
+        for mgr_id, mgr_name in (
+            (challenger.id, c_player["manager_name"]),
+            (opponent.id, o_player["manager_name"]),
+        ):
+            wage_msg = await wages_friendly_block_message(db, mgr_id)
+            if wage_msg:
+                await invitation_msg.channel.send(
+                    embed=error_embed(f"**{mgr_name}**: {wage_msg}")
+                )
+                return
 
         # 1. Spawning Thread
         thread = None

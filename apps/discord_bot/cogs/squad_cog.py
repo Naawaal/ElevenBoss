@@ -9,11 +9,15 @@ from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.embeds.squad_embeds import get_slot_position, roster_embed
+from apps.discord_bot.core.api_errors import api_error_message
 from apps.discord_bot.core.pitch_generator import generate_squad_pitch, generate_roster_grid
 from apps.discord_bot.core.view_helpers import disable_view_on_timeout
 from apps.discord_bot.core.select_helpers import rebuild_select_options
 from match_engine import reserve_fits_formation_slot
 from apps.discord_bot.middleware.match_lock import assert_not_in_match
+from apps.discord_bot.views.marketplace_transfer import listed_card_ids
+from apps.discord_bot.core.squad_validity import card_contract_blocks_assign
+from postgrest.exceptions import APIError
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +163,8 @@ class SquadHubView(discord.ui.View):
                 c for c in (cards_res.data or [])
                 if not c.get("is_retired") and not c.get("in_academy")
             ]
+            listed_ids = await listed_card_ids(db)
+            all_cards = [c for c in all_cards if str(c["id"]) not in listed_ids]
             
             # Get assigned IDs
             assigned_ids = {c["id"] for c in self.assignments.values()}
@@ -262,7 +268,16 @@ class SquadFormationView(discord.ui.View):
                 c for c in (res.data or [])
                 if not c.get("is_retired") and not c.get("in_academy")
             ]
-            
+            listed_ids = await listed_card_ids(db)
+            all_cards = [c for c in all_cards if str(c["id"]) not in listed_ids]
+            # Past-grace contracts cannot be auto-assigned to XI (FR-007)
+            eligible: list[dict] = []
+            for c in all_cards:
+                block = await card_contract_blocks_assign(db, c)
+                if not block:
+                    eligible.append(c)
+            all_cards = eligible
+
             assigned_cards = {}  # slot -> card
             used_ids = set()
             
@@ -521,7 +536,7 @@ class SquadSwapView(discord.ui.View):
                 raise ValueError("Could not find the squad slot of the selected starter.")
 
             reserve_res = await db.table("player_cards").select(
-                "id, position, injury_tier, name"
+                "id, position, injury_tier, name, contract_expires_at"
             ).eq("id", self.selected_reserve_id).eq("owner_id", self.user_id).maybe_single().execute()
             if not reserve_res or not reserve_res.data:
                 raise ValueError("Reserve player no longer available.")
@@ -529,6 +544,16 @@ class SquadSwapView(discord.ui.View):
             if reserve_res.data.get("injury_tier"):
                 raise ValueError(
                     f"**{reserve_res.data.get('name', 'Player')}** is injured and cannot enter the starting XI."
+                )
+            contract_msg = await card_contract_blocks_assign(db, reserve_res.data)
+            if contract_msg:
+                raise ValueError(contract_msg)
+            listed = await db.rpc(
+                "card_is_on_transfer_list", {"p_card_id": self.selected_reserve_id}
+            ).execute()
+            if bool(listed.data):
+                raise ValueError(
+                    f"**{reserve_res.data.get('name', 'Player')}** is listed for transfer. Delist first."
                 )
 
             reserve_pos = reserve_res.data["position"]
@@ -571,6 +596,12 @@ class SquadSwapView(discord.ui.View):
             # Expected validation (position mismatch, injured, missing card) — not a crash.
             err_embed = self.get_embed()
             err_embed.description = f"❌ {e}\n\nPick a compatible reserve or click Back."
+            await interaction.edit_original_response(embed=err_embed, view=self)
+        except APIError as e:
+            err_embed = self.get_embed()
+            err_embed.description = (
+                f"❌ {api_error_message(e)}\n\nPick a compatible reserve or click Back."
+            )
             await interaction.edit_original_response(embed=err_embed, view=self)
         except Exception:
             logger.exception("Failed to swap players.")

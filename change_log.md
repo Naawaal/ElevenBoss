@@ -2,6 +2,192 @@
 
 Hey Managers!
 
+## Daily packs: Epic is the max
+
+Free daily packs no longer drop **Legendary**.
+
+- Mix: **Common ~60% · Rare ~30% · Epic ~10%** (5 cards, 22-hour claim)
+- **Legendary** cards you already own stay as-is
+- Special thank-you / event Legendaries are unchanged (not from packs)
+
+---
+
+## Legendary thank-you gift (supporters)
+
+Seven early supporters get a **one-time Legendary** gift for the Recover update:
+
+- **DM** with player preview + **Claim** button (when DMs are open)
+- Fallback: `/development` → **Claim Legendary Gift**
+- **Legendary** · OVR **75–85** · POT **90–95** · claim once only
+
+---
+
+## Recover on `/development` (hub)
+
+Fitness rest moved out of Training Drills so skill training and recovery aren’t mixed anymore.
+
+### What changed
+- New hub button: **`/development` → 💚 Recover**
+- Pick **1–3** tired players, confirm the total energy cost, then restore fitness instantly
+- **Training Drills** are **skill-only** again (XP + coins) — no Recovery Session option there
+
+### Costs & results
+- **`+40` fatigue** per selected player (capped at 100; config: `fatigue_recovery_session`)
+- **`5⚡` action energy per player** (config: `fatigue_recovery_energy`) — so 3 players = **15⚡**
+- **0 XP · 0 coins** — Recover is fitness only
+- Does **not** use daily drill slots (club or per-card)
+
+### Who you can recover
+- Healthy club roster players with fatigue **below 100%**
+- **Excluded:** injured, in Hospital, fully rested (100%), academy, retired, transfer-listed, or in an active evolution
+- Injured players still go through **`/profile` → Manage Hospital**
+
+### How to use it
+1. `/development` → **💚 Recover**
+2. Select 1–3 players (fatigue % shown)
+3. Continue → check the confirm summary (names + total ⚡)
+4. Confirm → fitness updates; hub refreshes
+
+---
+
+## Stability polish (v1 prep)
+
+Small trust fixes while we harden the bot before calling v1.0.0 done:
+
+- **Hospital / Academy / Transfer Board** — when there’s nothing to pick, you get clear empty text and Back/filter controls (no mystery missing dropdown).
+- **Development hub** — evolutions are described as **stat boosts** (not playstyles).
+- **`/profile` rankings** — clearer labels for the three ladders: **Global LP**, weekly **Division Rank** (bot), and guild **Season Pts** (`/league hub`).
+- Under-the-hood: leftover debug logging removed; evolution cooldown mirror aligned with the live 6h config seed; Force End under automation schedules the next Monday registration slot (no same-day surprise reopen).
+
+---
+
+## League Automation (feature-flagged)
+
+When automation is on, your server’s league runs itself — registration opens, the season starts, matchdays settle daily, then registration opens again. No more waiting on an admin to click Start every cycle.
+
+### Status
+**Off by default** (`league_automation_enabled`). Optional per-server override on `/admin`. Seasons that already started manually stay on the old flow until they finish.
+
+### What you’ll notice when it’s on
+- **Announce pings** in the league channel when registration opens, a season starts, or not enough managers signed up
+- **48h registration** with a countdown on **`/league hub`** — register there like today
+- Enough managers at close → season starts on **League Dynamics** pacing (midnight UTC deadlines)
+- Too few managers → fail message + **fresh registration next Monday ~00:05 UTC**
+- Each day after midnight, unplayed fixtures auto-sim and you get a matchday digest (Manager of the Matchday coins still pay once via the Journal)
+
+### For admins
+Set **League announce channel** + **mention role** once in `/admin`. While automation owns the guild: **Pause / Force End** stay available; Open Registration & Start Season are hidden.
+
+---
+
+## League Dynamics (feature-flagged)
+
+Shorter seasons, a shared midnight UTC deadline, seasonal divisions, and a daily Manager of the Matchday shout-out — when ops flips the switch. **Existing seasons keep today’s pacing until they finish.**
+
+### Status
+**Off by default** (`league_dynamics_enabled`). While off, leagues work like they do now (rolling windows + 10-minute auto-sim). Automation (above) uses Dynamics seating/windows when it starts a season.
+
+### When enabled (next season start)
+- **14-day** seasons with **8 clubs per Seasonal Division** (bot fill keeps tables full)
+- Each matchday **hard-closes at 00:00 UTC**; unplayed fixtures auto-sim shortly after (**~00:05 UTC**)
+- **9+ managers** → automatic Seasonal Division 2+ (you only compete within your tier)
+- Season end: **top 2 promote / bottom 2 relegate** between adjacent divisions
+- **Manager of the Matchday**: biggest *manual* win that day → **+2,000 coins** (tunable) + a line in the League Journal — auto-sims don’t count
+
+### Where to look
+**`/league hub`** — deadline countdown and your **Seasonal Division** label (this is separate from Weekly Rank on your club profile)
+
+### What stays the same
+- Dual Journal + MatchDay threads
+- No new slash commands — still `/league hub` to play and check the table
+- Weekly Division Rank ladder (bot matches / Monday reset) is unchanged
+
+---
+
+## Contract & Wage System (feature-flagged)
+
+Your Starting XI now has a real **weekly wage bill** — still forecast-only until ops flips the switch. When payroll is enabled, unpaid wages create soft pressure (debt + strikes), not club wipeouts.
+
+### Status
+**Off by default** (`wages_payroll_enabled`). While off, `/profile` → Finances keeps today’s promise: estimated XI wages are shown as ***(not auto-deducted)***.
+
+### Where to look
+**`/profile` → Finances**
+
+| When flag is off | When flag is on |
+|------------------|-----------------|
+| XI wage bill + paying-player count | Same bill (what Monday will charge) |
+| “Not auto-deducted” copy | Debt, strikes, last payroll, next run (**Monday 00:05 UTC**) |
+| — | XI contract alerts (grace / past grace) |
+
+### Payroll (when enabled)
+- Bills **Starting XI only** (bench, academy, and reserves are not paid in v1)
+- Runs every **Monday 00:05 UTC**
+- Coins leave via the normal economy pipe (you’ll see the deduction on Finances)
+
+### Can’t pay?
+We never silently skip and we don’t fire-sale your stars.
+
+1. Partial pay → remaining amount becomes **debt** and you gain a **strike**
+2. Full clean pay → debt and strikes clear
+3. **≥2 strikes** — friendlies blocked (league & bot still OK so you can earn)
+4. **≥3 strikes** — new Transfer Board listings and youth scouting blocked (**Sell to Agent** still works)
+
+Recover by earning coins (league/bot, daily login `/store`), shrinking an expensive XI, or clearing debt on the next paid Monday.
+
+### Contracts that matter
+- Renew still costs coins on **`/player-profile`**
+- After expiry you get a **7-day grace** (playable, with a warning)
+- **Past grace** — that player cannot start in the XI until you renew or replace them
+- Age **≥35** renewals stay blocked (retirement path)
+- **No auto-release** and **no morale hits** in this version
+
+### Ops soft-launch
+For a lighter first week, set `wages_payroll_bill_scale` to **0.5** (half bill). Default scale is **1.0**.
+
+---
+
+## Transfer Market — Player-to-Player Trading
+
+You can now trade players with other managers on a global **buy-it-now** board. No auctions, no bidding wars — list a price, or buy instantly.
+
+### Where to go
+**`/marketplace`**
+
+| Button | What it does |
+|--------|----------------|
+| **💰 Sell to Agent** | Instant NPC buyout (quick cash; still capped at 10/day) |
+| **🔍 Search Market** | **Regen Scouting** (system prospects) **or** **Transfer Board** (other clubs’ players) |
+| **📋 My Listings** | List / cancel your own players for human buyers |
+
+### Selling on the Transfer Board
+1. **My Listings → List Player**
+2. Choose a healthy **reserve** (not in XI, not training/evolving, not injured or in academy)
+3. Set a coin price inside the shown fair-value range (about **0.75×–2.5×** agent value)
+4. Confirm — up to **5** active listings at once
+
+If nobody buys within **72 hours**, the listing expires and the card returns to you. Cancel anytime before it sells.
+
+### Buying
+1. **Search Market → Transfer Board**
+2. Filter by **position** and preset **OVR / age / potential** bands → **Apply**
+3. Select a player → **Buy Now** → confirm
+
+You pay the **full** listed price. You can’t buy your own listing. If someone else gets there first, you’ll see a clear “already sold” message and keep your coins.
+
+### Tax
+On every completed player-to-player sale:
+- **Seller receives 90%** of the listed price  
+- **10% market tax** is removed from the economy  
+
+Example: list at **10,000** → buyer pays **10,000**, seller gets **9,000**.
+
+### Still available
+- **Sell to Agent** — fast liquidation when the board is quiet  
+- **Regen Scouting** — sign retirement regens (system listings, not other managers)
+
+---
+
 ## League Intensity — Fatigue & Hospital Rebalance
 
 Match fitness and injuries now scale with your **Division Rank** (updated Mondays with promotions/relegations).
@@ -158,7 +344,7 @@ New cards from **`/store` packs**, registration, youth intake, and the scouting 
 **What you’ll notice**
 - Style shows as **Role** on pack reveals, onboarding, youth intake, and squad / player profile (same Role Style line you already know).
 - The **OVR on the card matches True OVR** at creation — no more “looks like a 75, plays like a 72.”
-- Daily pack mix is unchanged: **Common 60% · Rare 30% · Epic 8% · Legendary 2%** (5 cards, 22-hour claim).
+- Daily pack mix (historical note; superseded — see top of changelog): was Common 60% · Rare 30% · Epic 8% · Legendary 2%.
 - Cards you already owned keep their old Role — only **new** drops get the new styles.
 
 ## Live Match Immersion

@@ -7,7 +7,6 @@ from typing import Any
 from player_engine import match_xp_reward
 
 from apps.discord_bot.core.card_payload import effective_card_age
-from apps.discord_bot.core.debug_session_log import debug_log
 from apps.discord_bot.core.match_runs import mark_match_xp_applied
 
 MATCH_MINUTES = 90
@@ -113,33 +112,9 @@ async def apply_match_xp_if_needed(
         team_rating=team_rating,
     )
     xp_payload["p_match_history_id"] = history_id
-    # #region agent log
-    debug_log(
-        "A",
-        "match_xp.py:apply_match_xp_if_needed",
-        "pre process_match_result",
-        {"history_id": str(history_id), "card_count": len(cards), "match_type": match_type},
-    )
-    # #endregion
     try:
         await db.rpc("process_match_result", xp_payload).execute()
-        # #region agent log
-        debug_log(
-            "A",
-            "match_xp.py:apply_match_xp_if_needed",
-            "process_match_result ok",
-            {"history_id": str(history_id)},
-        )
-        # #endregion
     except Exception as exc:
-        # #region agent log
-        debug_log(
-            "A",
-            "match_xp.py:apply_match_xp_if_needed",
-            "process_match_result failed",
-            {"history_id": str(history_id), "error": str(exc)[:300]},
-        )
-        # #endregion
         # FR-004: surface a stable message key for api_error_message mapping
         raise RuntimeError("Match XP could not be applied") from exc
     await mark_match_xp_applied(db, history_id)

@@ -59,4 +59,7 @@ def profile_leaderboard_hint() -> str:
 
 
 def league_standings_leaderboard_hint() -> str:
-    return "Pts = Season Pts (fixtures). Division Rank & Global LP: `/leaderboard` · Season tab for full table."
+    return (
+        "These Pts = **Season Pts** (guild fixtures). "
+        "Weekly **Division Rank** & **Global LP** are separate — `/leaderboard`."
+    )

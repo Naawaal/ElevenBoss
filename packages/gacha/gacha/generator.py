@@ -4,11 +4,12 @@ from __future__ import annotations
 import json
 import os
 import random
+from collections.abc import Sequence
 
 from player_engine import CreatedPlayerCard, create_player_card, generate_youth_intake_cards
 
 from .models import GachaPack, GachaPlayer, RARITY_RATING_RANGES, StarterSquad
-from .pack_configs import get_pack_config
+from .pack_configs import resolve_pack_config
 
 _YOUTH_POSITIONS: list[str] = ["GK", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "FWD", "FWD"]
 _MARQUEE_POSITIONS: list[str] = ["DEF", "DEF", "MID", "MID", "MID", "FWD"]
@@ -56,9 +57,42 @@ def _make_player(position: str, rarity: str, names: dict[str, list[str]]) -> Gac
     return _from_created(card)
 
 
-def generate_pack(n: int | None = None, *, pack_id: str = "standard") -> GachaPack:
-    """Generate a pack using named PackConfig (default: standard 60/30/8/2)."""
-    cfg = get_pack_config(pack_id)
+def generate_support_legendary(*, rng: random.Random | None = None) -> GachaPlayer:
+    """One-shot thank-you Legendary: OVR 75–85, POT forced 90–95."""
+    r = rng or random
+    names = _load_names()
+    position = r.choice(["GK", "DEF", "MID", "FWD"])
+    target = r.randint(75, 85)
+    # Prefer younger ages so high POT reads as a special prospect.
+    age = r.randint(16, 23)
+    first_name = r.choice(names["first"])
+    last_name = r.choice(names["last"])
+    card = create_player_card(
+        position=position,
+        rarity="Legendary",
+        target_ovr=target,
+        first_name=first_name,
+        last_name=last_name,
+        age=age,
+        rng=r,
+    )
+    pot = r.randint(90, 95)
+    if pot < card.overall:
+        pot = card.overall
+    return _from_created(
+        card.model_copy(update={"potential": pot, "base_potential": pot})
+    )
+
+
+def generate_pack(
+    n: int | None = None,
+    *,
+    pack_id: str = "standard",
+    rarities: Sequence[str] | None = None,
+    rarity_weights: Sequence[int] | None = None,
+) -> GachaPack:
+    """Generate a pack using named PackConfig (default: Epic-capped 60/30/10)."""
+    cfg = resolve_pack_config(pack_id, rarities=rarities, rarity_weights=rarity_weights)
     count = cfg.card_count if n is None else n
     names = _load_names()
     players = []

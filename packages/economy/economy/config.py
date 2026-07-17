@@ -4,6 +4,11 @@ from pydantic import BaseModel, Field
 
 class GameConfig(BaseModel):
     wage_scale_factor: float = 1.2
+    wages_payroll_bill_scale: float = 1.0
+    payroll_strike_friendly_block: int = 2
+    payroll_strike_market_block: int = 3
+    contract_grace_days: int = 7
+    contract_renewal_days: int = 7
     xp_base_per_hour: float = 10.0
     drill_durations: dict[str, float] = Field(
         default_factory=lambda: {

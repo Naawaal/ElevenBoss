@@ -13,10 +13,16 @@ from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.embeds.gacha_embeds import gacha_cooldown_embed, gacha_claim_embed
-from apps.discord_bot.core.economy_rpc import format_action_energy_status_async, sync_action_energy
+from apps.discord_bot.core.economy_rpc import (
+    format_action_energy_status_async,
+    get_pack_rarity_override,
+    sync_action_energy,
+)
 from apps.discord_bot.core.view_helpers import disable_view_on_timeout, set_view_controls_disabled
 from apps.discord_bot.core.card_payload import card_rpc_payload
 from gacha import generate_pack
+
+logger = logging.getLogger(__name__)
 
 
 async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
@@ -79,7 +85,8 @@ async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
     embed.add_field(
         name="🎫 Daily Gacha Pack",
         value=(
-            "Claim a free pack of 5 random players. Claimable every 22 hours.\n"
+            "Claim a free pack of 5 random players (Common / Rare / Epic — no Legendary).\n"
+            "Odds ~60% / 30% / 10%. Claimable every 22 hours.\n"
             + ("🟢 Available now!" if gacha_ready else f"⏳ Cooldown: **{gacha_cooldown_str}** remaining.")
         ),
         inline=False,
@@ -182,7 +189,12 @@ class StoreHubView(discord.ui.View):
         set_view_controls_disabled(self, disabled=True)
         try:
             db = await get_client()
-            pack = generate_pack(n=5)
+            override = await get_pack_rarity_override(db)
+            if override is not None:
+                rarities, weights = override
+                pack = generate_pack(n=5, rarities=rarities, rarity_weights=weights)
+            else:
+                pack = generate_pack(n=5)
             cards_payload = [card_rpc_payload(p) for p in pack.players]
 
             await db.rpc("claim_daily_pack", {

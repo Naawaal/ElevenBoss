@@ -28,7 +28,7 @@ def test_track_has_legacy_goal_alias() -> None:
 
 def test_pacing_constants() -> None:
     assert MAX_ACTIVE_EVOLUTIONS == 3
-    assert EVOLUTION_START_COOLDOWN_HOURS == 10
+    assert EVOLUTION_START_COOLDOWN_HOURS == 6
     assert EVOLUTION_START_ENERGY == 25
     assert EVOLUTION_START_FLAT == 500
     assert EVOLUTION_START_OVR_MULT == 5

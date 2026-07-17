@@ -25,6 +25,14 @@ BEGIN
       ('column:public.league_seasons.journal_thread_id'),
       ('column:public.league_seasons.matchday_thread_id'),
       ('column:public.league_seasons.thread_format'),
+      ('column:public.league_seasons.pacing_mode'),
+      ('column:public.league_participants.division_tier'),
+      ('column:public.league_fixtures.resolved_by'),
+      ('column:public.league_members.seasonal_division_tier'),
+      ('table:public.league_matchday_manager_awards'),
+      ('column:public.guild_config.league_automation_enabled'),
+      ('column:public.guild_config.next_auto_registration_at'),
+      ('column:public.guild_config.automation_last_error'),
       ('column:public.player_cards.recent_match_ratings'),
       ('table:public.league_matchday_reminders'),
       ('column:public.league_participants.entry_fee_paid'),
@@ -41,6 +49,13 @@ BEGIN
       ('table:public.game_config'),
       ('table:public.agent_sale_daily_log'),
       ('table:public.energy_refill_daily_log'),
+      ('table:public.transfer_listings'),
+      ('table:public.transfer_sales_log'),
+      ('table:public.payroll_runs'),
+      ('column:public.players.payroll_debt'),
+      ('column:public.players.payroll_strikes'),
+      ('column:public.players.last_payroll_at'),
+      ('column:public.players.last_payroll_week'),
       ('column:public.player_cards.daily_alloc_count'),
       ('column:public.player_cards.alloc_reset_date'),
       ('column:public.players.action_energy'),
@@ -64,6 +79,10 @@ BEGIN
       ('function:count_unclaimed_level_rewards'),
       ('function:daily_match_xp_used'),
       ('function:distribute_season_prizes'),
+      ('function:league_dynamics_enabled'),
+      ('function:league_automation_enabled'),
+      ('function:award_manager_of_the_matchday'),
+      ('function:apply_seasonal_promotion_relegation'),
       ('function:charge_league_entry_fees'),
       ('function:claim_weekly_rank_tier'),
       ('function:process_match_result'),
@@ -104,11 +123,38 @@ BEGIN
       ('table:public.scouting_pool_players'),
       ('column:public.player_cards.role'),
       ('column:public.scouting_pool_players.role'),
+      ('function:p2p_transfer_market_enabled'),
+      ('function:card_is_on_transfer_list'),
+      ('function:assert_card_not_on_transfer_list'),
+      ('function:create_transfer_listing'),
+      ('function:cancel_transfer_listing'),
+      ('function:purchase_transfer_listing'),
+      ('function:expire_stale_transfer_listings'),
+      ('function:wages_payroll_enabled'),
+      ('function:payroll_utc_week_key'),
+      ('function:card_weekly_wage_coins'),
+      ('function:club_xi_weekly_wage_bill'),
+      ('function:card_contract_blocks_xi'),
+      ('function:assert_club_payroll_market_ok'),
+      ('function:process_club_weekly_payroll'),
+      ('function:process_weekly_payroll'),
+      ('policy:public.transfer_listings.transfer_listings_select'),
+      ('policy:public.transfer_sales_log.transfer_sales_log_select'),
+      ('policy:public.payroll_runs.payroll_runs_select'),
+      ('policy:public.payroll_runs.payroll_runs_insert'),
+      ('policy:public.payroll_runs.payroll_runs_update'),
       ('function:process_youth_intake'),
       ('table:public.youth_intake_log'),
       ('table:public.mentor_transfer_log'),
       ('function:transfer_mentor_xp'),
       ('function:process_recovery_session'),
+      ('function:process_recovery_batch'),
+      ('table:public.support_legendary_rewards'),
+      ('function:prepare_support_legendary_reward'),
+      ('function:claim_support_legendary_reward'),
+      ('function:support_legendary_reward_pending'),
+      ('policy:public.support_legendary_rewards.support_legendary_rewards_select'),
+      ('policy:public.support_legendary_rewards.support_legendary_rewards_update'),
       ('function:backfill_injury_eta_fairness'),
       ('column:public.players.intensity_tier'),
       ('function:backfill_tier_fatigue_rebalance'),
@@ -135,7 +181,9 @@ BEGIN
       ('policy:public.league_members.league_members_select'),
       ('policy:public.league_matchday_reminders.league_matchday_reminders_select'),
       ('policy:public.league_matchday_reminders.league_matchday_reminders_insert'),
-      ('policy:public.league_members.league_members_insert')
+      ('policy:public.league_members.league_members_insert'),
+      ('policy:public.league_matchday_manager_awards.league_matchday_manager_awards_select'),
+      ('policy:public.league_matchday_manager_awards.league_matchday_manager_awards_insert')
   ) AS req(obj)
   WHERE NOT (
     (req.obj LIKE 'table:%' AND to_regclass(split_part(req.obj, ':', 2)) IS NOT NULL)
@@ -181,6 +229,10 @@ BEGIN
         WHEN 'purchase_energy_refill' THEN to_regprocedure('public.purchase_energy_refill(bigint)')
         WHEN 'get_game_config' THEN to_regprocedure('public.get_game_config(text)')
         WHEN 'distribute_season_prizes' THEN to_regprocedure('public.distribute_season_prizes(uuid)')
+        WHEN 'league_dynamics_enabled' THEN to_regprocedure('public.league_dynamics_enabled()')
+        WHEN 'league_automation_enabled' THEN to_regprocedure('public.league_automation_enabled()')
+        WHEN 'award_manager_of_the_matchday' THEN to_regprocedure('public.award_manager_of_the_matchday(uuid,integer)')
+        WHEN 'apply_seasonal_promotion_relegation' THEN to_regprocedure('public.apply_seasonal_promotion_relegation(uuid)')
         WHEN 'charge_league_entry_fees' THEN to_regprocedure('public.charge_league_entry_fees(uuid)')
         WHEN 'claim_weekly_rank_tier' THEN to_regprocedure('public.claim_weekly_rank_tier(bigint,text)')
         WHEN 'process_match_result' THEN to_regprocedure('public.process_match_result(text,uuid[],integer,numeric[],integer[],uuid)')
@@ -209,10 +261,29 @@ BEGIN
         WHEN 'discharge_from_hospital' THEN to_regprocedure('public.discharge_from_hospital(bigint,uuid)')
         WHEN 'insert_scouting_pool_player' THEN to_regprocedure('public.insert_scouting_pool_player(jsonb)')
         WHEN 'purchase_scouting_player' THEN to_regprocedure('public.purchase_scouting_player(bigint,uuid,bigint)')
+        WHEN 'p2p_transfer_market_enabled' THEN to_regprocedure('public.p2p_transfer_market_enabled()')
+        WHEN 'card_is_on_transfer_list' THEN to_regprocedure('public.card_is_on_transfer_list(uuid)')
+        WHEN 'assert_card_not_on_transfer_list' THEN to_regprocedure('public.assert_card_not_on_transfer_list(uuid)')
+        WHEN 'create_transfer_listing' THEN to_regprocedure('public.create_transfer_listing(bigint,uuid,bigint)')
+        WHEN 'cancel_transfer_listing' THEN to_regprocedure('public.cancel_transfer_listing(bigint,uuid)')
+        WHEN 'purchase_transfer_listing' THEN to_regprocedure('public.purchase_transfer_listing(bigint,uuid,bigint)')
+        WHEN 'expire_stale_transfer_listings' THEN to_regprocedure('public.expire_stale_transfer_listings()')
+        WHEN 'wages_payroll_enabled' THEN to_regprocedure('public.wages_payroll_enabled()')
+        WHEN 'payroll_utc_week_key' THEN to_regprocedure('public.payroll_utc_week_key(timestamptz)')
+        WHEN 'card_weekly_wage_coins' THEN to_regprocedure('public.card_weekly_wage_coins(integer,text)')
+        WHEN 'club_xi_weekly_wage_bill' THEN to_regprocedure('public.club_xi_weekly_wage_bill(bigint)')
+        WHEN 'card_contract_blocks_xi' THEN to_regprocedure('public.card_contract_blocks_xi(timestamptz)')
+        WHEN 'assert_club_payroll_market_ok' THEN to_regprocedure('public.assert_club_payroll_market_ok(bigint)')
+        WHEN 'process_club_weekly_payroll' THEN to_regprocedure('public.process_club_weekly_payroll(bigint,text)')
+        WHEN 'process_weekly_payroll' THEN to_regprocedure('public.process_weekly_payroll(text)')
         WHEN 'process_youth_intake' THEN to_regprocedure('public.process_youth_intake(bigint,jsonb)')
         WHEN 'formation_slot_role' THEN to_regprocedure('public.formation_slot_role(text,integer)')
         WHEN 'transfer_mentor_xp' THEN to_regprocedure('public.transfer_mentor_xp(bigint,uuid,uuid,integer)')
         WHEN 'process_recovery_session' THEN to_regprocedure('public.process_recovery_session(bigint,uuid)')
+        WHEN 'process_recovery_batch' THEN to_regprocedure('public.process_recovery_batch(bigint,uuid[])')
+        WHEN 'prepare_support_legendary_reward' THEN to_regprocedure('public.prepare_support_legendary_reward(bigint,jsonb)')
+        WHEN 'claim_support_legendary_reward' THEN to_regprocedure('public.claim_support_legendary_reward(bigint)')
+        WHEN 'support_legendary_reward_pending' THEN to_regprocedure('public.support_legendary_reward_pending(bigint)')
         WHEN 'backfill_injury_eta_fairness' THEN to_regprocedure('public.backfill_injury_eta_fairness()')
         WHEN 'backfill_tier_fatigue_rebalance' THEN to_regprocedure('public.backfill_tier_fatigue_rebalance()')
         WHEN 'intensity_recovery_days' THEN to_regprocedure('public.intensity_recovery_days(integer,integer,integer)')
@@ -261,7 +332,9 @@ BEGIN
         'league_matchday_milestones', 'weekly_rank_rewards', 'scouting_pool_players',
         'pending_level_rewards', 'fusion_daily_log', 'player_drill_daily_log',
         'game_config', 'agent_sale_daily_log', 'energy_refill_daily_log',
-        'hospital_patients', 'mentor_transfer_log'
+        'hospital_patients', 'mentor_transfer_log',
+        'transfer_listings', 'transfer_sales_log',
+        'league_matchday_manager_awards'
     )
     AND NOT EXISTS (
         SELECT 1 FROM pg_policies p

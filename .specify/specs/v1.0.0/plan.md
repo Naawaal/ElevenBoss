@@ -178,7 +178,7 @@ CREATE TABLE match_history (
 
 ### `gacha`
 - `generate_pack(n: int = 5) -> GachaPack`
-  - Weighted rarity: Common 60%, Rare 30%, Epic 8%, Legendary 2%
+  - Weighted rarity: Common 60%, Rare 30%, Epic 10% (Epic max; no Legendary from packs)
   - Names from bundled `data/player_names.json`
 - `generate_starter_squad() -> StarterSquad` *(used exclusively by onboarding)*
   - Returns a guaranteed 11-player squad with strict positional composition:

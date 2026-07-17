@@ -38,8 +38,22 @@ _FRIENDLY: dict[str, str] = {
         "That player is already at **full fitness**. Pick someone tired, or wait for match drain."
     ),
     "Player is injured — use Hospital": (
-        "That player is **injured** — treat them in **Hospital** via `/profile` → **Manage Hospital**, "
-        "not Recovery Session."
+        "That player is **injured** — treat them in **Hospital** via `/profile` → **Manage Hospital**. "
+        "Use **💚 Recover** on `/development` only for healthy, tired players."
+    ),
+    "Select between 1 and 3 players": "Pick **between 1 and 3** players for Recover.",
+    "Duplicate players in recovery selection": "You selected the same player twice — pick distinct players.",
+    "Player is in an active evolution track": (
+        "That player is in an **active evolution**. Finish or cancel it before Recover."
+    ),
+    "Support legendary reward is disabled": "This thank-you gift is not available right now.",
+    "Not eligible for this reward": "You're not on the thank-you gift list for this update.",
+    "Legendary reward already claimed": "You already claimed your **Legendary** thank-you gift.",
+    "Club not found — register before claiming": (
+        "Register a club first, then claim your Legendary gift from `/development`."
+    ),
+    "Reward not prepared yet — open /development and try again": (
+        "Open `/development` once, then claim your Legendary gift."
     ),
     "Not an academy player": "That player is not in your **academy**. Open Manage Academy from `/profile`.",
     "Senior roster is full": (
@@ -52,6 +66,10 @@ _FRIENDLY: dict[str, str] = {
     "Scout already in progress": "A scout assignment is **already running**. Wait for it to finish.",
     "Report expired": "That scout report has **expired**. Dispatch a new scout.",
     "Report already signed": "You already signed from that scout report.",
+    "Player position": (
+        "That reserve's **position** does not match the formation slot. "
+        "Pick a compatible reserve (e.g. MID for wingbacks in 3-5-2)."
+    ),
 }
 
 

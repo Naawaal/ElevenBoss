@@ -81,12 +81,19 @@ def get_coordinates_for_formation(formation: str) -> dict[str, tuple[int, int]]:
     return FORMATION_COORDINATES[formation]
 
 
-def _role_from_label(label: str) -> str:
-    """Map formation slot label to broad position role."""
+def _role_from_label(label: str, formation: str = "4-4-2") -> str:
+    """Map formation slot label to broad position role.
+
+    Must stay in sync with SQL ``formation_slot_role`` (migration 037):
+    in 3-5-2 the LWB/RWB band is MID (the '5'), not DEF.
+    """
     if label == "GK":
         return "GK"
     if label.startswith("ST") or label in ("LW", "RW"):
         return "FWD"
+    # ponytail: 3-5-2 wingbacks = midfield band; 5-3-2 wingbacks stay DEF
+    if label in ("LWB", "RWB") and formation == "3-5-2":
+        return "MID"
     if any(label.startswith(p) for p in ("CB", "LB", "RB", "LWB", "RWB")):
         return "DEF"
     return "MID"
@@ -98,4 +105,4 @@ def get_slot_role(formation: str, slot: int) -> str:
     labels = list(coords.keys())
     if slot < 1 or slot > len(labels):
         return "DEF"
-    return _role_from_label(labels[slot - 1])
+    return _role_from_label(labels[slot - 1], formation)

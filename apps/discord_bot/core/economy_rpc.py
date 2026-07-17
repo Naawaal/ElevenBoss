@@ -2,6 +2,7 @@
 """Economy v2 RPC helpers for Discord bot (US-25)."""
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -38,6 +39,29 @@ async def get_game_config_numeric(db: Any, key: str, default: float) -> float:
     except Exception:
         logger.debug("get_game_config_numeric(%s) failed — defaulting %s", key, default, exc_info=True)
     return float(default)
+
+
+async def get_pack_rarity_override(db: Any) -> tuple[list[str], list[int]] | None:
+    """Load standard pack rarity mix from game_config; None → use package defaults."""
+    try:
+        rarities_res = await db.rpc("get_game_config", {"p_key": "pack_standard_rarities"}).execute()
+        weights_res = await db.rpc("get_game_config", {"p_key": "pack_standard_rarity_weights"}).execute()
+        rarities_raw = rarities_res.data
+        weights_raw = weights_res.data
+        if isinstance(rarities_raw, str):
+            rarities_raw = json.loads(rarities_raw)
+        if isinstance(weights_raw, str):
+            weights_raw = json.loads(weights_raw)
+        if not isinstance(rarities_raw, list) or not isinstance(weights_raw, list):
+            return None
+        rarities = [str(r) for r in rarities_raw]
+        weights = [int(w) for w in weights_raw]
+        if len(rarities) != len(weights) or not rarities:
+            return None
+        return rarities, weights
+    except Exception:
+        logger.debug("get_pack_rarity_override failed — using package defaults", exc_info=True)
+        return None
 
 
 def compute_bot_match_coins(result: str, division_win_coins: int, v2: bool = True) -> int:
@@ -156,6 +180,127 @@ async def economy_v2_enabled(db: Any) -> bool:
     except Exception:
         logger.debug("economy_v2_enabled check failed — defaulting True", exc_info=True)
     return True
+
+
+async def wages_payroll_enabled(db: Any) -> bool:
+    """Feature flag for weekly payroll (019). Default false."""
+    try:
+        res = await db.rpc("wages_payroll_enabled").execute()
+        val = res.data
+        if val is True or val is False:
+            return bool(val)
+        if isinstance(val, str):
+            return val.strip().strip('"').lower() == "true"
+    except Exception:
+        logger.debug("wages_payroll_enabled check failed — defaulting False", exc_info=True)
+    return False
+
+
+async def league_dynamics_enabled(db: Any) -> bool:
+    """Feature flag for League Dynamics (020). Default false."""
+    try:
+        res = await db.rpc("league_dynamics_enabled").execute()
+        val = res.data
+        if val is True or val is False:
+            return bool(val)
+        if isinstance(val, str):
+            return val.strip().strip('"').lower() == "true"
+    except Exception:
+        try:
+            res = await db.rpc("get_game_config", {"p_key": "league_dynamics_enabled"}).execute()
+            val = res.data
+            if val is True or val == "true":
+                return True
+            if isinstance(val, str):
+                return val.strip().strip('"').lower() == "true"
+        except Exception:
+            logger.debug("league_dynamics_enabled check failed — defaulting False", exc_info=True)
+    return False
+
+
+async def league_automation_enabled(db: Any) -> bool:
+    """Global feature flag for League Automation (021). Default false."""
+    try:
+        res = await db.rpc("league_automation_enabled").execute()
+        val = res.data
+        if val is True or val is False:
+            return bool(val)
+        if isinstance(val, str):
+            return val.strip().strip('"').lower() == "true"
+    except Exception:
+        try:
+            res = await db.rpc("get_game_config", {"p_key": "league_automation_enabled"}).execute()
+            val = res.data
+            if val is True or val == "true":
+                return True
+            if isinstance(val, str):
+                return val.strip().strip('"').lower() == "true"
+        except Exception:
+            logger.debug("league_automation_enabled check failed — defaulting False", exc_info=True)
+    return False
+
+
+async def guild_automation_effective(db: Any, guild_id: int) -> bool:
+    """Global on AND (guild NULL inherit OR guild true)."""
+    from leagues import automation_effective
+
+    global_on = await league_automation_enabled(db)
+    if not global_on:
+        return False
+    try:
+        res = await db.table("guild_config").select("league_automation_enabled").eq(
+            "guild_id", guild_id
+        ).maybe_single().execute()
+        raw = (res.data or {}).get("league_automation_enabled") if res else None
+        guild_flag: bool | None
+        if raw is None:
+            guild_flag = None
+        else:
+            guild_flag = bool(raw)
+        return automation_effective(global_on, guild_flag)
+    except Exception:
+        logger.debug("guild_automation_effective failed guild=%s", guild_id, exc_info=True)
+        return False
+
+
+async def fetch_payroll_strikes(db: Any, club_id: int) -> int:
+    res = (
+        await db.table("players")
+        .select("payroll_strikes")
+        .eq("discord_id", club_id)
+        .maybe_single()
+        .execute()
+    )
+    return int((res.data or {}).get("payroll_strikes") or 0)
+
+
+async def wages_friendly_block_message(db: Any, club_id: int) -> str | None:
+    """Return ephemeral copy when strikes block friendlies; else None."""
+    from economy.wages import strike_blocks_friendly
+
+    strikes = await fetch_payroll_strikes(db, club_id)
+    threshold = await get_game_config_int(db, "payroll_strike_friendly_block", 2)
+    if not strike_blocks_friendly(strikes, threshold=threshold):
+        return None
+    return (
+        f"Payroll strikes (**{strikes}**) block **friendly** matches. "
+        "Play league/bot matches and keep your Starting XI wage bill payable — "
+        "check `/profile` → Finances."
+    )
+
+
+async def wages_market_block_message(db: Any, club_id: int) -> str | None:
+    """Return ephemeral copy when strikes block P2P list / scouting; else None."""
+    from economy.wages import strike_blocks_market
+
+    strikes = await fetch_payroll_strikes(db, club_id)
+    threshold = await get_game_config_int(db, "payroll_strike_market_block", 3)
+    if not strike_blocks_market(strikes, threshold=threshold):
+        return None
+    return (
+        f"Payroll strikes (**{strikes}**) block marketplace listings and youth scouting. "
+        "Agent sales still work. Clear wage debt via `/profile` → Finances."
+    )
 
 
 async def sync_action_energy(db: Any, club_id: int) -> dict:

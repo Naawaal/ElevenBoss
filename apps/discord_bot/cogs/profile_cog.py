@@ -128,10 +128,10 @@ async def show_profile(interaction: discord.Interaction, owner_id: int) -> None:
     )
     embed.add_field(name="⚡ Action Energy", value=energy_status, inline=False)
     embed.add_field(name="🌍 Global Division", value=current_div["name"], inline=True)
-    embed.add_field(name="🏆 Global LP Progress", value=progress_bar, inline=False)
-    embed.add_field(name="⚔️ Server Division", value=player["division"], inline=True)
+    embed.add_field(name="🏆 Global LP (lifetime)", value=progress_bar, inline=False)
+    embed.add_field(name="⚔️ Server Intensity", value=player["division"], inline=True)
     embed.add_field(
-        name="📊 Division Rank Points",
+        name="📊 Division Rank (weekly bot)",
         value=f"{player['league_points']} pts (GD: {player['goal_difference']})",
         inline=True,
     )
@@ -144,10 +144,11 @@ async def show_profile(interaction: discord.Interaction, owner_id: int) -> None:
     if best_pts:
         embed.add_field(name="🏅 Best weekly", value=f"**{best_pts}** pts", inline=True)
     embed.add_field(
-        name="ℹ️ Rankings",
+        name="ℹ️ Three ladders (not the same)",
         value=(
-            "**Division Rank** = bot battles (weekly). **Season Pts** = `/league hub`. "
-            "Use **`/leaderboard`** for full tables."
+            "**Global LP** = long-run ladder (bot wins).\n"
+            "**Division Rank** = weekly bot points (resets Monday · `/leaderboard` Division tab).\n"
+            "**Season Pts** = guild league fixtures only (`/league hub` · Season tab)."
         ),
         inline=False,
     )

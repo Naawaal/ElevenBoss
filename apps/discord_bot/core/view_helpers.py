@@ -53,6 +53,28 @@ def set_view_controls_disabled(view: discord.ui.View, *, disabled: bool) -> None
         item.disabled = disabled
 
 
+def empty_state_line(subject: str, *, recovery: str = "Use Back or re-run the command.") -> str:
+    """Consistent empty-list copy when a Select is omitted (Discord requires ≥1 option)."""
+    return f"*{subject}*\n{recovery}"
+
+
+def add_select_if_options(
+    view: discord.ui.View,
+    *,
+    placeholder: str,
+    options: list[discord.SelectOption],
+    row: int,
+    callback,
+) -> discord.ui.Select | None:
+    """Attach a Select only when ``options`` is non-empty. Returns the Select or None."""
+    if not options:
+        return None
+    select = discord.ui.Select(placeholder=placeholder, options=options, row=row)
+    select.callback = callback
+    view.add_item(select)
+    return select
+
+
 async def disable_view_on_timeout(view: discord.ui.View) -> None:
     for item in view.children:
         item.disabled = True

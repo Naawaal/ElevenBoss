@@ -9,7 +9,11 @@ import discord
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.embeds.hospital_embeds import hospital_panel_embed
-from apps.discord_bot.core.view_helpers import disable_view_on_timeout, set_view_controls_disabled
+from apps.discord_bot.core.view_helpers import (
+    add_select_if_options,
+    disable_view_on_timeout,
+    set_view_controls_disabled,
+)
 from economy import (
     FACILITY_MAX_LEVEL,
     HOSPITAL_MAX_LEVEL,
@@ -249,17 +253,25 @@ class HospitalPanelView(discord.ui.View):
                 )
                 for p in patients[:25]
             ]
-            sel = discord.ui.Select(placeholder="Discharge a patient…", options=opts, row=0)
-            sel.callback = self._discharge
-            self.add_item(sel)
+            add_select_if_options(
+                self,
+                placeholder="Discharge a patient…",
+                options=opts,
+                row=0,
+                callback=self._discharge,
+            )
         if waiting:
             opts = [
                 discord.SelectOption(label=w.get("name", "Waiting")[:100], value=str(w["id"]))
                 for w in waiting[:25]
             ]
-            sel = discord.ui.Select(placeholder="Admit waiting player…", options=opts, row=1)
-            sel.callback = self._admit
-            self.add_item(sel)
+            add_select_if_options(
+                self,
+                placeholder="Admit waiting player…",
+                options=opts,
+                row=1,
+                callback=self._admit,
+            )
 
         upgrade_btn = discord.ui.Button(
             style=discord.ButtonStyle.primary,

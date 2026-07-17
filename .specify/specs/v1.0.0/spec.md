@@ -121,7 +121,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **WHEN** I run `/store` and click the **🎫 Claim Free Pack** button,
 - **THEN** the bot checks my last claim timestamp.
 - **AND GIVEN** 22 hours have elapsed since my last claim (or I have never claimed),
-- **THEN** I receive a pack of **5 randomised players** drawn from a weighted rarity pool (`Common 60%, Rare 30%, Epic 8%, Legendary 2%`).
+- **THEN** I receive a pack of **5 randomised players** drawn from a weighted rarity pool (`Common 60%, Rare 30%, Epic 10%` — Epic max; packs never drop Legendary).
 - **AND** each player's overall rating is derived from their rarity tier (Common 50–64, Rare 65–74, Epic 75–84, Legendary 85–99).
 - **AND** each new card rolls a **position archetype** (e.g. FWD Poacher / Speedster / Complete Forward; MID/DEF/GK each have ≥3 styles) that shapes attributes and is stored/displayed as `player_cards.role`.
 - **AND** the printed overall equals True OVR at creation (deterministic terminating balance; no abandoned mismatch loop).
@@ -287,7 +287,8 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 **Acceptance Criteria:**
 - **AC-06a:** The club's wallet supports both Coins and Tokens.
-- **AC-06b:** `/profile` → **Finances** displays current Coins/Tokens balances and a calculated weekly wage bill forecast based on the OVR of the manager's current starting 11 squad. *(Amended 010 — dedicated `/club-finances` slash command removed.)*
+- **AC-06b:** `/profile` → **Finances** displays current Coins/Tokens balances and a calculated weekly wage bill based on the OVR of the manager's current starting 11 squad. *(Amended 010 — dedicated `/club-finances` slash command removed.)* When `wages_payroll_enabled` is on, Finances also shows payroll debt/strikes, last/next Monday **00:05 UTC** run, and Starting XI contract grace alerts; payroll debits via `apply_club_economy` (`weekly_payroll`). Flag default **off** keeps forecast-only copy (`not auto-deducted`).
+- **AC-06c (019):** Past `contract_grace_days` (default 7), cards cannot be assigned to or play in Starting XI until renewed. Unpaid payroll uses debt + strikes (no morale mutation / no auto-release). Strikes ≥ market block reject `create_transfer_listing` and scout spends in RPCs; agent sale remains available.
 - **AC-06c:** Entering the **Sell Player** sub-menu of the `/marketplace` hub displays a dropdown of owned players. Selecting a player calculates their agent sale value based on OVR and rarity, presenting a "Confirm Sale" button.
 - **AC-06d:** Clicking "Confirm Sale" transactionally removes the player card from the manager's roster, credits the sale value in coins to the club, and logs the details to the transaction ledger.
 - **AC-06e:** Players currently assigned to the starting 11 squad, in training, or in active evolutions cannot be sold.
@@ -413,7 +414,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 > **So that** I don't have to remember and execute multiple different commands to train, allocate skills, or evolve my players.
 
 **Acceptance Criteria:**
-- **AC-10a:** Slash command `/development` is introduced, opening the central `DevelopmentHubView` containing four button pathways: `[🏋️ Training Drills]`, `[🧬 Evolutions]`, `[⭐ Allocate Skills]`, and `[🔥 Card Fusion]` (sacrifice a bench card to grant fusion XP to a keeper via `apply_card_xp`). *(Amended v1.9 — US-23: fusion grants XP, not direct level/stat.)*
+- **AC-10a:** Slash command `/development` is introduced, opening the central `DevelopmentHubView` containing pathways: `[🏋️ Training Drills]`, `[💚 Recover]`, `[🧬 Evolutions]`, `[⭐ Allocate Skills]`, and `[🔥 Card Fusion]` (sacrifice a bench card to grant fusion XP to a keeper via `apply_card_xp`). *(Amended — 023: Recover relocated from drills; fusion grants XP, not direct level/stat.)*
 - **AC-10b:** State-swapping UI: Clicking any button updates/edits the existing dashboard message without spawning a new one or requiring the user to type other commands.
 - **AC-10c:** A back-navigation button `[⬅️ Back to Hub]` is present on all sub-menu screens to allow returns to the main dashboard.
 - **AC-10d:** Quick-action buttons on `/player-profile` (`[Start Evolution]` and `[Allocate Skill Points]`) correctly route the user by opening the pre-filtered sub-menu of the `/development` flow for that specific card. *(Amended v1.9 — US-23.)*
@@ -430,7 +431,8 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 > **So that** all financial trading activities are centralized.
 
 **Acceptance Criteria:**
-- **AC-11a:** Slash command `/marketplace` opens the central `MarketplaceHubView` with `[💰 Sell Player]`, `[🔍 Search Market]` (scouting pool), and `[📋 My Listings (Soon)]` (disabled).
+- **AC-11a:** Slash command `/marketplace` opens the central `MarketplaceHubView` with `[💰 Sell to Agent]`, `[🔍 Search Market]` (scouting pool; Transfer Board when P2P flag on), and `[📋 My Listings]` (enabled when `p2p_transfer_market_enabled`; otherwise disabled / Soon).
+- **AC-11g:** When P2P is enabled, My Listings supports list/cancel with live `n / slot_cap`; Transfer Board is buy-it-now only with position + preset OVR/age/POT band filters; completed sales apply **10%** transfer tax (seller nets 90%) via `apply_club_economy`.
 - **AC-11b:** Deprecated command: Running the old `/sell-player` command displays an ephemeral warning: *"⚠️ The Marketplace has moved! Please use /marketplace."*
 - **AC-11c:** State-swapping UI: Clicking `[💰 Sell Player]` edits the existing dashboard message to present the player selection dropdown and valuation results in-place.
 - **AC-11d:** Navigation: A `[⬅️ Back to Market]` button is present on the sell screen to return to the Marketplace Hub.
@@ -831,7 +833,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 #### AC-23i: Player Profile & Development UI
 - **GIVEN** `/player-profile`,
 - **THEN** the embed shows: XP-derived level, XP progress bar, **Available Skill Points**, and a button **Allocate Skill Points** (not "Level Up") when points > 0.
-- **AND** `/development` hub pathways remain: Training Drills, Evolutions, Skill Allocation, Card Fusion — all aligned with XP/skill-point flows above.
+- **AND** `/development` hub pathways remain: Training Drills, **Recover**, Evolutions, Skill Allocation, Card Fusion — all aligned with XP/skill-point flows above (Recover is fitness-only, 0 XP).
 
 #### AC-23j: Anti-Exploit & Integrity
 - **GIVEN** any progression mutation,
@@ -1305,12 +1307,13 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-39d:** Injured cards blocked from XI, drills, fusion, evolution start, and agent sale.
 - **AC-39e:** Friendlies remain sandbox (no fatigue/injury writes).
 - **AC-39f:** Live bot/league injuries before 90' pause ≤30s for Select/Play On; auto-sim/AI auto-resolve; mid-match recordings skip a second A+C roll.
-- **AC-39g (009/010):** `/development` Training Drills offers **Recovery Session** — instant, +40 fatigue (config), 0 XP, 0 coins, shares club/card daily drill caps; RPC `process_recovery_session`. Energy cost **5**.
+- **AC-39g (009/010/023):** `/development` hub **Recover** offers Recovery Sessions — instant, +40 fatigue (config), 0 XP, 0 coins, energy cost **5 per player**, batch **1–3** players via RPC `process_recovery_batch` (no skill-drill daily slot consumption). Training Drills are skill-only.
 - **AC-39h (011/012/016):** Non-hospital daily passive = intensity-tier base (**35 / 25 / 15**) + `(training_ground_level × 2)` via `process_daily_recovery`; hospital daily rate unchanged; bench rest **+25**. Match drain uses intensity-tier bases **8 / 12 / 16** with PHY×0.10 and tactics +4/−2/0 (rating-gap +5 surcharge removed). Injury untreated bases use Moderate anchors **3 / 5 / 8** × severity (0.33 / 1.0 / 2.5) ÷ Hospital curve. Mid-injury open stays fair-recalculated by `backfill_tier_fatigue_rebalance` (016; never lengthen; credit time served; uninjured fatigue floor ≥50). Legacy `backfill_injury_eta_fairness` (012) remains for historical 011 clocks.
 - **AC-39i (011):** Migration `056_recovery_qol_balance` upserts fatigue config + replaces injury CASE in `process_post_match_injuries` / `admit_to_hospital` (superseded live numbers by **061**).
 - **AC-39j (012/016):** Migration `057` / `061` fair backfill RPCs for open Hospital ETAs + overflow; early recovery matches daily hospital clear (+25 fatigue); DMs best-effort via ops script.
 - **AC-39k (014):** `match_history.fatigue_applied_at` gates post-match fitness separately from `xp_applied_at` (bot + league). Bench rest candidates = top **7** unused healthy by overall DESC. Match-end Fitness line; friendlies remain sandbox.
 - **AC-39l (016):** `players.intensity_tier` (1–3) from Division Rank 2-2-2 map; Monday weekly reset refreshes it. Hospital / profile intensity copy; pre-match heavy-fatigue warning. Soft-lock emergency fillers out of scope.
+- **AC-39m (067 thank-you):** Eligible Discord IDs receive a one-shot **Legendary** gift (OVR 75–85, POT 90–95) via DM **Claim** and `/development` **Claim Legendary Gift**; gated by `support_legendary_reward_enabled`; tracked in `support_legendary_rewards` (claim once).
 ### US-40: Profile Finance & Hospital Hub
 
 > **As a** football club manager,

@@ -104,6 +104,23 @@ def apply_recovery_session(
     return clamp_fatigue(current + amount)
 
 
+def recovery_session_eligible(card: dict) -> bool:
+    """True when a card can take an active Recover session (fitness gates only)."""
+    if card.get("injury_tier") is not None:
+        return False
+    if card.get("in_hospital"):
+        return False
+    return int(card.get("fatigue", 100)) < FATIGUE_MAX
+
+
+def recovery_batch_energy(n: int, per_player: int = 5) -> int:
+    """Total action energy for a Recover batch of ``n`` players (1–3)."""
+    count = int(n)
+    if count < 1 or count > 3:
+        raise ValueError("Recover batch size must be between 1 and 3")
+    return count * max(0, int(per_player))
+
+
 def fatigue_stat_multiplier(fatigue: int, stat_key: str) -> float:
     """Multiplier applied to phase attribute before 70/30 blend."""
     f = clamp_fatigue(fatigue)

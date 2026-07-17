@@ -1,19 +1,21 @@
 # packages/economy/economy/engine.py
 from __future__ import annotations
 from .config import GameConfig
+from .wages import calculate_xi_weekly_bill
+
 
 def calculate_weekly_wages(squad: list[dict], config: GameConfig) -> int:
-    """Calculates weekly wages for a list of players based on their OVR.
+    """Calculates weekly wages for a list of players (Starting XI bill base).
 
-    Formula: (OVR - 40)^2 * wage_scale_factor + 10
+    Delegates to wages.card_weekly_wage / calculate_xi_weekly_bill.
+    With default rarity mults this matches the legacy OVR-only formula for Common cards.
     """
-    total_wages = 0
-    for p in squad:
-        ovr = p.get("overall", p.get("base_rating", 50))
-        calc_ovr = max(40, ovr)
-        wage = int((calc_ovr - 40) ** 2 * config.wage_scale_factor + 10)
-        total_wages += wage
-    return total_wages
+    return calculate_xi_weekly_bill(
+        squad,
+        wage_scale_factor=float(config.wage_scale_factor),
+        bill_scale=1.0,
+    )
+
 
 def generate_agent_offer(
     player_ovr: int,

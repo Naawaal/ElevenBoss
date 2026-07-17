@@ -1,13 +1,33 @@
 # apps/discord_bot/cogs/economy_cog.py
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import discord
 from discord.ext import commands
 
-from economy import GameConfig, calculate_weekly_wages
+from economy.wages import calculate_xi_weekly_bill, contract_blocks_xi, contract_in_grace
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.embeds.common_embeds import error_embed
+from apps.discord_bot.core.economy_rpc import (
+    get_game_config_int,
+    get_game_config_numeric,
+    wages_payroll_enabled,
+)
 from apps.discord_bot.core.view_helpers import disable_view_on_timeout, edit_ephemeral_hub_message
+
+
+def _parse_ts(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    text = str(value).replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def build_club_finances_embed(
@@ -15,6 +35,9 @@ def build_club_finances_embed(
     starting_cards: list[dict],
     weekly_wages: int,
     *,
+    payroll_on: bool = False,
+    latest_run: dict | None = None,
+    grace_days: int = 7,
     profile_pointer: bool = False,
 ) -> discord.Embed:
     tokens = int(player.get("tokens", 0))
@@ -31,14 +54,73 @@ def build_club_finances_embed(
         ),
         inline=False,
     )
+
+    wage_note = (
+        "Deducted every **Monday 00:05 UTC** when payroll is enabled."
+        if payroll_on
+        else "*(not auto-deducted)*"
+    )
     embed.add_field(
-        name="👔 Starting 11 Wage Bill (forecast)",
+        name="👔 Starting 11 Wage Bill",
         value=(
-            f"👥 **Active Starting Players**: `{len(starting_cards)}/11`\n"
-            f"📉 **Estimated weekly wages**: `🪙 {weekly_wages:,} coins / week` *(not auto-deducted)*"
+            f"👥 **Paying players (XI)**: `{len(starting_cards)}/11`\n"
+            f"📉 **Weekly wages**: `🪙 {weekly_wages:,} coins / week` {wage_note}"
         ),
         inline=False,
     )
+
+    if payroll_on:
+        debt = int(player.get("payroll_debt") or 0)
+        strikes = int(player.get("payroll_strikes") or 0)
+        last_at = player.get("last_payroll_at")
+        last_week = player.get("last_payroll_week") or "—"
+        last_paid = int((latest_run or {}).get("paid_coins") or 0) if latest_run else 0
+        last_line = f"{last_week}"
+        if last_at:
+            ts = _parse_ts(last_at)
+            if ts:
+                last_line += f" · <t:{int(ts.timestamp())}:R>"
+        if latest_run:
+            last_line += f" · paid 🪙 {last_paid:,} ({latest_run.get('status', '?')})"
+
+        ladder = (
+            "≥2 blocks friendlies · ≥3 blocks P2P listings & youth scouting "
+            "(agent sale still OK). League/bot matches stay open so you can earn coins."
+        )
+        embed.add_field(
+            name="📉 Payroll status",
+            value=(
+                f"🧾 **Debt**: `🪙 {debt:,}`\n"
+                f"⚠️ **Strikes**: `{strikes}`\n"
+                f"🗓 **Last payroll**: {last_line}\n"
+                f"⏭ **Next payroll**: Monday **00:05 UTC**\n"
+                f"*{ladder}*"
+            ),
+            inline=False,
+        )
+
+        now = datetime.now(timezone.utc)
+        in_grace = 0
+        past_grace = 0
+        for card in starting_cards:
+            exp = _parse_ts(card.get("contract_expires_at"))
+            if exp is None:
+                continue
+            if contract_blocks_xi(exp, now, grace_days=grace_days):
+                past_grace += 1
+            elif contract_in_grace(exp, now, grace_days=grace_days):
+                in_grace += 1
+        if in_grace or past_grace:
+            embed.add_field(
+                name="📝 XI contract alerts",
+                value=(
+                    f"⏳ In grace: **{in_grace}** · "
+                    f"🚫 Past grace (cannot start): **{past_grace}**\n"
+                    "Renew on `/player-profile` or replace via `/squad`."
+                ),
+                inline=False,
+            )
+
     embed.add_field(
         name="🏗️ Club Facilities",
         value=(
@@ -61,9 +143,38 @@ async def fetch_club_finances_embed(owner_id: int, *, profile_pointer: bool = Fa
         return None
     assignments_res = await db.table("squad_assignments").select("player_cards(*)").eq("discord_id", owner_id).execute()
     starting_cards = [a["player_cards"] for a in (assignments_res.data or []) if a.get("player_cards")]
-    weekly_wages = calculate_weekly_wages(starting_cards, GameConfig())
+
+    bill_scale = await get_game_config_numeric(db, "wages_payroll_bill_scale", 1.0)
+    wage_scale = await get_game_config_numeric(db, "wage_scale_factor", 1.2)
+    weekly_wages = calculate_xi_weekly_bill(
+        starting_cards,
+        wage_scale_factor=float(wage_scale),
+        bill_scale=float(bill_scale),
+    )
+
+    payroll_on = await wages_payroll_enabled(db)
+    latest_run = None
+    if payroll_on:
+        run_res = (
+            await db.table("payroll_runs")
+            .select("paid_coins, status, week_key, created_at")
+            .eq("club_id", owner_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = run_res.data or []
+        latest_run = rows[0] if rows else None
+
+    grace_days = await get_game_config_int(db, "contract_grace_days", 7)
     return build_club_finances_embed(
-        player, starting_cards, weekly_wages, profile_pointer=profile_pointer
+        player,
+        starting_cards,
+        weekly_wages,
+        payroll_on=payroll_on,
+        latest_run=latest_run,
+        grace_days=grace_days,
+        profile_pointer=profile_pointer,
     )
 
 

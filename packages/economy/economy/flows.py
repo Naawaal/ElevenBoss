@@ -32,6 +32,13 @@ DEFAULTS: dict[str, float | int | list[int]] = {
     "match_energy_bot": 20,
     "match_energy_friendly": 15,
     "match_energy_league": 10,
+    # 062 P2P transfer market defaults
+    "transfer_tax_bps": 1000,
+    "transfer_price_floor_mult": 0.75,
+    "transfer_price_ceil_mult": 2.5,
+    "transfer_listing_slot_cap": 5,
+    "transfer_listing_ttl_hours": 72,
+    "transfer_relist_cooldown_hours": 6,
 }
 
 DIVISION_TIERS = {
@@ -74,6 +81,12 @@ class EconomyConfig:
     match_energy_bot: int = 20
     match_energy_friendly: int = 15
     match_energy_league: int = 10
+    transfer_tax_bps: int = 1000
+    transfer_price_floor_mult: float = 0.75
+    transfer_price_ceil_mult: float = 2.5
+    transfer_listing_slot_cap: int = 5
+    transfer_listing_ttl_hours: int = 72
+    transfer_relist_cooldown_hours: int = 6
 
 
 def league_division_tier(division: str) -> int:

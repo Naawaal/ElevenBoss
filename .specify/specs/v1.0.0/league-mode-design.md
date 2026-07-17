@@ -9,7 +9,11 @@
 
 Transforms the guild seasonal league from a bare-bones loop into the bot's flagship competitive mode. Fixes economy v2 / match XP regressions, decouples weekly division points from seasonal fixture standings, and layers immersive matchday UX on the existing NSS engine + League Journal.
 
-**Recommended pacing:** 4–6 real-world weeks, matchday every 2–3 days, 48h play windows, auto-sim at window end.
+**Recommended pacing (legacy default):** 4–6 real-world weeks, matchday every 2–3 days, 48h play windows, auto-sim at window end.
+
+**League Dynamics (020, feature-flagged):** When `league_dynamics_enabled` is on, new seasons use **14 days**, **UTC midnight hard closes**, daily tick ~00:05 UTC, **8 clubs per Seasonal Division** (split when humans > 8), top/bottom 2 promo/releg, and Manager of the Matchday (manual wins). Active legacy seasons are grandfathered. Weekly Division Rank remains decoupled.
+
+**League Automation (021, feature-flagged):** When `league_automation_enabled` is on (optional per-guild inherit via `guild_config.league_automation_enabled`), a single **00:05 UTC** `league_state_machine_job` owns open registration (48h) → Dynamics start or Monday fail/reopen → daily tick digest → conclude → reopen. Admins configure **league announce channel + mention role** once in `/admin` (reuse `guild_config.league_channel_id` / `announcement_role_id`); with automation effective they keep Pause / Force End only. No new player slash commands.
 
 ---
 

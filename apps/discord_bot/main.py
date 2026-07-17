@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from apps.discord_bot.core.thread_manager import ThreadManager
-from apps.discord_bot.core.scheduler_jobs import weekly_league_reset_job, auto_sim_expired_fixtures_job, league_matchday_reminder_job, season_aging_job, youth_intake_job, regen_pool_job, daily_recovery_job, academy_growth_job
+from apps.discord_bot.core.scheduler_jobs import weekly_league_reset_job, auto_sim_expired_fixtures_job, league_state_machine_job, league_matchday_reminder_job, season_aging_job, youth_intake_job, regen_pool_job, daily_recovery_job, academy_growth_job, transfer_listing_expiry_job, weekly_payroll_job
 
 # Configure logging
 logging.basicConfig(
@@ -183,7 +183,9 @@ class ElevenBossBot(commands.Bot):
                 logger.error(f"Failed to load extension {cog}: {e}", exc_info=True)
 
         from apps.discord_bot.views.level_reward_claim import ClaimAllLevelRewardsView
+        from apps.discord_bot.views.support_legendary_claim import ClaimSupportLegendaryView
         self.add_view(ClaimAllLevelRewardsView())
+        self.add_view(ClaimSupportLegendaryView())
 
         @self.tree.error
         async def on_app_command_error(
@@ -252,7 +254,10 @@ class ElevenBossBot(commands.Bot):
         # 3. League matchday closing reminders (hourly, deduped per matchday)
         self.scheduler.add_job(league_matchday_reminder_job, "interval", hours=1, args=[self])
         self.scheduler.add_job(daily_recovery_job, "cron", hour=0, minute=5, args=[self])
+        self.scheduler.add_job(league_state_machine_job, "cron", hour=0, minute=5, args=[self])
+        self.scheduler.add_job(weekly_payroll_job, "cron", day_of_week="mon", hour=0, minute=5, args=[self])
         self.scheduler.add_job(academy_growth_job, "cron", hour=0, minute=10, args=[self])
+        self.scheduler.add_job(transfer_listing_expiry_job, "interval", hours=1, args=[self])
         self.scheduler.start()
         logger.info("APScheduler initialized and jobs started.")
 
@@ -327,6 +332,14 @@ class ElevenBossBot(commands.Bot):
             await notify_pending_level_rewards(self)
         except Exception as e:
             logger.error(f"Level reward notification failed on startup: {e}", exc_info=True)
+
+        try:
+            from apps.discord_bot.tasks.support_legendary_notifier import (
+                notify_support_legendary_rewards,
+            )
+            await notify_support_legendary_rewards(self)
+        except Exception as e:
+            logger.error(f"Support legendary notification failed on startup: {e}", exc_info=True)
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
         try:

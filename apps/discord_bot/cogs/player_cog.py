@@ -30,6 +30,8 @@ from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.middleware.match_lock import assert_not_in_match
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
+from apps.discord_bot.core.economy_rpc import get_game_config_int
+from economy.wages import contract_blocks_xi, contract_in_grace
 
 logger = logging.getLogger(__name__)
 
@@ -114,19 +116,20 @@ class PlayerProfileView(discord.ui.View):
             card_res = await db.table("player_cards").select("overall").eq("id", self.card_id).maybe_single().execute()
             ovr = card_res.data["overall"] if (card_res and card_res.data) else 50
             cost = calculate_contract_renewal_cost(ovr, GameConfig())
+            extension_days = await get_game_config_int(db, "contract_renewal_days", 7)
 
             res = await db.rpc("renew_contract", {
                 "p_club_id": self.owner_id,
                 "p_card_id": self.card_id,
                 "p_cost": cost,
-                "p_extension_days": 7
+                "p_extension_days": extension_days
             }).execute()
 
             if res.data:
                 await interaction.followup.send(
                     embed=success_embed(
                         f"📝 **Contract Renewed!**\n\n"
-                        f"Extended **{self.card_name}'s** contract by **7 days**.\n"
+                        f"Extended **{self.card_name}'s** contract by **{extension_days} days**.\n"
                         f"• Cost: `🪙 {cost} coins`"
                     ),
                     ephemeral=True
@@ -235,10 +238,22 @@ async def build_player_profile(
 
     now = datetime.datetime.now(datetime.timezone.utc)
     expiry_str = card.get("contract_expires_at")
+    grace_days = await get_game_config_int(db, "contract_grace_days", 7)
     if expiry_str:
         expiry = datetime.datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
         days_left = max(0, (expiry - now).days)
-        contract_val = f"⏳ `{days_left} Days` (Expires <t:{int(expiry.timestamp())}:D>)"
+        if contract_blocks_xi(expiry, now, grace_days=grace_days):
+            contract_val = (
+                f"🚫 **Past grace** — cannot start in XI "
+                f"(expired <t:{int(expiry.timestamp())}:D>). Renew or replace."
+            )
+        elif contract_in_grace(expiry, now, grace_days=grace_days):
+            contract_val = (
+                f"⚠️ **Grace period** — renew soon "
+                f"(expired <t:{int(expiry.timestamp())}:D>)."
+            )
+        else:
+            contract_val = f"⏳ `{days_left} Days` (Expires <t:{int(expiry.timestamp())}:D>)"
     else:
         contract_val = "❌ `No Active Contract`"
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import random
 
+import pytest
+
 from player_engine.fatigue import (
     FATIGUE_BENCH_PER_MATCH,
     FATIGUE_RECOVERY_SESSION,
@@ -14,6 +16,8 @@ from player_engine.fatigue import (
     fatigue_stat_multiplier,
     match_fatigue_drain,
     passive_recovery_amount,
+    recovery_batch_energy,
+    recovery_session_eligible,
 )
 from player_engine.injury_math import (
     INJURY_ELIGIBLE_FATIGUE_BELOW,
@@ -57,6 +61,25 @@ def test_bench_and_passive_recovery_caps() -> None:
     assert apply_passive_recovery(50, in_hospital=True, tg_level=5) == 95
     assert apply_recovery_session(50) == 50 + FATIGUE_RECOVERY_SESSION
     assert apply_recovery_session(70) == 100
+
+
+def test_recovery_session_eligible_gates() -> None:
+    assert recovery_session_eligible({"fatigue": 50}) is True
+    assert recovery_session_eligible({"fatigue": 99}) is True
+    assert recovery_session_eligible({"fatigue": 100}) is False
+    assert recovery_session_eligible({"fatigue": 40, "injury_tier": 1}) is False
+    assert recovery_session_eligible({"fatigue": 40, "in_hospital": True}) is False
+    assert recovery_session_eligible({"fatigue": 40, "injury_tier": None, "in_hospital": False}) is True
+
+
+def test_recovery_batch_energy_scaling() -> None:
+    assert recovery_batch_energy(1) == 5
+    assert recovery_batch_energy(3) == 15
+    assert recovery_batch_energy(2, per_player=7) == 14
+    with pytest.raises(ValueError):
+        recovery_batch_energy(0)
+    with pytest.raises(ValueError):
+        recovery_batch_energy(4)
 
 
 def test_injury_chance_and_tier_100_is_major() -> None:

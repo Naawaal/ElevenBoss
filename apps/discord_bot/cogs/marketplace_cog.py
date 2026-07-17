@@ -11,36 +11,51 @@ from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.middleware.match_lock import assert_not_in_match
+from apps.discord_bot.core.economy_rpc import wages_market_block_message
+from apps.discord_bot.views.marketplace_transfer import (
+    active_listing_count,
+    listed_card_ids,
+    show_my_listings,
+    show_search_market,
+    transfer_market_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
 
 async def show_marketplace_hub(interaction: discord.Interaction, owner_id: int):
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True)
     db = await get_client()
     player_res = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
     player = player_res.data
-
+    enabled = await transfer_market_enabled(db)
+    active_count, slot_cap = await active_listing_count(db, owner_id) if enabled else (0, 5)
     tokens = player.get("tokens", 0)
-    
+    listing_status = f"`{active_count} / {slot_cap}` slots filled" if enabled else "unavailable"
     embed = discord.Embed(
         title="🏪 Global Transfer Market",
         description=(
             f"Welcome to the ElevenBoss Marketplace, Manager **{player['manager_name']}**!\n\n"
             f"💰 **Your Balance**: `🪙 {player['coins']:,} coins` | `🎟️ {tokens:,} tokens`\n"
-            f"📋 **Active Listings**: `0 / 5` slots filled"
+            f"📋 **Active Listings**: {listing_status}"
         ),
         color=0x00FF87
     )
-    view = MarketplaceHubView(owner_id)
+    view = MarketplaceHubView(owner_id, transfer_enabled=enabled)
     if interaction.response.is_done():
         await interaction.edit_original_response(embed=embed, view=view)
     else:
         await interaction.response.edit_message(embed=embed, view=view)
 
 class MarketplaceHubView(discord.ui.View):
-    def __init__(self, owner_id: int) -> None:
+    def __init__(self, owner_id: int, *, transfer_enabled: bool = False) -> None:
         super().__init__(timeout=900)
         self.owner_id = owner_id
+        self.transfer_enabled = transfer_enabled
+        self.sell_btn.label = "💰 Sell to Agent"
+        self.listings_btn.label = "📋 My Listings"
+        self.listings_btn.disabled = not transfer_enabled
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -48,22 +63,27 @@ class MarketplaceHubView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(style=discord.ButtonStyle.primary, label="💰 Sell Player", custom_id="market_sell")
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="💰 Sell to Agent", custom_id="market_sell")
     async def sell_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await show_sell_menu(interaction, self.owner_id)
 
     @discord.ui.button(style=discord.ButtonStyle.primary, label="🔍 Search Market", custom_id="market_search")
     async def search_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await show_scouting_menu(interaction, self.owner_id)
+        if self.transfer_enabled:
+            await show_search_market(interaction, self.owner_id)
+        else:
+            await show_scouting_menu(interaction, self.owner_id)
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="📋 My Listings (Soon)", custom_id="market_listings", disabled=True)
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="📋 My Listings", custom_id="market_listings", disabled=True)
     async def listings_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        pass
+        await show_my_listings(interaction, self.owner_id)
 
 
 # --- SELL PLAYER SUB-VIEW FLOW ---
 
 async def show_sell_menu(interaction: discord.Interaction, owner_id: int):
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True)
     db = await get_client()
 
     # 1. Fetch full roster
@@ -92,6 +112,7 @@ async def show_sell_menu(interaction: discord.Interaction, owner_id: int):
         t["card_id"] for t in (training_res.data or [])
         if t.get("card_id")
     }
+    listing_card_ids = await listed_card_ids(db, owner_id)
 
     # 4. Filter eligible players (exclude starting 11, evolutions, active training)
     eligible_players = [
@@ -101,14 +122,15 @@ async def show_sell_menu(interaction: discord.Interaction, owner_id: int):
         and p["id"] not in starting_card_ids
         and p["id"] not in evo_card_ids
         and p["id"] not in training_card_ids
+        and str(p["id"]) not in listing_card_ids
     ]
 
     embed = discord.Embed(
-        title="🤝 Sell Roster Player",
+        title="🤝 Sell Player to Agent",
         description=(
             "Select a player card from your roster below to receive a purchase valuation from transfer agents.\n"
             "*(Max **10** agent sales per day.)*\n\n"
-            "*(Note: Players in starting 11 or active evolutions cannot be sold.)*"
+            "*(Listed, starting XI, training, and evolving players cannot be sold.)*"
         ),
         color=0x00FF87
     )
@@ -257,6 +279,8 @@ class SellPlayerSubView(discord.ui.View):
 # --- SCOUTING POOL / SEARCH MARKET (Phase D) ---
 
 async def show_scouting_menu(interaction: discord.Interaction, owner_id: int) -> None:
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True)
     db = await get_client()
     pool_res = await (
         db.table("scouting_pool_players")
@@ -357,6 +381,11 @@ class ScoutingSubView(discord.ui.View):
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
 
+            wage_msg = await wages_market_block_message(db, self.owner_id)
+            if wage_msg:
+                await interaction.followup.send(embed=error_embed(wage_msg), ephemeral=True)
+                return
+
             price = int(self.selected["list_price"])
             res = await db.rpc("purchase_scouting_player", {
                 "p_buyer_id": self.owner_id,
@@ -390,27 +419,7 @@ class MarketplaceCog(commands.Cog):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
         try:
-            db = await get_client()
-            player_res = await db.table("players").select("*").eq("discord_id", interaction.user.id).maybe_single().execute()
-            player = player_res.data if player_res else None
-
-            if not player:
-                await interaction.followup.send(embed=error_embed("Player profile not found."), ephemeral=True)
-                return
-
-            tokens = player.get("tokens", 0)
-
-            embed = discord.Embed(
-                title="🏪 Global Transfer Market",
-                description=(
-                    f"Welcome to the ElevenBoss Marketplace, Manager **{player['manager_name']}**!\n\n"
-                    f"💰 **Your Balance**: `🪙 {player['coins']:,} coins` | `🎟️ {tokens:,} tokens`\n"
-                    f"📋 **Active Listings**: `0 / 5` slots filled"
-                ),
-                color=0x00FF87
-            )
-            view = MarketplaceHubView(interaction.user.id)
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            await show_marketplace_hub(interaction, interaction.user.id)
 
         except Exception as e:
             logger.exception("Failed to load Marketplace.")

@@ -348,6 +348,22 @@ async def post_journal_result_line(
         logger.debug("post_journal_result_line failed", exc_info=True)
 
 
+async def post_momd_award(
+    bot: commands.Bot,
+    journal_thread: discord.Thread,
+    club_name: str,
+    scoreline: str,
+    coins: int,
+) -> None:
+    """Short Journal line for Manager of the Matchday (020). Skip MatchDay spam."""
+    _ = bot  # reserved for future DM/role helpers
+    text = f"🏅 Manager of the Matchday: **{club_name}** ({scoreline}) — +{int(coins):,} coins"
+    try:
+        await journal_thread.send(text)
+    except Exception:
+        logger.debug("post_momd_award failed", exc_info=True)
+
+
 async def post_matchday_result_line(
     thread: discord.Thread,
     guild: discord.Guild,
@@ -406,17 +422,28 @@ async def notify_matchday_complete(
 
         fixtures_res = await db.table("league_fixtures").select("*").eq("season_id", season_id).execute()
         all_fixtures = fixtures_res.data or []
-        standings = await fetch_standings(db, season_id)
-        table_text = format_standings_table(standings, all_fixtures, limit=10)
+        parts_res = await db.table("league_participants").select("division_tier").eq(
+            "season_id", season_id
+        ).execute()
+        tiers = sorted({int(p.get("division_tier") or 1) for p in (parts_res.data or [])})
+        if not tiers:
+            tiers = [1]
+
         role_ping = await announcement_role_mention(guild, db)
         header = f"{role_ping}\n\n" if role_ping else ""
         await threads.commentary_thread.send(
             f"{header}✅ **Matchday {completed_matchday} complete** — updated standings:",
             allowed_mentions=discord.AllowedMentions(roles=True),
         )
-        msg = await post_matchday_standings_table(
-            threads.commentary_thread, table_text, completed_matchday
-        )
+        for tier in tiers:
+            standings = await fetch_standings(db, season_id, division_tier=tier)
+            label = f"Seasonal Division {tier}" if len(tiers) > 1 else f"MD{completed_matchday}"
+            table_text = format_standings_table(standings, all_fixtures, limit=10)
+            if len(tiers) > 1:
+                await threads.commentary_thread.send(f"**{label}**")
+            await post_matchday_standings_table(
+                threads.commentary_thread, table_text, completed_matchday
+            )
     except Exception:
         logger.exception("notify_matchday_complete failed for season %s", season_id)
 

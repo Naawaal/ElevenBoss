@@ -9,7 +9,12 @@ import discord
 
 from apps.discord_bot.core.api_errors import api_error_message
 from apps.discord_bot.core.card_payload import card_rpc_payload
-from apps.discord_bot.core.view_helpers import disable_view_on_timeout, set_view_controls_disabled
+from apps.discord_bot.core.economy_rpc import wages_market_block_message
+from apps.discord_bot.core.view_helpers import (
+    add_select_if_options,
+    disable_view_on_timeout,
+    set_view_controls_disabled,
+)
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.embeds.academy_embeds import academy_hub_embed, scout_shortlist_embed
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
@@ -99,9 +104,13 @@ class AcademyHubView(discord.ui.View):
                 )
                 for p in prospects[:25]
             ]
-            sel = discord.ui.Select(placeholder="Select an academy prospect…", options=opts, row=0)
-            sel.callback = self._on_select
-            self.add_item(sel)
+            add_select_if_options(
+                self,
+                placeholder="Select an academy prospect…",
+                options=opts,
+                row=0,
+                callback=self._on_select,
+            )
 
         promote_btn = discord.ui.Button(style=discord.ButtonStyle.success, label="⬆️ Promote", row=1, disabled=True)
         promote_btn.callback = self._promote
@@ -216,6 +225,11 @@ class AcademyHubView(discord.ui.View):
             set_view_controls_disabled(self, disabled=True)
             try:
                 db = await get_client()
+                wage_msg = await wages_market_block_message(db, self.owner_id)
+                if wage_msg:
+                    set_view_controls_disabled(self, disabled=False)
+                    await interaction.followup.send(embed=error_embed(wage_msg), ephemeral=True)
+                    return
                 # Auto-finalize if timer elapsed
                 finishes = self.player.get("scouting_finishes_at")
                 if finishes:
@@ -350,9 +364,13 @@ class ScoutSignView(discord.ui.View):
                 )
             )
         if opts:
-            sel = discord.ui.Select(placeholder="Sign one prospect…", options=opts)
-            sel.callback = self._sign
-            self.add_item(sel)
+            add_select_if_options(
+                self,
+                placeholder="Sign one prospect…",
+                options=opts,
+                row=0,
+                callback=self._sign,
+            )
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -365,6 +383,10 @@ class ScoutSignView(discord.ui.View):
         idx = int(interaction.data["values"][0])
         try:
             db = await get_client()
+            wage_msg = await wages_market_block_message(db, self.owner_id)
+            if wage_msg:
+                await interaction.followup.send(embed=error_embed(wage_msg), ephemeral=True)
+                return
             res = await db.rpc(
                 "sign_youth_scout_prospect",
                 {

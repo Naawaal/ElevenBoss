@@ -25,3 +25,14 @@ def test_reserve_fits_formation_slot_striker_slots() -> None:
 def test_433_forward_line() -> None:
     for slot in (9, 10, 11):
         assert get_slot_role("4-3-3", slot) == "FWD"
+
+
+def test_352_wingbacks_are_mid_not_def() -> None:
+    """3-5-2 LWB/RWB must match SQL formation_slot_role (MID band)."""
+    for slot in (5, 6):
+        assert get_slot_role("3-5-2", slot) == "MID"
+        assert reserve_fits_formation_slot("3-5-2", slot, "MID")
+        assert not reserve_fits_formation_slot("3-5-2", slot, "DEF")
+    # 5-3-2 wingbacks stay DEF (back five)
+    assert get_slot_role("5-3-2", 2) == "DEF"
+    assert get_slot_role("5-3-2", 6) == "DEF"

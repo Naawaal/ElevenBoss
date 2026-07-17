@@ -72,6 +72,27 @@ async def academy_growth_job(bot: commands.Bot) -> None:
         logger.exception("Academy growth job failed.")
 
 
+async def transfer_listing_expiry_job(bot: commands.Bot) -> None:
+    """Hourly — release cards from expired manager-to-manager listings."""
+    try:
+        from apps.discord_bot.tasks.transfer_listing_expiry_job import expire_stale_transfer_listings
+
+        await expire_stale_transfer_listings()
+    except Exception:
+        logger.exception("Transfer-listing expiry job failed.")
+
+
+async def weekly_payroll_job(bot: commands.Bot) -> None:
+    """Monday 00:05 UTC — Starting XI wage payroll when wages_payroll_enabled."""
+    logger.info("Executing weekly payroll batch...")
+    try:
+        from apps.discord_bot.tasks.weekly_payroll_job import run_weekly_payroll
+
+        await run_weekly_payroll()
+    except Exception:
+        logger.exception("Weekly payroll job failed.")
+
+
 async def weekly_league_reset_job(bot: commands.Bot) -> None:
     """
     APScheduler cron job (Monday 00:00 UTC) to:
@@ -218,20 +239,39 @@ async def _send_dm(bot: commands.Bot, user_id: int, message: str) -> None:
         logger.warning(f"Failed to send DM to user {user_id}: {e}")
 
 async def auto_sim_expired_fixtures_job(bot: commands.Bot) -> None:
-    """APScheduler interval job to auto-simulate expired league fixtures."""
+    """APScheduler interval job — legacy pacing seasons only (NULL treated as legacy)."""
     logger.info("Executing auto simulation check for expired fixtures...")
     try:
         db = await get_client()
-        # Find all active seasons
-        seasons_res = await db.table("league_seasons").select("id").eq("status", "active").execute()
+        seasons_res = await (
+            db.table("league_seasons")
+            .select("id, pacing_mode")
+            .eq("status", "active")
+            .execute()
+        )
         seasons = seasons_res.data or []
         for s in seasons:
+            mode = s.get("pacing_mode") or "legacy"
+            if mode != "legacy":
+                continue
             from apps.discord_bot.cogs.league_cog import auto_sim_expired_fixtures
             count = await auto_sim_expired_fixtures(db, s["id"], bot)
             if count > 0:
                 logger.info(f"Auto-simulated {count} fixtures for season {s['id']}")
     except Exception as e:
         logger.error(f"Failed to execute auto simulation job: {e}", exc_info=True)
+
+
+async def dynamics_daily_tick_job(bot: commands.Bot) -> None:
+    """Deprecated — folded into ``league_state_machine_job`` (021). Kept for import safety."""
+    await league_state_machine_job(bot)
+
+
+async def league_state_machine_job(bot: commands.Bot) -> None:
+    """Cron 00:05 UTC — Dynamics ticks + League Automation lifecycle (021)."""
+    from apps.discord_bot.core.league_automation import run_league_state_machine
+
+    await run_league_state_machine(bot)
 
 
 async def league_matchday_reminder_job(bot: commands.Bot) -> None:
