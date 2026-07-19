@@ -2,6 +2,17 @@
 
 Hey Managers!
 
+## Bot match XP clarity
+
+After a bot match, Rewards now show **match XP**:
+
+- **`+N across XI`** when starters gained XP
+- **`0 — daily cap reached (100/player)`** when your XI already hit today’s match-XP limit
+
+Coins and LP still pay out after the cap — only card XP stops until UTC reset.
+
+---
+
 ## Daily packs: Epic is the max
 
 Free daily packs no longer drop **Legendary**.

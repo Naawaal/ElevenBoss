@@ -419,9 +419,13 @@ class StandardMatchHandler(IMatchOutputHandler):
                 lp_delta=lp_change,
                 new_lp=new_lp,
                 divisions=global_divisions,
+                xp_line=(kwargs.get("fitness_summary") or {}).get("xp_line"),
             )
         else:
             rewards_value = f"🪙 **+{active_earned} coins**"
+            xp_line = (kwargs.get("fitness_summary") or {}).get("xp_line")
+            if xp_line:
+                rewards_value += f"\n{xp_line}"
             if active_pts > 0:
                 rewards_value += f"\n📊 **+{active_pts} Division Rank**"
 

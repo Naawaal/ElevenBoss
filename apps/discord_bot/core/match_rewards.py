@@ -16,7 +16,7 @@ from apps.discord_bot.core.economy_rpc import (
     get_match_energy_cost,
     sync_action_energy,
 )
-from apps.discord_bot.core.match_xp import apply_match_xp_if_needed
+from apps.discord_bot.core.match_xp import apply_match_xp_if_needed, format_match_xp_line
 from apps.discord_bot.core.injury_rpc import (
     apply_post_match_fitness,
     format_bench_rest_line,
@@ -98,7 +98,7 @@ async def apply_bot_match_rewards(
     else:
         history_id = existing["id"]
 
-    await apply_match_xp_if_needed(
+    xp_result = await apply_match_xp_if_needed(
         db,
         history_id=history_id,
         existing_row=existing,
@@ -110,9 +110,12 @@ async def apply_bot_match_rewards(
         club_name=club_name,
         team_rating=team_rating,
     )
+    xp_line = format_match_xp_line(xp_result)
 
     if existing and existing.get("fatigue_applied_at"):
-        return coins, _fitness_already()
+        out = _fitness_already()
+        out["xp_line"] = xp_line
+        return coins, out
 
     intensity_tier = int(player_row.get("intensity_tier") or 1)
     fitness_summary: dict[str, Any] = {
@@ -120,6 +123,7 @@ async def apply_bot_match_rewards(
         "bench_count": bench_count,
         "error": None,
         "line": None,
+        "xp_line": xp_line,
     }
     try:
         fitness = await apply_post_match_fitness(
@@ -138,6 +142,7 @@ async def apply_bot_match_rewards(
             "bench_count": bench_count,
             "error": None,
             "line": format_bench_rest_line(True, bench_count),
+            "xp_line": xp_line,
         }
         overflow = (fitness.get("injuries") or {}).get("overflow") or []
         if overflow and bot is not None:
@@ -149,6 +154,7 @@ async def apply_bot_match_rewards(
             "bench_count": bench_count,
             "error": "fitness_failed",
             "line": format_bench_rest_line(False, bench_count),
+            "xp_line": xp_line,
         }
 
     return coins, fitness_summary

@@ -37,8 +37,11 @@ def format_bot_rewards_block(
     lp_delta: int,
     new_lp: int,
     divisions: list[dict],
+    xp_line: str | None = None,
 ) -> str:
     lines = [f"🪙 **+{coins} coins**"]
+    if xp_line:
+        lines.append(xp_line)
     if div_pts_earned > 0:
         lines.append(f"📊 **+{div_pts_earned} Division Rank** ({tier_progress_label(weekly_total)})")
     elif div_pts_earned == 0 and weekly_total > 0:
