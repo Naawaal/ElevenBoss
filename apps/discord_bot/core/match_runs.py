@@ -56,6 +56,8 @@ def build_league_snapshot(
     away_squad: list[MatchPlayerCard],
     home_cards: list[dict],
     away_cards: list[dict],
+    home_formation: str = "4-4-2",
+    away_formation: str = "4-4-2",
 ) -> dict[str, Any]:
     return {
         "fixture_id": fixture["id"],
@@ -69,6 +71,8 @@ def build_league_snapshot(
         "away_rating": away_rating,
         "home_is_ai": fixture["home"]["is_ai"],
         "away_is_ai": fixture["away"]["is_ai"],
+        "home_formation": home_formation,
+        "away_formation": away_formation,
         "home_squad": [_card_to_dict(c) for c in home_squad],
         "away_squad": [_card_to_dict(c) for c in away_squad],
         "home_card_ids": [c["id"] for c in home_cards],

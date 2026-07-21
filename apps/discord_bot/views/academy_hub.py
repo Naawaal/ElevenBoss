@@ -93,7 +93,7 @@ class AcademyHubView(discord.ui.View):
         self.prospects = prospects
         self.report = report
         self.origin = origin
-        self.selected_id: str | None = None
+        self.selected_id: str | None = str(prospects[0]["id"]) if len(prospects) == 1 else None
 
         if prospects:
             opts = [
@@ -112,12 +112,24 @@ class AcademyHubView(discord.ui.View):
                 callback=self._on_select,
             )
 
-        promote_btn = discord.ui.Button(style=discord.ButtonStyle.success, label="⬆️ Promote", row=1, disabled=True)
+        promote_btn = discord.ui.Button(
+            style=discord.ButtonStyle.success,
+            label="⬆️ Promote",
+            row=1,
+            disabled=not self.selected_id,
+            custom_id=f"academy_promote_{owner_id}",
+        )
         promote_btn.callback = self._promote
         self.promote_btn = promote_btn
         self.add_item(promote_btn)
 
-        release_btn = discord.ui.Button(style=discord.ButtonStyle.danger, label="🗑️ Release", row=1, disabled=True)
+        release_btn = discord.ui.Button(
+            style=discord.ButtonStyle.danger,
+            label="🗑️ Release",
+            row=1,
+            disabled=not self.selected_id,
+            custom_id=f"academy_release_{owner_id}",
+        )
         release_btn.callback = self._release
         self.release_btn = release_btn
         self.add_item(release_btn)
@@ -160,7 +172,6 @@ class AcademyHubView(discord.ui.View):
         return True
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True)
         self.selected_id = interaction.data["values"][0]
         self.promote_btn.disabled = False
         self.release_btn.disabled = False
@@ -168,12 +179,22 @@ class AcademyHubView(discord.ui.View):
         note = ""
         if card and not is_promotion_ready(int(card.get("overall", 0))):
             note = f" (below Ready {READY_OVR_DEFAULT} — early promote OK)"
+        try:
+            await interaction.response.edit_message(view=self)
+        except discord.HTTPException:
+            logger.exception("Academy select failed to refresh view for owner %s", self.owner_id)
+            await interaction.response.defer(ephemeral=True)
+            await interaction.followup.send(
+                f"Selected **{(card or {}).get('name', 'prospect')}**{note}.",
+                ephemeral=True,
+            )
+            if interaction.message:
+                await interaction.message.edit(view=self)
+            return
         await interaction.followup.send(
             f"Selected **{(card or {}).get('name', 'prospect')}**{note}.",
             ephemeral=True,
         )
-        if interaction.message:
-            await interaction.message.edit(view=self)
 
     async def _promote(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)

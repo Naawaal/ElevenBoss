@@ -55,6 +55,11 @@ from apps.discord_bot.core.league_journal import (
     resolve_season_threads,
 )
 from apps.discord_bot.core.pitch_generator import generate_squad_pitch
+from apps.discord_bot.core.squad_fetch import (
+    fetch_squad_xi,
+    ordered_cards_to_match_squad,
+    players_list_for_pitch,
+)
 from leagues import format_standings_table, tie_breaker_footer
 from apps.discord_bot.core.match_runs import (
     abandon_run,
@@ -502,15 +507,32 @@ class LeagueMatchHandler(IMatchOutputHandler):
         away_name: str,
         home_cards: list[dict],
         away_cards: list[dict],
-        formation: str = "4-4-2",
+        *,
+        home_formation: str = "4-4-2",
+        away_formation: str = "4-4-2",
+        home_assignments: dict[int, dict] | None = None,
+        away_assignments: dict[int, dict] | None = None,
     ) -> None:
         """Post pitch images for both XIs before kickoff."""
         try:
-            home_pitch = await generate_squad_pitch(formation, home_cards[:11])
-            await self.commentary_thread.send(content=f"📋 **{home_name}** — Starting XI", file=home_pitch)
+            home_pitch_list = (
+                players_list_for_pitch(home_formation, home_assignments)
+                if home_assignments
+                else home_cards[:11]
+            )
+            home_pitch = await generate_squad_pitch(home_formation, home_pitch_list)
+            await self.commentary_thread.send(content=f"📋 **{home_name}** — Starting XI (`{home_formation}`)", file=home_pitch)
             if away_cards:
-                away_pitch = await generate_squad_pitch(formation, away_cards[:11])
-                await self.commentary_thread.send(content=f"📋 **{away_name}** — Starting XI", file=away_pitch)
+                away_pitch_list = (
+                    players_list_for_pitch(away_formation, away_assignments)
+                    if away_assignments
+                    else away_cards[:11]
+                )
+                away_pitch = await generate_squad_pitch(away_formation, away_pitch_list)
+                await self.commentary_thread.send(
+                    content=f"📋 **{away_name}** — Starting XI (`{away_formation}`)",
+                    file=away_pitch,
+                )
         except Exception:
             logger.debug("Prematch pitch render skipped", exc_info=True)
 
@@ -806,9 +828,13 @@ async def run_league_match_simulation(
     home_squad: list[MatchPlayerCard] = []
     home_rating = 60.0
     home_cards: list[dict] = []
+    home_formation = "4-4-2"
+    home_assignments: dict[int, dict] = {}
     away_squad: list[MatchPlayerCard] = []
     away_rating = 60.0
     away_cards: list[dict] = []
+    away_formation = "4-4-2"
+    away_assignments: dict[int, dict] = {}
 
     sim_seed = sim_seed if sim_seed is not None else generate_sim_seed()
     match_rng = random.Random(sim_seed)
@@ -824,6 +850,8 @@ async def run_league_match_simulation(
         away_name = snapshot.get("away_name", away_p["club_name"])
         home_card_ids = snapshot.get("home_card_ids", [])
         away_card_ids = snapshot.get("away_card_ids", [])
+        home_formation = snapshot.get("home_formation", "4-4-2")
+        away_formation = snapshot.get("away_formation", "4-4-2")
         # Recovery snapshots only store ids — hydrate name/age for match XP (FR-001/002)
         home_cards = await hydrate_cards_for_match_xp(db, home_card_ids) if not home_p["is_ai"] else []
         away_cards = await hydrate_cards_for_match_xp(db, away_card_ids) if not away_p["is_ai"] else []
@@ -832,12 +860,10 @@ async def run_league_match_simulation(
             home_rating = float(home_p.get("ai_rating") or 60.0)
             home_squad = build_bot_match_squad(int(home_rating), bot_squad_rng)
         else:
-            assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", fixture["home_team_id"]).execute()
-            assignments = assignments_res.data or []
-            home_cards = [a["player_cards"] for a in assignments if a.get("player_cards")]
-            for c in home_cards:
-                playstyles = await fetch_playstyles(db, c["id"])
-                home_squad.append(card_from_db_row(c, playstyles))
+            home_formation, home_assignments, home_cards = await fetch_squad_xi(
+                db, int(fixture["home_team_id"])
+            )
+            home_squad = await ordered_cards_to_match_squad(db, home_cards)
             if home_squad:
                 home_rating = sum(p.overall for p in home_squad) / len(home_squad)
 
@@ -845,12 +871,10 @@ async def run_league_match_simulation(
             away_rating = float(away_p.get("ai_rating") or 60.0)
             away_squad = build_bot_match_squad(int(away_rating), bot_squad_rng)
         else:
-            assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", fixture["away_team_id"]).execute()
-            assignments = assignments_res.data or []
-            away_cards = [a["player_cards"] for a in assignments if a.get("player_cards")]
-            for c in away_cards:
-                playstyles = await fetch_playstyles(db, c["id"])
-                away_squad.append(card_from_db_row(c, playstyles))
+            away_formation, away_assignments, away_cards = await fetch_squad_xi(
+                db, int(fixture["away_team_id"])
+            )
+            away_squad = await ordered_cards_to_match_squad(db, away_cards)
             if away_squad:
                 away_rating = sum(p.overall for p in away_squad) / len(away_squad)
 
@@ -927,6 +951,8 @@ async def run_league_match_simulation(
                 away_squad=away_squad,
                 home_cards=home_cards,
                 away_cards=away_cards,
+                home_formation=home_formation,
+                away_formation=away_formation,
             ),
             guild_id=guild.id if guild else None,
             thread_id=thread_id,
@@ -971,17 +997,17 @@ async def run_league_match_simulation(
         owner_by_side["away"] = int(fixture["away_team_id"])
 
     if not silent:
-        # Pre-match lineup pitches (human squads only)
-        home_pitch_cards = [
-            {"name": c.get("name", "Player"), "overall": c.get("overall", 50), "position": c.get("position", "MID")}
-            for c in home_cards
-        ] if home_cards and not home_p["is_ai"] else []
-        away_pitch_cards = [
-            {"name": c.get("name", "Player"), "overall": c.get("overall", 50), "position": c.get("position", "MID")}
-            for c in away_cards
-        ] if away_cards and not away_p["is_ai"] else []
-        if hasattr(handler, "post_prematch_lineups") and (home_pitch_cards or away_pitch_cards):
-            await handler.post_prematch_lineups(home_name, away_name, home_pitch_cards, away_pitch_cards)
+        if hasattr(handler, "post_prematch_lineups") and (home_cards or away_cards):
+            await handler.post_prematch_lineups(
+                home_name,
+                away_name,
+                home_cards,
+                away_cards,
+                home_formation=home_formation,
+                away_formation=away_formation,
+                home_assignments=home_assignments or None,
+                away_assignments=away_assignments or None,
+            )
         await handler.start_match(target, home_name, away_name, touchline_view)
 
     ticker_history: list[str] = []
@@ -1425,10 +1451,8 @@ class BattleCog(commands.Cog):
                 )
                 return
 
-            # 3. Fetch starting 11 details
-            assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", interaction.user.id).execute()
-            assignments = assignments_res.data or []
-            active_cards = [a["player_cards"] for a in assignments if a.get("player_cards")]
+            # 3. Fetch starting 11 details (slot-ordered + saved formation)
+            _, _, active_cards = await fetch_squad_xi(db, interaction.user.id)
             count = len(active_cards)
             _, squad_invalid = await fetch_xi_state(db, interaction.user.id)
             block = await club_xi_block_reason(db, interaction.user.id, card_count=count)
@@ -1448,10 +1472,7 @@ class BattleCog(commands.Cog):
                 return
  
             # 4. Construct MatchPlayerCard models including morale-adjusted OVR
-            match_cards = []
-            for c in active_cards:
-                playstyles = await fetch_playstyles(db, c["id"])
-                match_cards.append(card_from_db_row(c, playstyles))
+            match_cards = await ordered_cards_to_match_squad(db, active_cards)
  
             # Fetch global divisions
             div_res = await db.table("global_divisions").select("*").order("min_lp", desc=True).execute()
@@ -1886,18 +1907,12 @@ class BattleCog(commands.Cog):
 
         try:
             async def get_squad_cards(discord_id: int):
-                assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", discord_id).execute()
-                assignments = assignments_res.data or []
-                active_cards = [a["player_cards"] for a in assignments if a.get("player_cards")]
+                _, assignments, active_cards = await fetch_squad_xi(db, discord_id)
+                match_cards = await ordered_cards_to_match_squad(db, active_cards)
+                return match_cards, [c["id"] for c in active_cards], active_cards, assignments
 
-                match_cards = []
-                for c in active_cards:
-                    playstyles = await fetch_playstyles(db, c["id"])
-                    match_cards.append(card_from_db_row(c, playstyles))
-                return match_cards, [c["id"] for c in active_cards], active_cards
-
-            c_cards, _, _ = await get_squad_cards(challenger.id)
-            o_cards, _, _ = await get_squad_cards(opponent.id)
+            c_cards, _, _, _ = await get_squad_cards(challenger.id)
+            o_cards, _, _, _ = await get_squad_cards(opponent.id)
 
             if len(c_cards) != 11 or len(o_cards) != 11:
                 error_msg = ""

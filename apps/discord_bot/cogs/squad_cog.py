@@ -13,7 +13,8 @@ from apps.discord_bot.core.api_errors import api_error_message
 from apps.discord_bot.core.pitch_generator import generate_squad_pitch, generate_roster_grid
 from apps.discord_bot.core.view_helpers import disable_view_on_timeout
 from apps.discord_bot.core.select_helpers import rebuild_select_options
-from match_engine import reserve_fits_formation_slot
+from apps.discord_bot.core.squad_fetch import players_list_for_pitch
+from match_engine import reassign_formation_slots, reserve_fits_formation_slot
 from apps.discord_bot.middleware.match_lock import assert_not_in_match
 from apps.discord_bot.views.marketplace_transfer import listed_card_ids
 from apps.discord_bot.core.squad_validity import card_contract_blocks_assign
@@ -43,7 +44,7 @@ async def fetch_squad_data(user_id: int):
     formation = squad_res.data.get("formation", "4-4-2") if (squad_res and squad_res.data) else "4-4-2"
     
     # 3. Fetch current squad assignments
-    assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", user_id).execute()
+    assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", user_id).order("position_slot").execute()
     assignments = {a["position_slot"]: a["player_cards"] for a in assignments_res.data if a.get("player_cards")}
     
     # 4. Fetch total owned player cards count
@@ -58,25 +59,7 @@ async def fetch_squad_data(user_id: int):
     return club_name, formation, assignments, reserves_count, is_locked, squad_invalid
 
 def get_players_list_for_pitch(formation: str, assignments: dict[int, dict]) -> list[dict]:
-    players_list = []
-    for slot in range(1, 12):
-        card = assignments.get(slot)
-        if card:
-            players_list.append({
-                "name": card["name"],
-                "overall": card["overall"],
-                "position": card["position"],
-                "rarity": card.get("rarity", "Common")
-            })
-        else:
-            req_pos = get_slot_position(formation, slot)
-            players_list.append({
-                "name": "Empty Slot",
-                "overall": 0,
-                "position": req_pos,
-                "rarity": "Common"
-            })
-    return players_list
+    return players_list_for_pitch(formation, assignments)
 
 def build_hub_embed(
     club_name: str,
@@ -233,7 +216,7 @@ class SquadFormationView(discord.ui.View):
     def get_embed(self) -> discord.Embed:
         return discord.Embed(
             title="🔄 Change Squad Formation",
-            description="Select your new starting formation. Changing formations will automatically assign players to match the positions required.",
+            description="Select your new starting formation. Starters are kept where they still fit; empty slots fill from the bench.",
             color=0x00FF87
         )
 
@@ -278,42 +261,11 @@ class SquadFormationView(discord.ui.View):
                     eligible.append(c)
             all_cards = eligible
 
-            assigned_cards = {}  # slot -> card
-            used_ids = set()
-            
-            # Positions needed for this formation
-            positions_needed = []
-            for slot in range(1, 12):
-                positions_needed.append((slot, get_slot_position(chosen_formation, slot)))
-                
-            # First pass: assign natural positions (slot 1 always GK)
-            for slot, pos in positions_needed:
-                if slot == 1:
-                    matching_players = [c for c in all_cards if c["position"] == "GK" and c["id"] not in used_ids]
-                else:
-                    matching_players = [c for c in all_cards if c["position"] == pos and c["id"] not in used_ids]
-                if matching_players:
-                    matching_players.sort(key=lambda x: x["overall"], reverse=True)
-                    best_player = matching_players[0]
-                    assigned_cards[slot] = best_player
-                    used_ids.add(best_player["id"])
-            
-            # Second pass: fill empty slots with highest overall unused players (out-of-position fallback)
-            for slot, pos in positions_needed:
-                if slot not in assigned_cards:
-                    if slot == 1:
-                        gk_pool = [c for c in all_cards if c["position"] == "GK" and c["id"] not in used_ids]
-                        if gk_pool:
-                            gk_pool.sort(key=lambda x: x["overall"], reverse=True)
-                            assigned_cards[slot] = gk_pool[0]
-                            used_ids.add(gk_pool[0]["id"])
-                        continue
-                    unused_players = [c for c in all_cards if c["id"] not in used_ids]
-                    if unused_players:
-                        unused_players.sort(key=lambda x: x["overall"], reverse=True)
-                        best_fallback = unused_players[0]
-                        assigned_cards[slot] = best_fallback
-                        used_ids.add(best_fallback["id"])
+            assigned_cards = reassign_formation_slots(
+                chosen_formation,
+                self.hub_view.assignments,
+                all_cards,
+            )
             
             payload = [{"slot": slot, "card_id": str(card["id"])} for slot, card in assigned_cards.items()]
             await db.rpc("set_formation_and_assignments", {
@@ -334,7 +286,7 @@ class SquadFormationView(discord.ui.View):
             self.hub_view.is_locked = is_locked
             self.hub_view.setup_buttons()
             
-            success_msg = f"Successfully set formation to **{chosen_formation}** and auto-assigned starters!"
+            success_msg = f"Successfully set formation to **{chosen_formation}** and reassigned starters!"
             embed = build_hub_embed(club_name, formation, assignments, reserves_count, is_locked, squad_invalid)
             embed.description = f"✅ {success_msg}"
             
