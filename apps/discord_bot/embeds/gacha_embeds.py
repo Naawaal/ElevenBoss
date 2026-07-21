@@ -1,7 +1,7 @@
 # apps/discord_bot/embeds/gacha_embeds.py
 from __future__ import annotations
 import discord
-from gacha import GachaPlayer, GachaPack
+from gacha import GachaPack
 
 def gacha_claim_embed(pack: GachaPack) -> discord.Embed:
     """Beautiful embed showing the 5 claimed gacha cards."""
@@ -51,5 +51,42 @@ def gacha_cooldown_embed(remaining_seconds: float) -> discord.Embed:
         ),
         color=0xE74C3C
     )
-    embed.set_footer(text="Pack refreshes every 22 hours.")
+    embed.set_footer(text="Pack refreshes every 12 hours (requires a new Top.gg vote).")
     return embed
+
+
+def topgg_vote_prompt_embed(vote_url: str) -> discord.Embed:
+    embed = discord.Embed(
+        title="🗳️ Vote Required",
+        description=(
+            "To claim your free pack, vote for ElevenBoss on Top.gg first.\n\n"
+            "1. Click the link below to vote\n"
+            "2. Return here and click **Vote & Claim Free Pack** again\n\n"
+            f"Vote link: {vote_url}"
+        ),
+        color=0xFFAA00,
+    )
+    embed.set_footer(text="Votes reset every 12 hours on Top.gg.")
+    return embed
+
+
+def topgg_vote_unavailable_embed() -> discord.Embed:
+    return discord.Embed(
+        title="⚠️ Vote Verification Unavailable",
+        description=(
+            "We couldn't verify your Top.gg vote right now. Please try again in a few minutes.\n\n"
+            "Your pack was **not** claimed."
+        ),
+        color=0xE74C3C,
+    )
+
+
+def topgg_vote_replay_embed() -> discord.Embed:
+    return discord.Embed(
+        title="🗳️ Vote Already Used",
+        description=(
+            "This Top.gg vote was already used for a free pack. "
+            "Vote again after your cooldown to claim another pack."
+        ),
+        color=0xFFAA00,
+    )

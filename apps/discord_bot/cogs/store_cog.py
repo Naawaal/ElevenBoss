@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date, datetime, timezone, timedelta
 
 import discord
@@ -12,17 +13,36 @@ from discord.ext import commands
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
-from apps.discord_bot.embeds.gacha_embeds import gacha_cooldown_embed, gacha_claim_embed
+from apps.discord_bot.embeds.gacha_embeds import (
+    gacha_cooldown_embed,
+    gacha_claim_embed,
+    topgg_vote_prompt_embed,
+    topgg_vote_replay_embed,
+    topgg_vote_unavailable_embed,
+)
 from apps.discord_bot.core.economy_rpc import (
     format_action_energy_status_async,
+    get_game_config_int,
     get_pack_rarity_override,
     sync_action_energy,
 )
+from apps.discord_bot.core.topgg_vote import check_topgg_vote, resolve_topgg_bot_id, topgg_vote_url
 from apps.discord_bot.core.view_helpers import disable_view_on_timeout, set_view_controls_disabled
 from apps.discord_bot.core.card_payload import card_rpc_payload
 from gacha import generate_pack
 
 logger = logging.getLogger(__name__)
+
+
+def _gacha_pack_field_value(*, gacha_ready: bool, gacha_cooldown_str: str) -> str:
+    base = (
+        "Vote on Top.gg, then claim a free pack of 5 random players "
+        "(Common / Rare / Epic — no Legendary).\n"
+        "Odds ~60% / 30% / 10%. Available every 12 hours after your last claim.\n"
+    )
+    if gacha_ready:
+        return base + "🟢 Vote & claim available now!"
+    return base + f"⏳ Cooldown: **{gacha_cooldown_str}** remaining."
 
 
 async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
@@ -41,6 +61,7 @@ async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
     last_login = player.get("last_daily_login")
     login_claimed_today = last_login is not None and str(last_login) == str(date.today())
 
+    cooldown_hours = await get_game_config_int(db, "daily_pack_cooldown_hours", 12)
     last_claim_str = player.get("last_claim_at")
     gacha_ready = True
     gacha_cooldown_str = ""
@@ -48,7 +69,7 @@ async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
         try:
             last_claim = datetime.fromisoformat(last_claim_str.replace("Z", "+00:00"))
             now = datetime.now(timezone.utc)
-            cooldown_delta = timedelta(hours=22)
+            cooldown_delta = timedelta(hours=cooldown_hours)
             elapsed = now - last_claim
             if elapsed < cooldown_delta:
                 gacha_ready = False
@@ -84,11 +105,7 @@ async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
     )
     embed.add_field(
         name="🎫 Daily Gacha Pack",
-        value=(
-            "Claim a free pack of 5 random players (Common / Rare / Epic — no Legendary).\n"
-            "Odds ~60% / 30% / 10%. Claimable every 22 hours.\n"
-            + ("🟢 Available now!" if gacha_ready else f"⏳ Cooldown: **{gacha_cooldown_str}** remaining.")
-        ),
+        value=_gacha_pack_field_value(gacha_ready=gacha_ready, gacha_cooldown_str=gacha_cooldown_str),
         inline=False,
     )
     embed.add_field(
@@ -183,12 +200,49 @@ class StoreHubView(discord.ui.View):
             set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(embed=error_embed(str(exc)), ephemeral=True)
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="🎫 Claim Free Pack", custom_id="store_gacha_claim", row=0)
+    @discord.ui.button(
+        style=discord.ButtonStyle.secondary,
+        label="🗳️ Vote & Claim Free Pack",
+        custom_id="store_gacha_claim",
+        row=0,
+    )
     async def gacha_claim_btn(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         await interaction.response.defer(ephemeral=True)
         set_view_controls_disabled(self, disabled=True)
+        bot_id = interaction.client.user.id if interaction.client.user else 0
+        listing_id = resolve_topgg_bot_id(bot_id)
+        vote_url = topgg_vote_url(runtime_bot_id=bot_id)
+
         try:
             db = await get_client()
+            vote_at: datetime | None = None
+
+            # ponytail: ops emergency only — skips Top.gg API when game_config flag is 1
+            if await get_game_config_int(db, "topgg_vote_bypass_enabled", 0) == 1:
+                vote_at = datetime.now(timezone.utc)
+            else:
+                token = os.environ.get("TOPGG_TOKEN", "")
+                vote_result = await check_topgg_vote(
+                    discord_user_id=self.owner_id,
+                    token=token,
+                    bot_id=listing_id,
+                )
+                if vote_result.status == "not_voted":
+                    await interaction.followup.send(
+                        embed=topgg_vote_prompt_embed(vote_url),
+                        ephemeral=True,
+                    )
+                    set_view_controls_disabled(self, disabled=False)
+                    return
+                if vote_result.status == "unavailable":
+                    await interaction.followup.send(
+                        embed=topgg_vote_unavailable_embed(),
+                        ephemeral=True,
+                    )
+                    set_view_controls_disabled(self, disabled=False)
+                    return
+                vote_at = vote_result.vote_at or datetime.now(timezone.utc)
+
             override = await get_pack_rarity_override(db)
             if override is not None:
                 rarities, weights = override
@@ -200,6 +254,7 @@ class StoreHubView(discord.ui.View):
             await db.rpc("claim_daily_pack", {
                 "p_club_id": self.owner_id,
                 "p_cards": cards_payload,
+                "p_topgg_vote_at": vote_at.isoformat(),
             }).execute()
 
             await interaction.followup.send(embed=gacha_claim_embed(pack), ephemeral=True)
@@ -215,6 +270,14 @@ class StoreHubView(discord.ui.View):
                     return
                 except ValueError:
                     pass
+            if "VOTE_ALREADY_USED" in err:
+                await interaction.followup.send(embed=topgg_vote_replay_embed(), ephemeral=True)
+                await show_store(interaction, self.owner_id)
+                return
+            if "VOTE_STALE" in err:
+                await interaction.followup.send(embed=topgg_vote_prompt_embed(vote_url), ephemeral=True)
+                set_view_controls_disabled(self, disabled=False)
+                return
             logger.exception("Failed to claim daily pack in store.")
             set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(

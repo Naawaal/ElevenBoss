@@ -2,6 +2,16 @@
 
 Hey Managers!
 
+## Free pack: Top.gg vote required
+
+The **Vote & Claim Free Pack** button in `/store` now requires a recent **Top.gg** vote before granting your 5-card pack.
+
+- Vote on Top.gg, then click the button again to verify and claim
+- Pack cooldown is **12 hours** (was 22h) — aligned with Top.gg’s vote window
+- If vote verification is temporarily unavailable, your pack is **not** claimed — try again shortly
+
+---
+
 ## Bot match XP clarity
 
 After a bot match, Rewards now show **match XP**:
@@ -17,7 +27,7 @@ Coins and LP still pay out after the cap — only card XP stops until UTC reset.
 
 Free daily packs no longer drop **Legendary**.
 
-- Mix: **Common ~60% · Rare ~30% · Epic ~10%** (5 cards, 22-hour claim)
+- Mix: **Common ~60% · Rare ~30% · Epic ~10%** (5 cards; vote on Top.gg + 12-hour claim cooldown)
 - **Legendary** cards you already own stay as-is
 - Special thank-you / event Legendaries are unchanged (not from packs)
 

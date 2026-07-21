@@ -113,22 +113,29 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 ### US-02: Daily Gacha Pack Claim
 
 > **As a** registered player,
-> **I want to** claim a free player pack every 22 hours,
-> **So that** I receive new players to build my squad without spending money.
+> **I want to** vote for the bot on Top.gg and claim a free player pack every 12 hours,
+> **So that** I receive new players to build my squad while supporting bot discovery.
+
+> **Feature spec**: [`specs/025-topgg-vote-pack/spec.md`](../../../specs/025-topgg-vote-pack/spec.md) — vote gate, API verification, vote consumption tracking.
 
 **Acceptance Criteria:**
 - **GIVEN** I am a registered player,
-- **WHEN** I run `/store` and click the **🎫 Claim Free Pack** button,
-- **THEN** the bot checks my last claim timestamp.
-- **AND GIVEN** 22 hours have elapsed since my last claim (or I have never claimed),
+- **WHEN** I run `/store` and click the **Vote & Claim Free Pack** button,
+- **THEN** the bot verifies I have an active Top.gg vote (within the 12-hour vote window) via Top.gg API.
+- **AND GIVEN** I have **not** voted recently,
+- **THEN** the bot shows the Top.gg vote link and does **not** grant a pack until I vote and click again.
+- **AND GIVEN** I have a valid recent vote and 12 hours have elapsed since my last claim (or I have never claimed),
 - **THEN** I receive a pack of **5 randomised players** drawn from a weighted rarity pool (`Common 60%, Rare 30%, Epic 10%` — Epic max; packs never drop Legendary).
 - **AND** each player's overall rating is derived from their rarity tier (Common 50–64, Rare 65–74, Epic 75–84, Legendary 85–99).
 - **AND** each new card rolls a **position archetype** (e.g. FWD Poacher / Speedster / Complete Forward; MID/DEF/GK each have ≥3 styles) that shapes attributes and is stored/displayed as `player_cards.role`.
 - **AND** the printed overall equals True OVR at creation (deterministic terminating balance; no abandoned mismatch loop).
 - **AND** pack rarity weights live in named pack config (`standard` = 60/30/8/2); factory returns a typed `CreatedPlayerCard` mapped to `GachaPlayer` before RPC payload.
-- **AND** my `last_claim_at` timestamp is updated atomically in the same transaction.
-- **GIVEN** fewer than 22 hours have elapsed since my last claim,
+- **AND** my `last_claim_at` timestamp and vote consumption marker are updated atomically in the same RPC transaction.
+- **AND** the same Top.gg vote cycle cannot grant more than one pack (server-side vote consumption).
+- **GIVEN** fewer than 12 hours have elapsed since my last claim,
 - **THEN** the bot responds with a cooldown embed showing the time remaining (`HH:MM:SS`), and NO players are awarded.
+- **GIVEN** Top.gg API is unavailable,
+- **THEN** the bot fails closed with a friendly retry message (no pack) unless an ops-only bypass flag is enabled.
 
 ---
 
@@ -1178,9 +1185,9 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 #### AC-29d: Atomic Daily Pack Claim
 - **GIVEN** a manager claims a free pack from `/store`,
-- **WHEN** `claim_daily_pack(p_club_id)` runs,
-- **THEN** cooldown check, `last_claim_at` update, and card inserts occur in **one** RPC transaction.
-- **AND** failed card insert does not consume the 22h cooldown.
+- **WHEN** `claim_daily_pack(p_club_id)` runs (after Top.gg vote verified in bot layer per US-02 / `025-topgg-vote-pack`),
+- **THEN** cooldown check, vote consumption, `last_claim_at` update, and card inserts occur in **one** RPC transaction.
+- **AND** failed card insert does not consume the cooldown or vote consumption marker.
 - **AND** `store_cog` calls the RPC only — no sequential `UPDATE` then `INSERT` in app code.
 
 #### AC-29e: Slash Command Defer Compliance

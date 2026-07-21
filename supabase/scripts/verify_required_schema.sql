@@ -63,6 +63,7 @@ BEGIN
       ('column:public.players.best_weekly_rank'),
       ('table:public.weekly_rank_rewards'),
       ('column:public.players.last_daily_login'),
+      ('column:public.players.last_consumed_topgg_vote_at'),
       ('column:public.match_history.run_id'),
       ('column:public.match_history.xp_applied_at'),
       ('column:public.match_history.fatigue_applied_at'),
@@ -247,7 +248,7 @@ BEGIN
         WHEN 'renew_contract' THEN to_regprocedure('public.renew_contract(bigint,uuid,bigint,integer)')
         WHEN 'cancel_player_evolution' THEN to_regprocedure('public.cancel_player_evolution(bigint,uuid)')
         WHEN 'process_stat_drill' THEN to_regprocedure('public.process_stat_drill(bigint,uuid,text)')
-        WHEN 'claim_daily_pack' THEN to_regprocedure('public.claim_daily_pack(bigint,jsonb)')
+        WHEN 'claim_daily_pack' THEN to_regprocedure('public.claim_daily_pack(bigint,jsonb,timestamptz)')
         WHEN 'card_age_from_dob' THEN to_regprocedure('public.card_age_from_dob(date,date)')
         WHEN 'card_xp_age_multiplier' THEN to_regprocedure('public.card_xp_age_multiplier(integer)')
         WHEN 'retire_player_card' THEN to_regprocedure('public.retire_player_card(uuid)')
