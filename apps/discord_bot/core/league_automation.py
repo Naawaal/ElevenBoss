@@ -70,7 +70,11 @@ async def _resolve_guild(bot: commands.Bot, guild_id: int) -> discord.Guild | No
 
 async def open_auto_registration(bot: commands.Bot, db: Any, guild_id: int) -> bool:
     """Open a 48h automation-owned registration season. Returns True on success."""
-    from apps.discord_bot.core.economy_rpc import get_game_config_int, guild_automation_effective
+    from apps.discord_bot.core.economy_rpc import (
+        get_game_config_int,
+        guild_automation_effective,
+        guild_lifecycle_v1_effective,
+    )
     from apps.discord_bot.core.league_announce import (
         post_registration_open,
         resolve_announce_targets,
@@ -102,11 +106,15 @@ async def open_auto_registration(bot: commands.Bot, db: Any, guild_id: int) -> b
         return False
     league_id = league_res.data["id"]
 
+    living_statuses = [
+        "active", "registration", "registration_open", "registration_locked",
+        "preparing", "paused", "settling",
+    ]
     existing = await (
         db.table("league_seasons")
         .select("id")
         .eq("league_id", league_id)
-        .in_("status", ["active", "registration", "paused"])
+        .in_("status", living_statuses)
         .execute()
     )
     has_active_or_reg = bool(existing.data)
@@ -114,6 +122,28 @@ async def open_auto_registration(bot: commands.Bot, db: Any, guild_id: int) -> b
         return False
 
     hours = await get_game_config_int(db, "league_automation_registration_hours", 48)
+
+    # Cutover guilds open V1 registration via the shared engine (not Dynamics).
+    if await guild_lifecycle_v1_effective(db, guild_id):
+        from apps.discord_bot.core.league_lifecycle_engine import open_registration_season
+
+        result = await open_registration_season(
+            db,
+            league_id=league_id,
+            guild_id=guild_id,
+            registration_hours=hours,
+            trigger="automation",
+        )
+        if not result.get("ok"):
+            return False
+        await post_registration_open(
+            bot, db, guild,
+            season_number=int(result["season_number"]),
+            closes_at=result["closes_at"],
+        )
+        logger.info("Opened V1 auto registration Season %s for guild %s", result["season_number"], guild_id)
+        return True
+
     closes = registration_closes_at(now, hours)
     seasons_res = await (
         db.table("league_seasons")
@@ -177,9 +207,11 @@ async def start_dynamics_season_from_registration(
     dynamics = True if automation else await league_dynamics_enabled(db)
 
     if dynamics:
+        # Sort by tier then player_id — do not select registered_at (may be absent
+        # on DBs where league_members predated 015's CREATE TABLE IF NOT EXISTS).
         regs_res = await (
             db.table("league_members")
-            .select("player_id, seasonal_division_tier, registered_at, players(*)")
+            .select("player_id, seasonal_division_tier, players(*)")
             .eq("guild_id", guild_id)
             .execute()
         )
@@ -187,7 +219,7 @@ async def start_dynamics_season_from_registration(
         regs.sort(
             key=lambda r: (
                 int(r.get("seasonal_division_tier") or 1),
-                r.get("registered_at") or "",
+                int(r.get("player_id") or 0),
             )
         )
         guild_members = [r["players"] for r in regs if r.get("players")]
@@ -760,6 +792,9 @@ async def _phase_b_close_registration(bot: commands.Bot, db: Any) -> None:
         .execute()
     )
     for season in seasons_res.data or []:
+        if (season.get("pacing_mode") or "") == "lifecycle_v1":
+            # V1 registration_open is closed by process_due_transitions — never Dynamics start.
+            continue
         cfg = _cfg(season)
         if not cfg.get("automation"):
             continue
@@ -867,8 +902,10 @@ async def _phase_c_open_registration(
 
 
 async def run_league_state_machine(bot: commands.Bot) -> None:
-    """Daily 00:05 UTC orchestrator — Dynamics ticks + automation lifecycle."""
+    """Daily Dynamics tick plus the separate, authoritative V1 wake-up."""
     from apps.discord_bot.core.economy_rpc import league_automation_enabled
+    from apps.discord_bot.core.league_lifecycle_engine import process_due_transitions
+    from apps.discord_bot.core.league_outbox import publish_pending_outbox
 
     logger.info("Executing league state machine...")
     try:
@@ -877,6 +914,13 @@ async def run_league_state_machine(bot: commands.Bot) -> None:
 
         # Phase A always runs Dynamics ticks (even when global flag off)
         queue_open = await _phase_a_dynamics_ticks(bot, db, global_automation=global_on)
+        # V1 only evaluates rows explicitly marked lifecycle_v1; Dynamics and
+        # legacy windows remain under their established, separate tick paths.
+        from apps.discord_bot.core.league_recovery import recover_stalled_operations
+
+        await recover_stalled_operations(db)
+        await process_due_transitions(bot, db)
+        await publish_pending_outbox(bot, db)
 
         if not global_on:
             logger.info("League automation global flag off — skipped open/start/digest")

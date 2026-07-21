@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from apps.discord_bot.core.thread_manager import ThreadManager
-from apps.discord_bot.core.scheduler_jobs import weekly_league_reset_job, auto_sim_expired_fixtures_job, league_state_machine_job, league_matchday_reminder_job, season_aging_job, youth_intake_job, regen_pool_job, daily_recovery_job, academy_growth_job, transfer_listing_expiry_job, weekly_payroll_job
+from apps.discord_bot.core.scheduler_jobs import weekly_league_reset_job, auto_sim_expired_fixtures_job, league_state_machine_job, league_lifecycle_wake_job, league_matchday_reminder_job, season_aging_job, youth_intake_job, regen_pool_job, daily_recovery_job, academy_growth_job, transfer_listing_expiry_job, weekly_payroll_job
 
 # Configure logging
 logging.basicConfig(
@@ -255,6 +255,7 @@ class ElevenBossBot(commands.Bot):
         self.scheduler.add_job(league_matchday_reminder_job, "interval", hours=1, args=[self])
         self.scheduler.add_job(daily_recovery_job, "cron", hour=0, minute=5, args=[self])
         self.scheduler.add_job(league_state_machine_job, "cron", hour=0, minute=5, args=[self])
+        self.scheduler.add_job(league_lifecycle_wake_job, "interval", minutes=5, args=[self])
         self.scheduler.add_job(weekly_payroll_job, "cron", day_of_week="mon", hour=0, minute=5, args=[self])
         self.scheduler.add_job(academy_growth_job, "cron", hour=0, minute=10, args=[self])
         self.scheduler.add_job(transfer_listing_expiry_job, "interval", hours=1, args=[self])
@@ -326,6 +327,13 @@ class ElevenBossBot(commands.Bot):
             await recover_interrupted_matches(self)
         except Exception as e:
             logger.error(f"Match recovery failed on startup: {e}", exc_info=True)
+
+        try:
+            from apps.discord_bot.core.league_recovery import startup_recovery_pass
+            from apps.discord_bot.db.client import get_client
+            await startup_recovery_pass(self, await get_client())
+        except Exception as e:
+            logger.error("League lifecycle recovery failed on startup: %s", e, exc_info=True)
 
         try:
             from apps.discord_bot.tasks.level_reward_notifier import notify_pending_level_rewards

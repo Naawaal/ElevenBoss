@@ -811,6 +811,9 @@ async def run_league_match_simulation(
     run_id: str | None = None,
     recovery: bool = False,
     silent: bool = False,
+    skip_xi_gate: bool = False,
+    home_card_ids: list[str] | None = None,
+    away_card_ids: list[str] | None = None,
 ) -> None:
     home_p = fixture["home"]
     away_p = fixture["away"]
@@ -859,6 +862,14 @@ async def run_league_match_simulation(
         if home_p["is_ai"]:
             home_rating = float(home_p.get("ai_rating") or 60.0)
             home_squad = build_bot_match_squad(int(home_rating), bot_squad_rng)
+        elif home_card_ids:
+            home_cards = await hydrate_cards_for_match_xp(db, home_card_ids)
+            home_formation, home_assignments, _ = await fetch_squad_xi(
+                db, int(fixture["home_team_id"])
+            )
+            home_squad = await ordered_cards_to_match_squad(db, home_cards)
+            if home_squad:
+                home_rating = sum(p.overall for p in home_squad) / len(home_squad)
         else:
             home_formation, home_assignments, home_cards = await fetch_squad_xi(
                 db, int(fixture["home_team_id"])
@@ -870,6 +881,14 @@ async def run_league_match_simulation(
         if away_p["is_ai"]:
             away_rating = float(away_p.get("ai_rating") or 60.0)
             away_squad = build_bot_match_squad(int(away_rating), bot_squad_rng)
+        elif away_card_ids:
+            away_cards = await hydrate_cards_for_match_xp(db, away_card_ids)
+            away_formation, away_assignments, _ = await fetch_squad_xi(
+                db, int(fixture["away_team_id"])
+            )
+            away_squad = await ordered_cards_to_match_squad(db, away_cards)
+            if away_squad:
+                away_rating = sum(p.overall for p in away_squad) / len(away_squad)
         else:
             away_formation, away_assignments, away_cards = await fetch_squad_xi(
                 db, int(fixture["away_team_id"])
@@ -882,8 +901,12 @@ async def run_league_match_simulation(
         away_name = away_p["club_name"] + (" (AI)" if away_p["is_ai"] else "")
 
         # Fail closed: human clubs with retirement holes / incomplete XI must not auto-sim
-        if not home_p["is_ai"] and not await human_club_xi_ok(
-            db, int(fixture["home_team_id"]), card_count=len(home_cards)
+        if (
+            not skip_xi_gate
+            and not home_p["is_ai"]
+            and not await human_club_xi_ok(
+                db, int(fixture["home_team_id"]), card_count=len(home_cards)
+            )
         ):
             logger.warning(
                 "Skipping fixture %s: home club %s has invalid/incomplete XI (squad_invalid or count!=11).",
@@ -898,8 +921,12 @@ async def run_league_match_simulation(
                 except Exception:
                     pass
             return
-        if not away_p["is_ai"] and not await human_club_xi_ok(
-            db, int(fixture["away_team_id"]), card_count=len(away_cards)
+        if (
+            not skip_xi_gate
+            and not away_p["is_ai"]
+            and not await human_club_xi_ok(
+                db, int(fixture["away_team_id"]), card_count=len(away_cards)
+            )
         ):
             logger.warning(
                 "Skipping fixture %s: away club %s has invalid/incomplete XI (squad_invalid or count!=11).",
@@ -1171,6 +1198,10 @@ async def run_league_match_simulation(
         "is_played": True,
         "played_at": datetime.now(timezone.utc).isoformat(),
         "resolved_by": "manual" if active_player_id else "auto_sim",
+        "result_type": "settled",
+        "status": "settled",
+        "match_seed": str(sim_seed),
+        "engine_version": "v1",
     }).eq("id", fixture_id).eq("is_played", False).execute()
 
     # Live standings + result line in journal (dual_v2) or commentary thread (legacy)

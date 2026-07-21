@@ -263,6 +263,55 @@ async def guild_automation_effective(db: Any, guild_id: int) -> bool:
         return False
 
 
+async def league_lifecycle_v1_enabled(db: Any) -> bool:
+    """Global feature flag for League Lifecycle Rulebook V1 (026). Default false."""
+    try:
+        res = await db.rpc("league_lifecycle_v1_enabled").execute()
+        val = res.data
+        if val is True or val is False:
+            return bool(val)
+        if isinstance(val, str):
+            return val.strip().strip('"').lower() == "true"
+    except Exception:
+        try:
+            res = await db.rpc("get_game_config", {"p_key": "league_lifecycle_v1_enabled"}).execute()
+            val = res.data
+            if val is True or val == "true":
+                return True
+            if isinstance(val, str):
+                return val.strip().strip('"').lower() == "true"
+        except Exception:
+            logger.debug("league_lifecycle_v1_enabled check failed — defaulting False", exc_info=True)
+    return False
+
+
+async def guild_lifecycle_v1_effective(db: Any, guild_id: int) -> bool:
+    """Global on AND (guild NULL inherit OR guild true)."""
+    from leagues import lifecycle_v1_effective
+
+    global_on = await league_lifecycle_v1_enabled(db)
+    if not global_on:
+        return False
+    try:
+        res = await (
+            db.table("guild_config")
+            .select("league_lifecycle_v1_enabled")
+            .eq("guild_id", guild_id)
+            .maybe_single()
+            .execute()
+        )
+        raw = (res.data or {}).get("league_lifecycle_v1_enabled") if res else None
+        guild_flag: bool | None
+        if raw is None:
+            guild_flag = None
+        else:
+            guild_flag = bool(raw)
+        return lifecycle_v1_effective(global_flag=global_on, guild_flag=guild_flag)
+    except Exception:
+        logger.debug("guild_lifecycle_v1_effective failed guild=%s", guild_id, exc_info=True)
+        return False
+
+
 async def fetch_payroll_strikes(db: Any, club_id: int) -> int:
     res = (
         await db.table("players")

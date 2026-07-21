@@ -274,6 +274,21 @@ async def league_state_machine_job(bot: commands.Bot) -> None:
     await run_league_state_machine(bot)
 
 
+async def league_lifecycle_wake_job(bot: commands.Bot) -> None:
+    """Lightweight V1 wake-up; lifecycle rules remain in the transition engine."""
+    from apps.discord_bot.core.league_lifecycle_engine import process_due_transitions
+    from apps.discord_bot.core.league_outbox import publish_pending_outbox
+    from apps.discord_bot.core.league_recovery import recover_stalled_operations
+
+    try:
+        db = await get_client()
+        await recover_stalled_operations(db)
+        await process_due_transitions(bot, db)
+        await publish_pending_outbox(bot, db)
+    except Exception:
+        logger.exception("League Lifecycle V1 wake-up failed.")
+
+
 async def league_matchday_reminder_job(bot: commands.Bot) -> None:
     """DM managers ~6h before matchday window closes (US-26, US-29f dedup)."""
     from datetime import datetime, timezone, timedelta

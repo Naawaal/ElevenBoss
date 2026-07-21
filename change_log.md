@@ -2,6 +2,31 @@
 
 Hey Managers!
 
+## Autonomous League Admin (League Time only)
+
+Guild seasonal leagues run **without Discord admin babysitting**:
+
+- Admins configure only **`/admin` → Server Settings → League Time** (IANA timezone + daily local resolution hour)
+- Changes apply from the **next** season — active seasons keep frozen deadlines
+- Unconfigured servers default to **UTC @ 00:00** (league still runs)
+- Registration, matchdays, settlement, and promotion are handled by the internal lifecycle engine
+- Emergency recovery is operator/internal only — not a Discord admin menu
+
+---
+
+## League Lifecycle Rulebook V1 (pilot)
+
+Guild seasonal leagues are moving to a **21-day autonomous cycle** behind a per-server cutover flag:
+
+- **48h registration → 24h prep → 14 daily matchdays → 24h settlement → 72h offseason**
+- Your server sets an **IANA timezone + daily resolution hour**; deadlines freeze for that season and show in your local Discord time
+- Miss a deadline? The **assistant manager** uses your saved lineup — only illegal squads forfeit (double illegal = 0–0, **0 points**)
+- Living Dynamics/legacy seasons finish under old rules; after cutover, new seasons use the V1 rulebook only
+
+Admins: `/admin` → **Server Settings → League Time** (IANA timezone + daily resolution hour). Lifecycle is fully autonomous — Discord admins cannot start/stop/pause/advance seasons.
+
+---
+
 ## Free pack: Top.gg vote required
 
 The **Vote & Claim Free Pack** button in `/store` now requires a recent **Top.gg** vote before granting your 5-card pack.

@@ -15,6 +15,8 @@ Transforms the guild seasonal league from a bare-bones loop into the bot's flags
 
 **League Automation (021, feature-flagged):** When `league_automation_enabled` is on (optional per-guild inherit via `guild_config.league_automation_enabled`), a single **00:05 UTC** `league_state_machine_job` owns open registration (48h) → Dynamics start or Monday fail/reopen → daily tick digest → conclude → reopen. Admins configure **league announce channel + mention role** once in `/admin` (reuse `guild_config.league_channel_id` / `announcement_role_id`); with automation effective they keep Pause / Force End only. No new player slash commands.
 
+**League Lifecycle Rulebook V1 (026, feature-flagged cutover):** Supersedes 020/021 pacing for **new seasons** on cutover guilds. Frozen rulebook: 21-day cycle, guild IANA timezone + local resolution hour (precomputed UTC windows), assistant-manager resolution, 0–0 double forfeit (0 pts), human-first promo/releg, exactly-once `LeagueLifecycleEngine` with ~5 min wake-up. Living 020/021 seasons are grandfathered until completion. Source of truth: `specs/026-league-lifecycle-rulebook/`. Weekly Division Rank remains decoupled.
+
 ---
 
 ## Competitive Research Summary

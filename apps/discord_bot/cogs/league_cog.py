@@ -18,7 +18,7 @@ from apps.discord_bot.core.league_journal import (
     get_or_create_league_journal,
     resolve_season_threads,
 )
-from leagues import compute_form, format_standings_table, sort_standings, tie_breaker_footer
+from leagues import apply_fixture_to_row, compute_form, format_standings_table, sort_standings, tie_breaker_footer
 
 logger = logging.getLogger(__name__)
 
@@ -98,37 +98,19 @@ async def fetch_standings(
         player = part["players"]
         pid = player["discord_id"]
 
-        wins = 0
-        draws = 0
-        losses = 0
-        goals_for = 0
-        goals_against = 0
-        matches_played = 0
-
+        row = {
+            "matches_played": 0,
+            "won": 0,
+            "drawn": 0,
+            "lost": 0,
+            "goals_for": 0,
+            "goals_against": 0,
+            "goal_difference": 0,
+            "points": 0,
+        }
         for f in fixtures:
-            if f["home_team_id"] == pid:
-                matches_played += 1
-                goals_for += f["home_score"]
-                goals_against += f["away_score"]
-                if f["home_score"] > f["away_score"]:
-                    wins += 1
-                elif f["home_score"] == f["away_score"]:
-                    draws += 1
-                else:
-                    losses += 1
-            elif f["away_team_id"] == pid:
-                matches_played += 1
-                goals_for += f["away_score"]
-                goals_against += f["home_score"]
-                if f["away_score"] > f["home_score"]:
-                    wins += 1
-                elif f["away_score"] == f["home_score"]:
-                    draws += 1
-                else:
-                    losses += 1
-
-        points = wins * 3 + draws * 1
-        gd = goals_for - goals_against
+            if pid in (f["home_team_id"], f["away_team_id"]):
+                apply_fixture_to_row(row, f, pid)
 
         standings.append({
             "discord_id": pid,
@@ -139,14 +121,14 @@ async def fetch_standings(
             "ai_rating": player.get("ai_rating"),
             "is_active": part.get("is_active", True),
             "division_tier": int(part.get("division_tier") or 1),
-            "wins": wins,
-            "draws": draws,
-            "losses": losses,
-            "goals_for": goals_for,
-            "goals_against": goals_against,
-            "matches_played": matches_played,
-            "points": points,
-            "goal_difference": gd,
+            "wins": row["won"],
+            "draws": row["drawn"],
+            "losses": row["lost"],
+            "goals_for": row["goals_for"],
+            "goals_against": row["goals_against"],
+            "matches_played": row["matches_played"],
+            "points": row["points"],
+            "goal_difference": row["goal_difference"],
             "form": compute_form(pid, fixtures),
         })
 
@@ -548,11 +530,11 @@ class LeagueCog(commands.Cog):
         season = None
         if league:
             season_res = await db.table("league_seasons").select("*").eq("league_id", league["id"]).in_(
-                "status", ["active", "registration", "paused"]
+                "status", ["active", "registration", "registration_open", "registration_locked", "preparing", "paused", "settling"]
             ).order("created_at", desc=True).limit(1).maybe_single().execute()
             season = season_res.data if season_res else None
             
-        if season:
+        if season and season.get("pacing_mode") != "lifecycle_v1":
             await auto_sim_expired_fixtures(db, season["id"], self.bot)
             season_res = await db.table("league_seasons").select("*").eq("id", season["id"]).maybe_single().execute()
             season = season_res.data if season_res else None
@@ -571,11 +553,11 @@ class LeagueCog(commands.Cog):
         season = None
         if league:
             season_res = await db.table("league_seasons").select("*").eq("league_id", league["id"]).in_(
-                "status", ["active", "registration", "paused"]
+                "status", ["active", "registration", "registration_open", "registration_locked", "preparing", "paused", "settling"]
             ).order("created_at", desc=True).limit(1).maybe_single().execute()
             season = season_res.data if season_res else None
             
-        if season:
+        if season and season.get("pacing_mode") != "lifecycle_v1":
             await auto_sim_expired_fixtures(db, season["id"], self.bot)
             season_res = await db.table("league_seasons").select("*").eq("id", season["id"]).maybe_single().execute()
             season = season_res.data if season_res else None
@@ -921,18 +903,88 @@ class LeagueCog(commands.Cog):
             )
             return
             
-        # 2. Check if already registered for this guild league
+        # 2. V1 seasonal registration (preferred) or permanent league_members join
+        league_res = await db.table("leagues").select("id").eq("guild_id", guild_id).maybe_single().execute()
+        league_id = (league_res.data or {}).get("id") if league_res else None
+        v1_season = None
+        if league_id:
+            v1 = await (
+                db.table("league_seasons")
+                .select("id,status,pacing_mode")
+                .eq("league_id", league_id)
+                .in_("status", ["registration", "registration_open"])
+                .eq("pacing_mode", "lifecycle_v1")
+                .limit(1)
+                .execute()
+            )
+            v1_season = (v1.data or [None])[0]
+
+        if v1_season:
+            existing_season_reg = await (
+                db.table("league_registrations")
+                .select("id,status")
+                .eq("season_id", v1_season["id"])
+                .eq("player_id", user_id)
+                .maybe_single()
+                .execute()
+            )
+            if existing_season_reg and existing_season_reg.data and existing_season_reg.data.get("status") in (
+                "registered", "locked",
+            ):
+                await interaction.followup.send(
+                    embed=error_embed("⚠️ You are already registered for this season!"),
+                    ephemeral=True,
+                )
+                return
+
+            # Ensure permanent membership exists, then write seasonal registration
+            mem = await db.table("league_members").select("player_id").eq(
+                "guild_id", guild_id
+            ).eq("player_id", user_id).maybe_single().execute()
+            if not (mem and mem.data):
+                await db.table("league_members").insert({
+                    "guild_id": guild_id,
+                    "player_id": user_id,
+                }).execute()
+
+            try:
+                await db.table("league_registrations").upsert({
+                    "season_id": v1_season["id"],
+                    "player_id": user_id,
+                    "status": "registered",
+                    "eligibility_snapshot": {
+                        "matches_played": played,
+                        "account_age_days": age_days,
+                    },
+                }, on_conflict="season_id,player_id").execute()
+            except Exception:
+                logger.exception("V1 league_registrations write failed user=%s", user_id)
+                await interaction.followup.send(
+                    embed=error_embed("Could not complete seasonal registration. Try again shortly."),
+                    ephemeral=True,
+                )
+                return
+
+            await interaction.followup.send(
+                embed=success_embed(
+                    f"✅ **Registered for this season!**\n"
+                    f"Manager **{player['manager_name']}** of **{player['club_name']}** is on the "
+                    f"seasonal roster. Keep your `/squad` XI ready for matchday deadlines."
+                ),
+                ephemeral=True,
+            )
+            return
+
         reg_res = await db.table("league_members").select("*").eq("guild_id", guild_id).eq("player_id", user_id).maybe_single().execute()
         if reg_res and reg_res.data:
             await interaction.followup.send(embed=error_embed("⚠️ You are already registered for this server's league!"), ephemeral=True)
             return
-            
-        # 3. Register
+
         await db.table("league_members").insert({
             "guild_id": guild_id,
             "player_id": user_id
         }).execute()
-        
+
         await interaction.followup.send(
             embed=success_embed(
                 f"✅ **Successfully registered!**\n"
@@ -966,7 +1018,20 @@ class LeagueCog(commands.Cog):
         if season and season.get("config_json"):
             max_size = season["config_json"].get("max_clubs", 8)
 
-        if season and season.get("status") == "registration":
+        if season and season.get("pacing_mode") == "lifecycle_v1" and season.get("status") in (
+            "registration", "registration_open", "registration_locked",
+        ):
+            try:
+                v1_regs = await db.table("league_registrations").select(
+                    "player_id", count="exact"
+                ).eq("season_id", season["id"]).in_(
+                    "status", ["registered", "locked"]
+                ).execute()
+                reg_count = v1_regs.count if v1_regs else 0
+            except Exception:
+                logger.debug("V1 registration count failed", exc_info=True)
+
+        if season and season.get("status") in ("registration", "registration_open"):
             cfg = season.get("config_json") or {}
             if not isinstance(cfg, dict):
                 cfg = {}
@@ -1069,7 +1134,18 @@ class LeagueCog(commands.Cog):
             opp_row = next((r for r in standings if r["discord_id"] == opp_id), None)
             opp_name = opp_row["club_name"] if opp_row else "TBD"
             ha = "Home" if user_fixture["home_team_id"] == user_id else "Away"
-            embed.add_field(name="⚔️ Next Match", value=f"**{opp_name}** ({ha}) — Matchday {curr}", inline=False)
+            deadline = ""
+            if season.get("pacing_mode") == "lifecycle_v1" and user_fixture.get("window_end"):
+                try:
+                    end = datetime.fromisoformat(user_fixture["window_end"].replace("Z", "+00:00"))
+                    deadline = f"\n⏳ Closes <t:{int(end.timestamp())}:F> (<t:{int(end.timestamp())}:R>)"
+                except (TypeError, ValueError):
+                    logger.warning("Invalid V1 fixture deadline fixture=%s", user_fixture.get("id"))
+            embed.add_field(
+                name="⚔️ Next Match",
+                value=f"**{opp_name}** ({ha}) — Matchday {curr}{deadline}",
+                inline=False,
+            )
 
         table_preview = format_standings_table(standings, all_fixtures, limit=5)
         standings_title = (

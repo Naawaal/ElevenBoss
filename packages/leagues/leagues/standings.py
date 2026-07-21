@@ -5,12 +5,51 @@ from __future__ import annotations
 from typing import Any
 
 
-def result_char(home_id: int, away_id: int, team_id: int, home_score: int, away_score: int) -> str:
+def result_char(
+    home_id: int,
+    away_id: int,
+    team_id: int,
+    home_score: int,
+    away_score: int,
+    *,
+    result_type: str | None = None,
+) -> str:
+    # Double forfeit is a loss for both — never a draw in form strings.
+    if result_type == "double_forfeit":
+        return "L"
     if home_score == away_score:
         return "D"
     if team_id == home_id:
         return "W" if home_score > away_score else "L"
     return "W" if away_score > home_score else "L"
+
+
+def apply_fixture_to_row(row: dict[str, Any], fixture: dict[str, Any], team_id: int) -> None:
+    """Mutate a standings row for one played fixture (supports double_forfeit)."""
+    result_type = fixture.get("result_type")
+    hs = int(fixture.get("home_score") or 0)
+    aws = int(fixture.get("away_score") or 0)
+    is_home = team_id == fixture["home_team_id"]
+    row["matches_played"] = int(row.get("matches_played") or 0) + 1
+
+    if result_type == "double_forfeit":
+        row["lost"] = int(row.get("lost") or 0) + 1
+        # GF/GA/GD unchanged; points unchanged
+        return
+
+    gf = hs if is_home else aws
+    ga = aws if is_home else hs
+    row["goals_for"] = int(row.get("goals_for") or 0) + gf
+    row["goals_against"] = int(row.get("goals_against") or 0) + ga
+    row["goal_difference"] = row["goals_for"] - row["goals_against"]
+    if gf > ga:
+        row["won"] = int(row.get("won") or 0) + 1
+        row["points"] = int(row.get("points") or 0) + 3
+    elif gf == ga:
+        row["drawn"] = int(row.get("drawn") or 0) + 1
+        row["points"] = int(row.get("points") or 0) + 1
+    else:
+        row["lost"] = int(row.get("lost") or 0) + 1
 
 
 def compute_form(team_id: int, fixtures: list[dict], limit: int = 5) -> str:
@@ -26,6 +65,7 @@ def compute_form(team_id: int, fixtures: list[dict], limit: int = 5) -> str:
             result_char(
                 f["home_team_id"], f["away_team_id"], team_id,
                 f["home_score"], f["away_score"],
+                result_type=f.get("result_type"),
             )
         )
     return "".join(chars) if chars else "—"
@@ -36,6 +76,9 @@ def head_to_head_points(team_a: int, team_b: int, fixtures: list[dict]) -> tuple
     pts_a = pts_b = 0
     for f in fixtures:
         if not f.get("is_played"):
+            continue
+        if f.get("result_type") == "double_forfeit":
+            # Both lost — no H2H points either side
             continue
         h, a = f["home_team_id"], f["away_team_id"]
         if {h, a} != {team_a, team_b}:

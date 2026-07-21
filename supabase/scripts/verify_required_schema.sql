@@ -29,10 +29,30 @@ BEGIN
       ('column:public.league_participants.division_tier'),
       ('column:public.league_fixtures.resolved_by'),
       ('column:public.league_members.seasonal_division_tier'),
+      ('column:public.league_members.registered_at'),
       ('table:public.league_matchday_manager_awards'),
+      ('table:public.league_registrations'),
+      ('table:public.league_divisions'),
+      ('table:public.league_matchdays'),
+      ('table:public.league_final_standings'),
+      ('table:public.league_transition_journal'),
+      ('table:public.league_operation_runs'),
+      ('table:public.league_outbox'),
       ('column:public.guild_config.league_automation_enabled'),
       ('column:public.guild_config.next_auto_registration_at'),
       ('column:public.guild_config.automation_last_error'),
+      ('column:public.guild_config.league_timezone'),
+      ('column:public.guild_config.league_resolution_hour_local'),
+      ('column:public.guild_config.league_lifecycle_v1_enabled'),
+      ('column:public.league_seasons.ruleset_version'),
+      ('column:public.league_seasons.engine_version'),
+      ('column:public.league_seasons.timezone'),
+      ('column:public.league_seasons.resolution_hour_local'),
+      ('column:public.league_seasons.phase_deadlines'),
+      ('column:public.league_fixtures.result_type'),
+      ('column:public.league_fixtures.matchday_id'),
+      ('column:public.league_participants.division_id'),
+      ('column:public.league_members.status'),
       ('column:public.player_cards.recent_match_ratings'),
       ('table:public.league_matchday_reminders'),
       ('column:public.league_participants.entry_fee_paid'),
@@ -82,6 +102,7 @@ BEGIN
       ('function:distribute_season_prizes'),
       ('function:league_dynamics_enabled'),
       ('function:league_automation_enabled'),
+      ('function:league_lifecycle_v1_enabled'),
       ('function:award_manager_of_the_matchday'),
       ('function:apply_seasonal_promotion_relegation'),
       ('function:charge_league_entry_fees'),
@@ -184,7 +205,17 @@ BEGIN
       ('policy:public.league_matchday_reminders.league_matchday_reminders_insert'),
       ('policy:public.league_members.league_members_insert'),
       ('policy:public.league_matchday_manager_awards.league_matchday_manager_awards_select'),
-      ('policy:public.league_matchday_manager_awards.league_matchday_manager_awards_insert')
+      ('policy:public.league_matchday_manager_awards.league_matchday_manager_awards_insert'),
+      ('policy:public.league_registrations.league_registrations_select'),
+      ('policy:public.league_registrations.league_registrations_insert'),
+      ('policy:public.league_matchdays.league_matchdays_select'),
+      ('policy:public.league_matchdays.league_matchdays_insert'),
+      ('policy:public.league_final_standings.league_final_standings_select'),
+      ('policy:public.league_final_standings.league_final_standings_insert'),
+      ('policy:public.league_operation_runs.league_operation_runs_select'),
+      ('policy:public.league_operation_runs.league_operation_runs_insert'),
+      ('policy:public.league_outbox.league_outbox_select'),
+      ('policy:public.league_outbox.league_outbox_insert')
   ) AS req(obj)
   WHERE NOT (
     (req.obj LIKE 'table:%' AND to_regclass(split_part(req.obj, ':', 2)) IS NOT NULL)
@@ -232,6 +263,7 @@ BEGIN
         WHEN 'distribute_season_prizes' THEN to_regprocedure('public.distribute_season_prizes(uuid)')
         WHEN 'league_dynamics_enabled' THEN to_regprocedure('public.league_dynamics_enabled()')
         WHEN 'league_automation_enabled' THEN to_regprocedure('public.league_automation_enabled()')
+        WHEN 'league_lifecycle_v1_enabled' THEN to_regprocedure('public.league_lifecycle_v1_enabled()')
         WHEN 'award_manager_of_the_matchday' THEN to_regprocedure('public.award_manager_of_the_matchday(uuid,integer)')
         WHEN 'apply_seasonal_promotion_relegation' THEN to_regprocedure('public.apply_seasonal_promotion_relegation(uuid)')
         WHEN 'charge_league_entry_fees' THEN to_regprocedure('public.charge_league_entry_fees(uuid)')
@@ -335,7 +367,10 @@ BEGIN
         'game_config', 'agent_sale_daily_log', 'energy_refill_daily_log',
         'hospital_patients', 'mentor_transfer_log',
         'transfer_listings', 'transfer_sales_log',
-        'league_matchday_manager_awards'
+        'league_matchday_manager_awards',
+        'league_registrations', 'league_divisions', 'league_matchdays',
+        'league_final_standings', 'league_transition_journal',
+        'league_operation_runs', 'league_outbox'
     )
     AND NOT EXISTS (
         SELECT 1 FROM pg_policies p

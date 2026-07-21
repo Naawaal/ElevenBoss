@@ -37,7 +37,10 @@ from .leaderboard_format import (
 from .dynamics_windows import MatchdayWindow, assign_dynamics_windows, utc_day_floor
 from .seasonal_divisions import (
     FixedPromoResult,
+    HumanFirstPromoResult,
     compute_fixed_promo_relegation,
+    compute_human_first_promo_relegation,
+    counts_for_promo_eligibility,
     seat_humans_into_divisions,
 )
 from .momd import MomdWinner, select_momd_winner
@@ -47,6 +50,51 @@ from .automation import (
     evaluate_registration_close,
     next_monday_0005_utc,
     registration_closes_at,
+)
+from .lifecycle_states import (
+    FIXTURE_TERMINAL,
+    PACING_LIFECYCLE_V1,
+    RULESET_LIFECYCLE_V1,
+    can_transition_matchday,
+    can_transition_season,
+    is_fixture_terminal,
+    is_open_season_status,
+)
+from .operation_keys import (
+    fixture_resolve,
+    fixture_settle,
+    matchday_complete,
+    matchday_lock,
+    matchday_open,
+    season_activate,
+    season_next_registration,
+    season_prepare,
+    season_promotion,
+    season_registration_close,
+    season_rewards,
+    season_settle,
+)
+from .schedule import MatchdayUtcWindow, assign_lifecycle_windows, local_resolution_instant, rebase_windows
+from .forfeit_rules import ClubStatDelta, ForfeitOutcome, double_forfeit, single_forfeit
+from .assistant_lineup import LineupPlan, repair_lineup, select_lineup_plan
+from .cutover import (
+    can_start_v1_season,
+    has_blocking_non_v1_open_season,
+    is_lifecycle_v1_season,
+    lifecycle_v1_effective,
+)
+from .standings import apply_fixture_to_row
+from .league_time import (
+    DEFAULT_RESOLUTION_HOUR,
+    DEFAULT_TIMEZONE,
+    EffectiveLeagueTime,
+    LeagueTimeError,
+    coalesce_league_time,
+    guild_setting_must_not_rewrite_season_snapshot,
+    is_raw_utc_offset,
+    league_time_preview,
+    parse_resolution_hour,
+    validate_iana_timezone,
 )
 
 __all__ = [
@@ -89,7 +137,10 @@ __all__ = [
     "assign_dynamics_windows",
     "utc_day_floor",
     "FixedPromoResult",
+    "HumanFirstPromoResult",
     "compute_fixed_promo_relegation",
+    "compute_human_first_promo_relegation",
+    "counts_for_promo_eligibility",
     "seat_humans_into_divisions",
     "MomdWinner",
     "select_momd_winner",
@@ -98,4 +149,49 @@ __all__ = [
     "evaluate_registration_close",
     "next_monday_0005_utc",
     "registration_closes_at",
+    "FIXTURE_TERMINAL",
+    "PACING_LIFECYCLE_V1",
+    "RULESET_LIFECYCLE_V1",
+    "can_transition_matchday",
+    "can_transition_season",
+    "is_fixture_terminal",
+    "is_open_season_status",
+    "fixture_resolve",
+    "fixture_settle",
+    "matchday_complete",
+    "matchday_lock",
+    "matchday_open",
+    "season_activate",
+    "season_next_registration",
+    "season_prepare",
+    "season_promotion",
+    "season_registration_close",
+    "season_rewards",
+    "season_settle",
+    "MatchdayUtcWindow",
+    "assign_lifecycle_windows",
+    "local_resolution_instant",
+    "rebase_windows",
+    "ClubStatDelta",
+    "ForfeitOutcome",
+    "double_forfeit",
+    "single_forfeit",
+    "LineupPlan",
+    "repair_lineup",
+    "select_lineup_plan",
+    "can_start_v1_season",
+    "has_blocking_non_v1_open_season",
+    "is_lifecycle_v1_season",
+    "lifecycle_v1_effective",
+    "apply_fixture_to_row",
+    "DEFAULT_RESOLUTION_HOUR",
+    "DEFAULT_TIMEZONE",
+    "EffectiveLeagueTime",
+    "LeagueTimeError",
+    "coalesce_league_time",
+    "guild_setting_must_not_rewrite_season_snapshot",
+    "is_raw_utc_offset",
+    "league_time_preview",
+    "parse_resolution_hour",
+    "validate_iana_timezone",
 ]
