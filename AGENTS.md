@@ -73,6 +73,10 @@ Not lazy about: understanding the problem (read it fully and trace the real flow
 
 ## 6. Workspace Boundaries (do not mess up the repo)
 
+### Database scalability (US-43 / US-44 / US-45)
+
+Performance and hub round-trip work follows [`specs/038-db-scalability-performance/`](specs/038-db-scalability-performance/spec.md) (US-43), Wave 2 [`specs/039-hub-hot-path-wave2/`](specs/039-hub-hot-path-wave2/spec.md) (US-44: squad / league / profile), and Wave 3 [`specs/040-hub-hot-path-wave3/`](specs/040-hub-hot-path-wave3/spec.md) (US-45: marketplace / leaderboard). Do **not** invent parallel XP/coin pipes for speed; keep Principle II (hosted async client + atomic RPCs). Process-local config cache is Phase 1 only — multi-instance economy tunables need shared/active invalidation (FR-012). League hub optimizations must not skip auto-sim or pause/resume (US-42.5). Advanced patterns (Redis, sharding) are gated in US-43 `contracts/phase-gate-checklist.md`.
+
 ### Where code lives
 
 | Path | Purpose | Agent rules |

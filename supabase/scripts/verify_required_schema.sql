@@ -71,6 +71,10 @@ BEGIN
       ('table:public.player_drill_daily_log'),
       ('table:public.game_config'),
       ('table:public.agent_sale_daily_log'),
+      ('table:public.pack_claim_runs'),
+      ('policy:public.pack_claim_runs.pack_claim_runs_select'),
+      ('policy:public.pack_claim_runs.pack_claim_runs_insert'),
+      ('function:get_game_config_many'),
       ('table:public.energy_refill_daily_log'),
       ('table:public.transfer_listings'),
       ('table:public.transfer_sales_log'),
@@ -257,6 +261,7 @@ BEGIN
       req.obj LIKE 'function:%'
       AND CASE split_part(req.obj, ':', 2)
         WHEN 'process_stat_drill' THEN to_regprocedure('public.process_stat_drill(bigint,uuid,text)')
+        WHEN 'get_game_config_many' THEN to_regprocedure('public.get_game_config_many(text[])')
         WHEN 'sync_training_energy' THEN to_regprocedure('public.sync_training_energy(bigint)')
         WHEN 'get_evolution_hub_status' THEN to_regprocedure('public.get_evolution_hub_status(bigint)')
         WHEN 'apply_card_xp' THEN to_regprocedure('public.apply_card_xp(uuid,integer,text)')
@@ -298,7 +303,7 @@ BEGIN
         WHEN 'renew_contract' THEN to_regprocedure('public.renew_contract(bigint,uuid,bigint,integer)')
         WHEN 'cancel_player_evolution' THEN to_regprocedure('public.cancel_player_evolution(bigint,uuid)')
         WHEN 'process_stat_drill' THEN to_regprocedure('public.process_stat_drill(bigint,uuid,text)')
-        WHEN 'claim_daily_pack' THEN to_regprocedure('public.claim_daily_pack(bigint,jsonb,timestamptz)')
+        WHEN 'claim_daily_pack' THEN to_regprocedure('public.claim_daily_pack(bigint,jsonb,timestamptz,text)')
         WHEN 'card_age_from_dob' THEN to_regprocedure('public.card_age_from_dob(date,date)')
         WHEN 'card_xp_age_multiplier' THEN to_regprocedure('public.card_xp_age_multiplier(integer)')
         WHEN 'retire_player_card' THEN to_regprocedure('public.retire_player_card(uuid)')
@@ -395,7 +400,8 @@ BEGIN
         'league_matchday_manager_awards',
         'league_registrations', 'league_divisions', 'league_matchdays',
         'league_final_standings', 'league_transition_journal',
-        'league_operation_runs', 'league_outbox'
+        'league_operation_runs', 'league_outbox',
+        'pack_claim_runs'
     )
     AND NOT EXISTS (
         SELECT 1 FROM pg_policies p

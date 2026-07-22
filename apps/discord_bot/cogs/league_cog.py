@@ -36,17 +36,71 @@ BOT_NAMES = [
 ]
 
 async def _league_join_limits(db) -> tuple[int, int]:
-    min_matches, min_days = 10, 7
+    """Eligibility gates from game_config (US-44 — batched + TTL-cached)."""
+    from apps.discord_bot.core.economy_rpc import get_game_config_many
+
     try:
-        m_res = await db.rpc("get_game_config", {"p_key": "league_join_min_matches"}).execute()
-        d_res = await db.rpc("get_game_config", {"p_key": "league_join_min_account_days"}).execute()
-        if m_res.data is not None:
-            min_matches = int(m_res.data)
-        if d_res.data is not None:
-            min_days = int(d_res.data)
+        vals = await get_game_config_many(
+            db,
+            [
+                ("league_join_min_matches", "int", 10),
+                ("league_join_min_account_days", "int", 7),
+            ],
+        )
+        return (
+            int(vals.get("league_join_min_matches", 10)),
+            int(vals.get("league_join_min_account_days", 7)),
+        )
     except Exception:
         logger.debug("league join limits read failed", exc_info=True)
-    return min_matches, min_days
+    return 10, 7
+
+
+async def _load_league_and_open_season(db, guild_id: int) -> tuple[dict | None, dict | None]:
+    """Fetch league row + newest open/active season for a guild."""
+    league_res = await (
+        db.table("leagues").select("*").eq("guild_id", guild_id).maybe_single().execute()
+    )
+    league = league_res.data if league_res else None
+    if not league:
+        return None, None
+    season_res = await (
+        db.table("league_seasons")
+        .select("*")
+        .eq("league_id", league["id"])
+        .in_(
+            "status",
+            [
+                "active",
+                "registration",
+                "registration_open",
+                "registration_locked",
+                "preparing",
+                "paused",
+                "settling",
+            ],
+        )
+        .order("created_at", desc=True)
+        .limit(1)
+        .maybe_single()
+        .execute()
+    )
+    season = season_res.data if season_res else None
+    return league, season
+
+
+async def _ensure_guild_config(db, guild_id: int) -> dict | None:
+    config_res = await (
+        db.table("guild_config").select("*").eq("guild_id", guild_id).maybe_single().execute()
+    )
+    config = config_res.data if config_res else None
+    if config:
+        return config
+    await db.table("guild_config").insert({"guild_id": guild_id}).execute()
+    config_res = await (
+        db.table("guild_config").select("*").eq("guild_id", guild_id).maybe_single().execute()
+    )
+    return config_res.data if config_res else None
 
 
 def _account_age_days(created_at) -> int:
@@ -526,54 +580,42 @@ class LeagueCog(commands.Cog):
         """Slash command to open the Seasonal League Hub."""
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
-        
-        db = await get_client()
-        guild_id = interaction.guild_id
-        
-        # Verify guild config, create if not exists
-        config_res = await db.table("guild_config").select("*").eq("guild_id", guild_id).maybe_single().execute()
-        config = config_res.data if config_res else None
-        if not config:
-            await db.table("guild_config").insert({"guild_id": guild_id}).execute()
-            config_res = await db.table("guild_config").select("*").eq("guild_id", guild_id).maybe_single().execute()
-            config = config_res.data if config_res else None
-            
-        league_res = await db.table("leagues").select("*").eq("guild_id", guild_id).maybe_single().execute()
-        league = league_res.data if league_res else None
-        
-        season = None
-        if league:
-            season_res = await db.table("league_seasons").select("*").eq("league_id", league["id"]).in_(
-                "status", ["active", "registration", "registration_open", "registration_locked", "preparing", "paused", "settling"]
-            ).order("created_at", desc=True).limit(1).maybe_single().execute()
-            season = season_res.data if season_res else None
-            
-        if season and season.get("pacing_mode") != "lifecycle_v1":
-            await auto_sim_expired_fixtures(db, season["id"], self.bot)
-            season_res = await db.table("league_seasons").select("*").eq("id", season["id"]).maybe_single().execute()
-            season = season_res.data if season_res else None
 
-        embed = await self.build_hub_embed(interaction, league, season)
-        view = LeagueHubView(self, interaction.user.id, guild_id)
-        msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        view.message = msg
+        from apps.discord_bot.core import perf_signals
+
+        with perf_signals.hub_timer("league_hub"):
+            db = await get_client()
+            guild_id = interaction.guild_id
+
+            # guild_config ∥ league+season chain (US-44)
+            _, (league, season) = await asyncio.gather(
+                _ensure_guild_config(db, guild_id),
+                _load_league_and_open_season(db, guild_id),
+            )
+
+            if season and season.get("pacing_mode") != "lifecycle_v1":
+                await auto_sim_expired_fixtures(db, season["id"], self.bot)
+                season_res = await db.table("league_seasons").select("*").eq(
+                    "id", season["id"]
+                ).maybe_single().execute()
+                season = season_res.data if season_res else None
+
+            embed = await self.build_hub_embed(interaction, league, season)
+            view = LeagueHubView(self, interaction.user.id, guild_id)
+            msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            view.message = msg
 
     # --- VIEW ROUTINES ---
 
     async def show_hub(self, interaction: discord.Interaction, view: LeagueHubView):
         db = await get_client()
-        league_res = await db.table("leagues").select("*").eq("guild_id", view.guild_id).maybe_single().execute()
-        league = league_res.data if league_res else None
-        season = None
-        if league:
-            season_res = await db.table("league_seasons").select("*").eq("league_id", league["id"]).in_(
-                "status", ["active", "registration", "registration_open", "registration_locked", "preparing", "paused", "settling"]
-            ).order("created_at", desc=True).limit(1).maybe_single().execute()
-            season = season_res.data if season_res else None
-            
+        league, season = await _load_league_and_open_season(db, view.guild_id)
+
         if season and season.get("pacing_mode") != "lifecycle_v1":
             await auto_sim_expired_fixtures(db, season["id"], self.bot)
-            season_res = await db.table("league_seasons").select("*").eq("id", season["id"]).maybe_single().execute()
+            season_res = await db.table("league_seasons").select("*").eq(
+                "id", season["id"]
+            ).maybe_single().execute()
             season = season_res.data if season_res else None
 
         embed = await self.build_hub_embed(interaction, league, season)
@@ -1014,15 +1056,23 @@ class LeagueCog(commands.Cog):
         )
 
         db = await get_client()
-        regs_res = await db.table("league_members").select("player_id", count="exact").eq("guild_id", guild.id).execute()
-        reg_count = regs_res.count if regs_res else 0
+        reg_count = 0
         max_size = 8
         if season and season.get("config_json"):
             max_size = season["config_json"].get("max_clubs", 8)
 
-        if season and season.get("pacing_mode") == "lifecycle_v1" and season.get("status") in (
-            "registration", "registration_open", "registration_locked",
-        ):
+        # One registration count path (US-44) — avoid members then overwrite with V1
+        use_v1_regs = bool(
+            season
+            and season.get("pacing_mode") == "lifecycle_v1"
+            and season.get("status")
+            in (
+                "registration",
+                "registration_open",
+                "registration_locked",
+            )
+        )
+        if use_v1_regs:
             try:
                 v1_regs = await db.table("league_registrations").select(
                     "player_id", count="exact"
@@ -1032,6 +1082,11 @@ class LeagueCog(commands.Cog):
                 reg_count = v1_regs.count if v1_regs else 0
             except Exception:
                 logger.debug("V1 registration count failed", exc_info=True)
+        else:
+            regs_res = await db.table("league_members").select(
+                "player_id", count="exact"
+            ).eq("guild_id", guild.id).execute()
+            reg_count = regs_res.count if regs_res else 0
 
         if season and season.get("status") in ("registration", "registration_open"):
             cfg = season.get("config_json") or {}
@@ -1042,8 +1097,14 @@ class LeagueCog(commands.Cog):
             if deadline:
                 dt = datetime.fromisoformat(str(deadline).replace("Z", "+00:00"))
                 deadline_str = f"\n⏳ **Registration closes**: <t:{int(dt.timestamp())}:R>"
-            min_matches, min_days = await _league_join_limits(db)
-            p_res = await db.table("players").select("division").eq("discord_id", user_id).maybe_single().execute()
+            (min_matches, min_days), p_res = await asyncio.gather(
+                _league_join_limits(db),
+                db.table("players")
+                .select("division")
+                .eq("discord_id", user_id)
+                .maybe_single()
+                .execute(),
+            )
             division = (p_res.data or {}).get("division", "Grassroots") if p_res else "Grassroots"
             fee_str = await _display_entry_fee(db, season, division)
             if cfg.get("automation"):

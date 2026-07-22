@@ -2,6 +2,7 @@
 """Unified rankings hub — Division Rank, Global LP, Season Pts (US-30)."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import discord
@@ -9,6 +10,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from apps.discord_bot.core.competitive_display import profile_leaderboard_hint, resolve_global_tier
+from apps.discord_bot.core.division_cache import load_global_divisions
 from apps.discord_bot.core.view_helpers import (
     disable_view_on_timeout,
     edit_ephemeral_hub_message,
@@ -52,37 +54,45 @@ class LeaderboardCog(commands.Cog):
     @app_commands.guild_only()
     @app_commands.check(ensure_registered)
     async def leaderboard(self, interaction: discord.Interaction) -> None:
-        db = await get_client()
-        player_res = await db.table("players").select("*").eq(
-            "discord_id", interaction.user.id
-        ).maybe_single().execute()
-        player = player_res.data if player_res else None
-        if not player:
-            await interaction.followup.send(embed=error_embed("Player not found."), ephemeral=True)
-            return
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
 
-        division = player.get("division", "Grassroots")
-        page = 0
-        view = LeaderboardView(
-            self,
-            owner_id=interaction.user.id,
-            tab=TAB_DIVISION,
-            division=division,
-            page=page,
-            guild_id=interaction.guild_id,
-        )
-        embed = await self.build_embed(
-            db,
-            tab=TAB_DIVISION,
-            viewer=player,
-            division=division,
-            page=page,
-            guild_id=interaction.guild_id,
-        )
-        unclaimed = await self.unclaimed_tier_for(db, player)
-        view.set_claim_state(unclaimed)
-        msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        view.message = msg
+        from apps.discord_bot.core import perf_signals
+
+        with perf_signals.hub_timer("leaderboard"):
+            db = await get_client()
+            player_res = await db.table("players").select("*").eq(
+                "discord_id", interaction.user.id
+            ).maybe_single().execute()
+            player = player_res.data if player_res else None
+            if not player:
+                await interaction.followup.send(embed=error_embed("Player not found."), ephemeral=True)
+                return
+
+            division = player.get("division", "Grassroots")
+            page = 0
+            view = LeaderboardView(
+                self,
+                owner_id=interaction.user.id,
+                tab=TAB_DIVISION,
+                division=division,
+                page=page,
+                guild_id=interaction.guild_id,
+            )
+            embed, unclaimed = await asyncio.gather(
+                self.build_embed(
+                    db,
+                    tab=TAB_DIVISION,
+                    viewer=player,
+                    division=division,
+                    page=page,
+                    guild_id=interaction.guild_id,
+                ),
+                self.unclaimed_tier_for(db, player),
+            )
+            view.set_claim_state(unclaimed)
+            msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            view.message = msg
 
     async def build_embed(
         self,
@@ -180,12 +190,15 @@ class LeaderboardCog(commands.Cog):
         return embed
 
     async def _global_embed(self, db, viewer: dict, page: int) -> discord.Embed:
-        div_res = await db.table("global_divisions").select("*").order("min_lp").execute()
-        divisions = div_res.data or []
-
-        res = await db.table("players").select(
-            "discord_id, club_name, global_lp"
-        ).eq("is_ai", False).order("global_lp", desc=True).limit(100).execute()
+        divisions, res = await asyncio.gather(
+            load_global_divisions(db),
+            db.table("players")
+            .select("discord_id, club_name, global_lp")
+            .eq("is_ai", False)
+            .order("global_lp", desc=True)
+            .limit(100)
+            .execute(),
+        )
         rows = res.data or []
         viewer_id = viewer["discord_id"]
         user_lp = int(viewer.get("global_lp", 0))
@@ -262,16 +275,19 @@ class LeaderboardCog(commands.Cog):
         from apps.discord_bot.cogs.league_cog import fetch_standings
 
         season = season_res.data
-        standings = await fetch_standings(db, season["id"])
-        fixtures_res = await db.table("league_fixtures").select("*").eq(
-            "season_id", season["id"]
-        ).execute()
+        standings, fixtures_res, part_res = await asyncio.gather(
+            fetch_standings(db, season["id"]),
+            db.table("league_fixtures").select("*").eq("season_id", season["id"]).execute(),
+            db.table("league_participants")
+            .select("player_id")
+            .eq("season_id", season["id"])
+            .eq("player_id", viewer["discord_id"])
+            .maybe_single()
+            .execute(),
+        )
         fixtures = fixtures_res.data or []
         table = format_standings_table(standings, fixtures, limit=15)
 
-        part_res = await db.table("league_participants").select("player_id").eq(
-            "season_id", season["id"]
-        ).eq("player_id", viewer["discord_id"]).maybe_single().execute()
         registered = bool(part_res and part_res.data)
 
         embed.title = f"🏆 Season Standings — {league_res.data['name']}"

@@ -8,37 +8,152 @@ from typing import Any
 
 from economy.flows import bot_match_coins, friendly_match_coins, league_match_coins_for_result
 
+from apps.discord_bot.core import config_cache, perf_signals
+
 logger = logging.getLogger(__name__)
 
 REGEN_PER_MIN = 0.25  # 1 energy per 4 minutes (game_config energy_regen_per_min / migration 046)
 
+# Catalog: specs/038-db-scalability-performance/contracts/cache-policy-and-keys.md
+PRICED_GAME_CONFIG_KEYS: frozenset[str] = frozenset(
+    {
+        "drill_basic_energy",
+        "drill_advanced_energy",
+        "drill_basic_xp",
+        "drill_advanced_xp",
+        "energy_refill_costs",
+        "energy_refill_amount",
+        "energy_regen_per_min",
+        "energy_max",
+        "daily_pack_cooldown_hours",
+        "pack_standard_rarities",
+        "pack_standard_rarity_weights",
+        "fusion_coins",
+        "wage_scale_factor",
+        "wages_payroll_bill_scale",
+    }
+)
+
+
+def invalidate_game_config(key: str | None = None) -> None:
+    """Drop process-local cfg cache after a game_config write (US-43 FR-012 prep).
+
+    Call from any path that mutates ``game_config``. Under multi-instance, TTL-only
+    priced keys remain forbidden — wire shared/broadcast on top of this helper.
+    """
+    if key is None:
+        config_cache.invalidate_prefix("cfg:")
+        return
+    # Stored as cfg:int:{key}:{default} / cfg:num:{key}:{default} / cfg:{key}
+    config_cache.invalidate_prefix(f"cfg:int:{key}:")
+    config_cache.invalidate_prefix(f"cfg:num:{key}:")
+    config_cache.invalidate(config_cache.cache_key(key))
+
+
+def invalidate_priced_game_config() -> None:
+    """Invalidate all catalogued economy-priced tunables in this process."""
+    for key in PRICED_GAME_CONFIG_KEYS:
+        invalidate_game_config(key)
+
 
 async def get_game_config_int(db: Any, key: str, default: int) -> int:
-    """Fetch int config from game_config via RPC, with safe fallback."""
+    """Fetch int config from game_config via RPC, with safe fallback + TTL cache."""
+    ck = config_cache.cache_key(f"int:{key}:{default}")
+    cached = config_cache.get(ck)
+    if cached is not None:
+        return int(cached)
     try:
+        perf_signals.inc_round_trip()
         res = await db.rpc("get_game_config_int", {"p_key": key, "p_default": int(default)}).execute()
         val = res.data
         if isinstance(val, (int, float)):
-            return int(val)
-        if isinstance(val, str):
-            return int(val.strip('"'))
+            out = int(val)
+        elif isinstance(val, str):
+            out = int(val.strip('"'))
+        else:
+            out = int(default)
+        config_cache.set(ck, out)
+        return out
     except Exception:
         logger.debug("get_game_config_int(%s) failed — defaulting %s", key, default, exc_info=True)
     return int(default)
 
 
 async def get_game_config_numeric(db: Any, key: str, default: float) -> float:
-    """Fetch numeric config from game_config via RPC, with safe fallback."""
+    """Fetch numeric config from game_config via RPC, with safe fallback + TTL cache."""
+    ck = config_cache.cache_key(f"num:{key}:{default}")
+    cached = config_cache.get(ck)
+    if cached is not None:
+        return float(cached)
     try:
+        perf_signals.inc_round_trip()
         res = await db.rpc("get_game_config_numeric", {"p_key": key, "p_default": float(default)}).execute()
         val = res.data
         if isinstance(val, (int, float)):
-            return float(val)
-        if isinstance(val, str):
-            return float(val.strip('"'))
+            out = float(val)
+        elif isinstance(val, str):
+            out = float(val.strip('"'))
+        else:
+            out = float(default)
+        config_cache.set(ck, out)
+        return out
     except Exception:
         logger.debug("get_game_config_numeric(%s) failed — defaulting %s", key, default, exc_info=True)
     return float(default)
+
+
+async def get_game_config_many(
+    db: Any,
+    specs: list[tuple[str, str, int | float]],
+) -> dict[str, int | float]:
+    """Batch-load int/numeric config keys in one RPC when possible (US-43).
+
+    ``specs`` items: ``(key, kind, default)`` where kind is ``'int'`` or ``'num'``.
+    Falls back to per-key helpers if ``get_game_config_many`` RPC is unavailable.
+    """
+    out: dict[str, int | float] = {}
+    missing: list[tuple[str, str, int | float]] = []
+    for key, kind, default in specs:
+        prefix = "int" if kind == "int" else "num"
+        ck = config_cache.cache_key(f"{prefix}:{key}:{default}")
+        cached = config_cache.get(ck)
+        if cached is not None:
+            out[key] = int(cached) if kind == "int" else float(cached)
+        else:
+            missing.append((key, kind, default))
+    if not missing:
+        return out
+
+    keys = [k for k, _, _ in missing]
+    try:
+        perf_signals.inc_round_trip()
+        res = await db.rpc("get_game_config_many", {"p_keys": keys}).execute()
+        raw = res.data
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        if not isinstance(raw, dict):
+            raise TypeError("unexpected get_game_config_many payload")
+        for key, kind, default in missing:
+            val = raw.get(key)
+            if val is None:
+                parsed: int | float = int(default) if kind == "int" else float(default)
+            elif kind == "int":
+                parsed = int(val) if not isinstance(val, str) else int(val.strip('"'))
+            else:
+                parsed = float(val) if not isinstance(val, str) else float(val.strip('"'))
+            prefix = "int" if kind == "int" else "num"
+            config_cache.set(config_cache.cache_key(f"{prefix}:{key}:{default}"), parsed)
+            out[key] = parsed
+        return out
+    except Exception:
+        logger.debug("get_game_config_many failed — per-key fallback", exc_info=True)
+
+    for key, kind, default in missing:
+        if kind == "int":
+            out[key] = await get_game_config_int(db, key, int(default))
+        else:
+            out[key] = await get_game_config_numeric(db, key, float(default))
+    return out
 
 
 async def get_pack_rarity_override(db: Any) -> tuple[list[str], list[int]] | None:

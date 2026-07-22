@@ -1,5 +1,6 @@
 # apps/discord_bot/cogs/development_cog.py
 from __future__ import annotations
+import asyncio
 import logging
 import os
 from datetime import date, datetime, timezone
@@ -59,7 +60,14 @@ from apps.discord_bot.views.support_legendary_claim import (
     ensure_pending_legendary,
     support_legendary_pending,
 )
-from apps.discord_bot.core.economy_rpc import format_action_energy_status_async, sync_action_energy, get_game_config_int
+from apps.discord_bot.core.economy_rpc import (
+    format_action_energy_status,
+    format_action_energy_status_async,
+    get_game_config_int,
+    get_game_config_many,
+    sync_action_energy,
+)
+from apps.discord_bot.core import perf_signals
 from apps.discord_bot.views.marketplace_transfer import listed_card_ids
 from economy.flows import drill_cost, EconomyConfig
 
@@ -137,57 +145,64 @@ STAT_DRILLS = {
 async def show_hub(interaction: discord.Interaction, owner_id: int):
     if not await safe_defer(interaction, ephemeral=True):
         return
-    db = await get_client()
-    player_res = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
-    player = player_res.data if player_res else None
+    with perf_signals.hub_timer("development_hub") as _perf:
+        db = await get_client()
+        player_res = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
+        player = player_res.data if player_res else None
 
-    energy_row = await sync_action_energy(db, owner_id)
-    ae = energy_row.get("action_energy", 0)
-    max_e = energy_row.get("max_energy", 120)
-
-    pending_count = await unclaimed_reward_count(owner_id)
-    legendary_pending = await support_legendary_pending(owner_id)
-    legendary_card = None
-    if legendary_pending:
-        try:
-            legendary_card = await ensure_pending_legendary(owner_id)
-        except Exception:
-            logger.exception("Failed preparing support legendary for hub %s", owner_id)
-
-    embed = discord.Embed(
-        title="🏋️‍♂️ Development Center",
-        description=(
-            f"Welcome to **{player['club_name']}** development center. "
-            f"Train stats, **Recover** fitness, fuse cards, run evolutions, or allocate skill points.\n\n"
-            f"{await format_action_energy_status_async(db, ae, max_e)}"
-        ),
-        color=0x00FF87,
-    )
-    if pending_count > 0:
-        embed.add_field(
-            name="🎁 Level-Up Rewards",
-            value=(
-                f"You have **{pending_count}** player(s) with unclaimed retroactive skill points. "
-                "Use **Claim Level Rewards** below (also sent via DM when possible)."
-            ),
-            inline=False,
+        energy_row = await sync_action_energy(db, owner_id)
+        ae = energy_row.get("action_energy", 0)
+        max_e = energy_row.get("max_energy", 120)
+        regen = float(energy_row.get("regen_per_min") or 0) or None
+        energy_line = (
+            format_action_energy_status(ae, max_e, regen_per_min=regen)
+            if regen
+            else await format_action_energy_status_async(db, ae, max_e)
         )
-    if legendary_card:
-        embed.add_field(
-            name="🎁 Legendary Thank-You Gift",
-            value=(
-                f"**{legendary_card.get('name')}** · `{legendary_card.get('position')}` · "
-                f"**{legendary_card.get('overall')} OVR** / POT **{legendary_card.get('potential')}**\n"
-                "Use **Claim Legendary Gift** below (also sent via DM when possible)."
+
+        pending_count = await unclaimed_reward_count(owner_id)
+        legendary_pending = await support_legendary_pending(owner_id)
+        legendary_card = None
+        if legendary_pending:
+            try:
+                legendary_card = await ensure_pending_legendary(owner_id)
+            except Exception:
+                logger.exception("Failed preparing support legendary for hub %s", owner_id)
+
+        embed = discord.Embed(
+            title="🏋️‍♂️ Development Center",
+            description=(
+                f"Welcome to **{player['club_name']}** development center. "
+                f"Train stats, **Recover** fitness, fuse cards, run evolutions, or allocate skill points.\n\n"
+                f"{energy_line}"
             ),
-            inline=False,
+            color=0x00FF87,
         )
-    view = DevelopmentHubView(
-        owner_id,
-        show_claim_rewards=pending_count > 0,
-        show_legendary_gift=legendary_card is not None,
-    )
-    await edit_ephemeral_hub_message(interaction, embed, view)
+        if pending_count > 0:
+            embed.add_field(
+                name="🎁 Level-Up Rewards",
+                value=(
+                    f"You have **{pending_count}** player(s) with unclaimed retroactive skill points. "
+                    "Use **Claim Level Rewards** below (also sent via DM when possible)."
+                ),
+                inline=False,
+            )
+        if legendary_card:
+            embed.add_field(
+                name="🎁 Legendary Thank-You Gift",
+                value=(
+                    f"**{legendary_card.get('name')}** · `{legendary_card.get('position')}` · "
+                    f"**{legendary_card.get('overall')} OVR** / POT **{legendary_card.get('potential')}**\n"
+                    "Use **Claim Legendary Gift** below (also sent via DM when possible)."
+                ),
+                inline=False,
+            )
+        view = DevelopmentHubView(
+            owner_id,
+            show_claim_rewards=pending_count > 0,
+            show_legendary_gift=legendary_card is not None,
+        )
+        await edit_ephemeral_hub_message(interaction, embed, view)
 
 # --- VIEWS ---
 
@@ -321,90 +336,103 @@ class DevelopmentHubView(discord.ui.View):
 async def show_training_menu(interaction: discord.Interaction, owner_id: int) -> None:
     if not await safe_defer(interaction, ephemeral=True):
         return
-    db = await get_client()
-    player_res = await db.table("players").select(
-        "daily_drill_count, daily_drill_reset_at, training_ground_level, intensity_tier"
-    ).eq("discord_id", owner_id).maybe_single().execute()
-    energy_row = await sync_action_energy(db, owner_id)
-    training_energy = energy_row.get("action_energy", energy_row.get("training_energy", 0))
-    max_e = int(energy_row.get("max_energy", 120) or 120)
-    regen_per_min = float(energy_row.get("regen_per_min") or (1 / 6))
-    raw_count = int((player_res.data or {}).get("daily_drill_count", 0) or 0) if player_res else 0
-    reset_raw = (player_res.data or {}).get("daily_drill_reset_at") if player_res else None
-    reset_at = None
-    if reset_raw:
-        if isinstance(reset_raw, str):
-            reset_at = date.fromisoformat(reset_raw[:10])
-        elif hasattr(reset_raw, "year"):
-            reset_at = reset_raw if isinstance(reset_raw, date) else reset_raw.date()
-    today_utc = datetime.now(timezone.utc).date()
-    daily_count = effective_daily_drill_count(raw_count, reset_at, today=today_utc)
-    tg_level = int((player_res.data or {}).get("training_ground_level", 1)) if player_res else 1
-    intensity_tier = int((player_res.data or {}).get("intensity_tier") or 1) if player_res else 1
-    daily_limit = 20
-    daily_passive = passive_recovery_amount(tg_level, intensity_tier=intensity_tier)
-
-    adv_min_level = await get_game_config_int(db, "drill_advanced_min_level", 10)
-    basic_energy_cfg = await get_game_config_int(db, "drill_basic_energy", 10)
-    adv_energy_cfg = await get_game_config_int(db, "drill_advanced_energy", 15)
-    basic_xp_cfg = await get_game_config_int(db, "drill_basic_xp", 30)
-    adv_xp_cfg = await get_game_config_int(db, "drill_advanced_xp", 80)
-
-    roster_res = await db.table("player_cards").select("*").eq("owner_id", owner_id).order("overall", desc=True).execute()
-    roster = [c for c in (roster_res.data or []) if not c.get("in_academy") and not c.get("is_retired")]
-
-    evo_res = await db.table("active_evolutions").select("card_id").eq("status", "active").execute()
-    evo_ids = {e["card_id"] for e in (evo_res.data or [])}
-    listed_ids = await listed_card_ids(db)
-    eligible_players = [
-        p for p in roster
-        if p["id"] not in evo_ids and str(p["id"]) not in listed_ids and not p.get("is_retired")
-    ]
-
-    cfg = EconomyConfig()
-    basic_coins, _basic_energy = drill_cost(60, 5, cfg)
-    adv_coins, _adv_energy = drill_cost(60, 12, cfg)
-    basic_energy = basic_energy_cfg
-    adv_energy = adv_energy_cfg
-
-    embed = discord.Embed(
-        title="🏋️ Stat Training Drills",
-        description=(
-            "Spend **action energy** and coins on **Skill Drills** — "
-            "gain **XP** and attempt **+1** to the trained attribute "
-            "(blocked at attribute max / potential).\n\n"
-            f"🏋️ **Training Ground L{tg_level}** — +{max(0, tg_level - 1)} bonus drill XP · "
-            f"**+{daily_passive}** daily passive fatigue\n"
-            f"⚡ **Action Energy**: `{training_energy}/{max_e}` *(+1 per {int(round(1 / regen_per_min))} min)*\n"
-            f"📅 **Daily Drills**: `{daily_count}/{daily_limit}`\n"
-            f"💪 **Basic drill** (Lv 1+): `{basic_energy}⚡` + `{basic_coins}` coins @ 60 OVR\n"
-            f"💪 **Advanced drill** (Lv {adv_min_level}+): `{adv_energy}⚡` + `{adv_coins}` coins @ 60 OVR\n\n"
-            "_Need fitness? Use **💚 Recover** on the Development hub._"
-        ),
-        color=0x00FF87,
-    )
-    embed.set_footer(text="⚡ Energy cost applies")
-    if not eligible_players:
-        embed.add_field(
-            name="No Eligible Players",
-            value="All roster cards are locked in an active evolution track.",
-            inline=False,
+    with perf_signals.hub_timer("training_drills") as _perf:
+        db = await get_client()
+        drill_specs = [
+            ("drill_advanced_min_level", "int", 10),
+            ("drill_basic_energy", "int", 10),
+            ("drill_advanced_energy", "int", 15),
+            ("drill_basic_xp", "int", 30),
+            ("drill_advanced_xp", "int", 80),
+        ]
+        player_res, energy_row, cfg_map, evo_res, listed_ids = await asyncio.gather(
+            db.table("players")
+            .select("daily_drill_count, daily_drill_reset_at, training_ground_level, intensity_tier")
+            .eq("discord_id", owner_id)
+            .maybe_single()
+            .execute(),
+            sync_action_energy(db, owner_id),
+            get_game_config_many(db, drill_specs),
+            db.table("active_evolutions").select("card_id").eq("status", "active").execute(),
+            listed_card_ids(db, owner_id),
         )
+        training_energy = energy_row.get("action_energy", energy_row.get("training_energy", 0))
+        max_e = int(energy_row.get("max_energy", 120) or 120)
+        regen_per_min = float(energy_row.get("regen_per_min") or (1 / 6))
+        raw_count = int((player_res.data or {}).get("daily_drill_count", 0) or 0) if player_res else 0
+        reset_raw = (player_res.data or {}).get("daily_drill_reset_at") if player_res else None
+        reset_at = None
+        if reset_raw:
+            if isinstance(reset_raw, str):
+                reset_at = date.fromisoformat(reset_raw[:10])
+            elif hasattr(reset_raw, "year"):
+                reset_at = reset_raw if isinstance(reset_raw, date) else reset_raw.date()
+        today_utc = datetime.now(timezone.utc).date()
+        daily_count = effective_daily_drill_count(raw_count, reset_at, today=today_utc)
+        tg_level = int((player_res.data or {}).get("training_ground_level", 1)) if player_res else 1
+        intensity_tier = int((player_res.data or {}).get("intensity_tier") or 1) if player_res else 1
+        daily_limit = 20
+        daily_passive = passive_recovery_amount(tg_level, intensity_tier=intensity_tier)
 
-    await edit_ephemeral_hub_message(
-        interaction,
-        embed,
-        StatDrillView(
-            owner_id,
-            eligible_players[:25],
-            tg_level,
-            adv_min_level=adv_min_level,
-            basic_energy=basic_energy_cfg,
-            adv_energy=adv_energy_cfg,
-            basic_xp_base=basic_xp_cfg,
-            adv_xp_base=adv_xp_cfg,
-        ),
-    )
+        adv_min_level = int(cfg_map.get("drill_advanced_min_level", 10))
+        basic_energy_cfg = int(cfg_map.get("drill_basic_energy", 10))
+        adv_energy_cfg = int(cfg_map.get("drill_advanced_energy", 15))
+        basic_xp_cfg = int(cfg_map.get("drill_basic_xp", 30))
+        adv_xp_cfg = int(cfg_map.get("drill_advanced_xp", 80))
+
+        roster_res = await db.table("player_cards").select("*").eq("owner_id", owner_id).order("overall", desc=True).execute()
+        roster = [c for c in (roster_res.data or []) if not c.get("in_academy") and not c.get("is_retired")]
+
+        evo_ids = {e["card_id"] for e in (evo_res.data or [])}
+        eligible_players = [
+            p for p in roster
+            if p["id"] not in evo_ids and str(p["id"]) not in listed_ids and not p.get("is_retired")
+        ]
+
+        cfg = EconomyConfig()
+        basic_coins, _basic_energy = drill_cost(60, 5, cfg)
+        adv_coins, _adv_energy = drill_cost(60, 12, cfg)
+        basic_energy = basic_energy_cfg
+        adv_energy = adv_energy_cfg
+
+        embed = discord.Embed(
+            title="🏋️ Stat Training Drills",
+            description=(
+                "Spend **action energy** and coins on **Skill Drills** — "
+                "gain **XP** and attempt **+1** to the trained attribute "
+                "(blocked at attribute max / potential).\n\n"
+                f"🏋️ **Training Ground L{tg_level}** — +{max(0, tg_level - 1)} bonus drill XP · "
+                f"**+{daily_passive}** daily passive fatigue\n"
+                f"⚡ **Action Energy**: `{training_energy}/{max_e}` *(+1 per {int(round(1 / regen_per_min))} min)*\n"
+                f"📅 **Daily Drills**: `{daily_count}/{daily_limit}`\n"
+                f"💪 **Basic drill** (Lv 1+): `{basic_energy}⚡` + `{basic_coins}` coins @ 60 OVR\n"
+                f"💪 **Advanced drill** (Lv {adv_min_level}+): `{adv_energy}⚡` + `{adv_coins}` coins @ 60 OVR\n\n"
+                "_Need fitness? Use **💚 Recover** on the Development hub._"
+            ),
+            color=0x00FF87,
+        )
+        embed.set_footer(text="⚡ Energy cost applies")
+        if not eligible_players:
+            embed.add_field(
+                name="No Eligible Players",
+                value="All roster cards are locked in an active evolution track.",
+                inline=False,
+            )
+
+        await edit_ephemeral_hub_message(
+            interaction,
+            embed,
+            StatDrillView(
+                owner_id,
+                eligible_players[:25],
+                tg_level,
+                adv_min_level=adv_min_level,
+                basic_energy=basic_energy_cfg,
+                adv_energy=adv_energy_cfg,
+                basic_xp_base=basic_xp_cfg,
+                adv_xp_base=adv_xp_cfg,
+            ),
+        )
 
 
 class StatDrillView(discord.ui.View):

@@ -1,0 +1,18 @@
+Limit  (cost=1.77..15.12 rows=50 width=16) (actual time=0.051..0.061 rows=50 loops=1)
+  Buffers: shared hit=2 read=1
+  InitPlan 1
+    ->  Limit  (cost=0.00..0.09 rows=1 width=16) (actual time=0.010..0.010 rows=1 loops=1)
+          Buffers: shared hit=1
+          ->  Seq Scan on league_seasons  (cost=0.00..1.12 rows=12 width=16) (actual time=0.010..0.010 rows=1 loops=1)
+                Buffers: shared hit=1
+  ->  Bitmap Heap Scan on league_fixtures  (cost=1.68..16.36 rows=55 width=16) (actual time=0.050..0.055 rows=50 loops=1)
+        Recheck Cond: ((season_id = (InitPlan 1).col1) AND (NOT is_played))
+        Heap Blocks: exact=1
+        Buffers: shared hit=2 read=1
+        ->  Bitmap Index Scan on idx_league_fixtures_season_unplayed  (cost=0.00..1.66 rows=55 width=0) (actual time=0.042..0.042 rows=52 loops=1)
+              Index Cond: (season_id = (InitPlan 1).col1)
+              Buffers: shared hit=1 read=1
+Planning:
+  Buffers: shared hit=3
+Planning Time: 0.151 ms
+Execution Time: 0.090 ms

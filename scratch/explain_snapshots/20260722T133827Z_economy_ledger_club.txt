@@ -1,0 +1,14 @@
+Limit  (cost=0.38..25.62 rows=50 width=24) (actual time=0.083..0.084 rows=0 loops=1)
+  Buffers: shared hit=2 read=2
+  InitPlan 1
+    ->  Limit  (cost=0.00..0.10 rows=1 width=8) (actual time=0.058..0.059 rows=1 loops=1)
+          Buffers: shared hit=2
+          ->  Seq Scan on players  (cost=0.00..6.69 rows=69 width=8) (actual time=0.058..0.058 rows=1 loops=1)
+                Buffers: shared hit=2
+  ->  Index Scan using idx_economy_ledger_club_created on economy_ledger  (cost=0.28..81.55 rows=161 width=24) (actual time=0.082..0.082 rows=0 loops=1)
+        Index Cond: (club_id = (InitPlan 1).col1)
+        Buffers: shared hit=2 read=2
+Planning:
+  Buffers: shared hit=121 read=1
+Planning Time: 1.888 ms
+Execution Time: 0.113 ms

@@ -1,5 +1,6 @@
 # apps/discord_bot/cogs/marketplace_cog.py
 from __future__ import annotations
+import asyncio
 import logging
 import discord
 from discord import app_commands
@@ -26,27 +27,35 @@ logger = logging.getLogger(__name__)
 async def show_marketplace_hub(interaction: discord.Interaction, owner_id: int):
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True)
-    db = await get_client()
-    player_res = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
-    player = player_res.data
-    enabled = await transfer_market_enabled(db)
-    active_count, slot_cap = await active_listing_count(db, owner_id) if enabled else (0, 5)
-    tokens = player.get("tokens", 0)
-    listing_status = f"`{active_count} / {slot_cap}` slots filled" if enabled else "unavailable"
-    embed = discord.Embed(
-        title="🏪 Global Transfer Market",
-        description=(
-            f"Welcome to the ElevenBoss Marketplace, Manager **{player['manager_name']}**!\n\n"
-            f"💰 **Your Balance**: `🪙 {player['coins']:,} coins` | `🎟️ {tokens:,} tokens`\n"
-            f"📋 **Active Listings**: {listing_status}"
-        ),
-        color=0x00FF87
-    )
-    view = MarketplaceHubView(owner_id, transfer_enabled=enabled)
-    if interaction.response.is_done():
-        await interaction.edit_original_response(embed=embed, view=view)
-    else:
-        await interaction.response.edit_message(embed=embed, view=view)
+
+    from apps.discord_bot.core import perf_signals
+
+    with perf_signals.hub_timer("marketplace"):
+        db = await get_client()
+        player_res, enabled = await asyncio.gather(
+            db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute(),
+            transfer_market_enabled(db),
+        )
+        player = player_res.data
+        active_count, slot_cap = (
+            await active_listing_count(db, owner_id) if enabled else (0, 5)
+        )
+        tokens = player.get("tokens", 0)
+        listing_status = f"`{active_count} / {slot_cap}` slots filled" if enabled else "unavailable"
+        embed = discord.Embed(
+            title="🏪 Global Transfer Market",
+            description=(
+                f"Welcome to the ElevenBoss Marketplace, Manager **{player['manager_name']}**!\n\n"
+                f"💰 **Your Balance**: `🪙 {player['coins']:,} coins` | `🎟️ {tokens:,} tokens`\n"
+                f"📋 **Active Listings**: {listing_status}"
+            ),
+            color=0x00FF87
+        )
+        view = MarketplaceHubView(owner_id, transfer_enabled=enabled)
+        if interaction.response.is_done():
+            await interaction.edit_original_response(embed=embed, view=view)
+        else:
+            await interaction.response.edit_message(embed=embed, view=view)
 
 class MarketplaceHubView(discord.ui.View):
     def __init__(self, owner_id: int, *, transfer_enabled: bool = False) -> None:
@@ -86,8 +95,24 @@ async def show_sell_menu(interaction: discord.Interaction, owner_id: int):
         await interaction.response.defer(ephemeral=True)
     db = await get_client()
 
-    # 1. Fetch full roster
-    roster_res = await db.table("player_cards").select("*").eq("owner_id", owner_id).order("overall", desc=True).execute()
+    roster_res, assignments_res, evo_res, training_res, listing_card_ids = await asyncio.gather(
+        db.table("player_cards")
+        .select("*")
+        .eq("owner_id", owner_id)
+        .order("overall", desc=True)
+        .execute(),
+        db.table("squad_assignments")
+        .select("player_card_id")
+        .eq("discord_id", owner_id)
+        .execute(),
+        db.table("active_evolutions")
+        .select("card_id")
+        .eq("owner_id", owner_id)
+        .eq("status", "active")
+        .execute(),
+        db.table("active_training").select("card_id").execute(),
+        listed_card_ids(db, owner_id),
+    )
     roster = roster_res.data or []
 
     if not roster:
@@ -99,20 +124,12 @@ async def show_sell_menu(interaction: discord.Interaction, owner_id: int):
             await interaction.response.edit_message(embed=embed, view=view)
         return
 
-    # 2. Fetch starting 11 card ids
-    assignments_res = await db.table("squad_assignments").select("player_card_id").eq("discord_id", owner_id).execute()
-    starting_card_ids = {a["player_card_id"] for a in assignments_res.data}
-
-    # 3. Fetch active evolution and training card ids
-    evo_res = await db.table("active_evolutions").select("card_id").eq("owner_id", owner_id).eq("status", "active").execute()
+    starting_card_ids = {a["player_card_id"] for a in (assignments_res.data or [])}
     evo_card_ids = {e["card_id"] for e in (evo_res.data or [])}
-
-    training_res = await db.table("active_training").select("card_id").execute()
     training_card_ids = {
         t["card_id"] for t in (training_res.data or [])
         if t.get("card_id")
     }
-    listing_card_ids = await listed_card_ids(db, owner_id)
 
     # 4. Filter eligible players (exclude starting 11, evolutions, active training)
     eligible_players = [

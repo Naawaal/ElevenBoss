@@ -1,6 +1,7 @@
 """Discord UI flows for the opt-in P2P transfer market."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -66,21 +67,25 @@ def _card_text(card: dict) -> str:
 
 async def _eligible_listing_cards(owner_id: int) -> list[dict]:
     db = await get_client()
-    cards = (
-        await db.table("player_cards").select("*").eq("owner_id", owner_id)
-        .order("overall", desc=True).execute()
-    ).data or []
-    starter_rows = await db.table("squad_assignments").select("player_card_id").eq(
-        "discord_id", owner_id
-    ).execute()
-    training_rows = await db.table("active_training").select("card_id").execute()
-    evo_rows = await db.table("active_evolutions").select("card_id").eq(
-        "status", "active"
-    ).execute()
+    cards_res, starter_rows, training_rows, evo_rows, listed = await asyncio.gather(
+        db.table("player_cards")
+        .select("*")
+        .eq("owner_id", owner_id)
+        .order("overall", desc=True)
+        .execute(),
+        db.table("squad_assignments")
+        .select("player_card_id")
+        .eq("discord_id", owner_id)
+        .execute(),
+        db.table("active_training").select("card_id").execute(),
+        db.table("active_evolutions").select("card_id").eq("status", "active").execute(),
+        listed_card_ids(db),
+    )
+    cards = cards_res.data or []
     locked = {str(row["player_card_id"]) for row in (starter_rows.data or [])}
     locked |= {str(row["card_id"]) for row in (training_rows.data or []) if row.get("card_id")}
     locked |= {str(row["card_id"]) for row in (evo_rows.data or [])}
-    locked |= await listed_card_ids(db)
+    locked |= listed
     return [
         card for card in cards
         if str(card["id"]) not in locked

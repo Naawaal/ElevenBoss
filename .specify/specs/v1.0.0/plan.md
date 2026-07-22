@@ -4,6 +4,8 @@
 **Status**: Implemented (US-30+ shipped; see `change_log.md` for incremental releases)
 **Depends On**: `spec.md` v1.0.0
 
+**Related architecture**: Database scalability & command responsiveness — [`specs/038-db-scalability-performance/`](../../../specs/038-db-scalability-performance/spec.md) (US-43). Hub Wave 2 (squad / league / profile) — [`specs/039-hub-hot-path-wave2/`](../../../specs/039-hub-hot-path-wave2/spec.md) (US-44). Hub Wave 3 (marketplace / leaderboard) — [`specs/040-hub-hot-path-wave3/`](../../../specs/040-hub-hot-path-wave3/spec.md) (US-45). Phase gates: cache → hub RT cuts → idempotent UX → multi-instance job ownership; no premature Redis/sharding/`asyncpg`.
+
 ---
 
 ## 1. Repository Structure

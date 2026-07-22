@@ -10,7 +10,7 @@ Maps logical reward/mutation actions → expected key pattern / evidence → own
 | Match reward (bot/league) | `match_run_id` / `process_match_result` settle-once | 42.4 | Covered (`033`, mig `077`) |
 | Friendly match | Sandbox — no competitive faucet (INV-11) | 42.4 | Covered |
 | Transfer buy | Listing lock + one-winner RPC; race tests | 42.6 | Covered (`035` guards + race tests) |
-| Pack / vote claim | Fail-closed if Top.gg down; claim once | 42.7 / store | Covered (fail-closed posture) |
+| Pack / vote claim | `interaction:{id}` via `p_idempotency_key` → `pack_claim_runs`; FR-006a `applied`/`already_applied`; Top.gg fail-closed | 42.7 / US-43 | Covered (`082`) |
 | League prize / MoMD | Season transition / prize once; pause ≠ forfeit | 42.5 | Covered (`034`) |
 | Level reward claim | Current owner; claim once | 42.1 / progression | Covered (US-24 pipe) |
 | Energy refill purchase | Economy ledger idempotency | 42.7 | Covered |

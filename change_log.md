@@ -2,6 +2,15 @@
 
 Hey Managers!
 
+## Faster hubs & safer pack claims
+
+Opening **Development**, **Training Drills**, and the **Store** should feel snappier — we cut repeat database lookups for game settings. If a free pack claim retries after a timeout, you won’t get charged twice or see a scary “failed” message when it actually already worked.
+
+**Squad**, **League Hub**, and **Profile** got the same treatment in a follow-up pass: parallel loads, fewer wait-your-turn database trips, and the same correct squad / season / balance data (league auto-sim and pause/resume behavior unchanged).
+
+**Marketplace** and **`/leaderboard`** are in that pass too — Sell to Agent and the rankings tabs should open with less hitching; weekly claim buttons still work the same.
+
+---
 ## League pause auto-resume
 
 If the Seasonal League Hub said **Season Paused** even though the bot was online in your server, that was a stranded pause. Opening `/league hub` (or the next automation wake) now resumes play and extends remaining matchday windows for the downtime — you shouldn’t need an admin to unstick it.

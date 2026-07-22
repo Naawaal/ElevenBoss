@@ -1,5 +1,6 @@
 # apps/discord_bot/cogs/squad_cog.py
 from __future__ import annotations
+import asyncio
 import logging
 import discord
 from discord import app_commands
@@ -31,31 +32,62 @@ def _swap_selection_ready(starter_id: str | None, reserve_id: str | None) -> boo
     )
 
 async def fetch_squad_data(user_id: int):
+    """Load squad hub fields in one parallel round (US-44 HP-5)."""
+    from apps.discord_bot.core import perf_signals
+
     db = await get_client()
-    
-    # 1. Fetch club/manager details from players
-    player_res = await db.table("players").select("club_name, manager_name, squad_invalid").eq("discord_id", user_id).maybe_single().execute()
+    with perf_signals.hub_timer("squad"):
+        player_res, squad_res, assignments_res, cards_res, lock_res = await asyncio.gather(
+            db.table("players")
+            .select("club_name, manager_name, squad_invalid")
+            .eq("discord_id", user_id)
+            .maybe_single()
+            .execute(),
+            db.table("squads")
+            .select("formation")
+            .eq("discord_id", user_id)
+            .maybe_single()
+            .execute(),
+            db.table("squad_assignments")
+            .select("position_slot, player_cards(*)")
+            .eq("discord_id", user_id)
+            .order("position_slot")
+            .execute(),
+            db.table("player_cards")
+            .select("id", count="exact")
+            .eq("owner_id", user_id)
+            .execute(),
+            db.table("match_locks")
+            .select("*")
+            .eq("discord_id", user_id)
+            .maybe_single()
+            .execute(),
+        )
+
     player_data = player_res.data if player_res else None
     club_name = player_data.get("club_name", "Unknown Club") if player_data else "Unknown Club"
     squad_invalid = bool(player_data.get("squad_invalid")) if player_data else False
-    
-    # 2. Fetch squad formation
-    squad_res = await db.table("squads").select("formation").eq("discord_id", user_id).maybe_single().execute()
-    formation = squad_res.data.get("formation", "4-4-2") if (squad_res and squad_res.data) else "4-4-2"
-    
-    # 3. Fetch current squad assignments
-    assignments_res = await db.table("squad_assignments").select("position_slot, player_cards(*)").eq("discord_id", user_id).order("position_slot").execute()
-    assignments = {a["position_slot"]: a["player_cards"] for a in assignments_res.data if a.get("player_cards")}
-    
-    # 4. Fetch total owned player cards count
-    cards_res = await db.table("player_cards").select("id").eq("owner_id", user_id).execute()
-    total_cards = len(cards_res.data) if cards_res.data else 0
+
+    formation = (
+        squad_res.data.get("formation", "4-4-2")
+        if (squad_res and squad_res.data)
+        else "4-4-2"
+    )
+
+    assignments = {
+        a["position_slot"]: a["player_cards"]
+        for a in (assignments_res.data or [])
+        if a.get("player_cards")
+    }
+
+    if cards_res.count is not None:
+        total_cards = int(cards_res.count)
+    else:
+        total_cards = len(cards_res.data or [])
     reserves_count = max(0, total_cards - len(assignments))
-    
-    # 5. Check match lock
-    lock_res = await db.table("match_locks").select("*").eq("discord_id", user_id).maybe_single().execute()
+
     is_locked = bool(lock_res.data) if lock_res else False
-    
+
     return club_name, formation, assignments, reserves_count, is_locked, squad_invalid
 
 def get_players_list_for_pitch(formation: str, assignments: dict[int, dict]) -> list[dict]:

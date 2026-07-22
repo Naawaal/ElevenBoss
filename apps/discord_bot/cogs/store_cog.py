@@ -21,11 +21,14 @@ from apps.discord_bot.embeds.gacha_embeds import (
     topgg_vote_unavailable_embed,
 )
 from apps.discord_bot.core.economy_rpc import (
+    format_action_energy_status,
     format_action_energy_status_async,
     get_game_config_int,
     get_pack_rarity_override,
     sync_action_energy,
 )
+from apps.discord_bot.core.idempotent_outcome import parse_idempotent_outcome
+from apps.discord_bot.core import perf_signals
 from apps.discord_bot.core.topgg_vote import check_topgg_vote, resolve_topgg_bot_id, topgg_vote_url
 from apps.discord_bot.core.view_helpers import disable_view_on_timeout, set_view_controls_disabled
 from apps.discord_bot.core.card_payload import card_rpc_payload
@@ -46,85 +49,92 @@ def _gacha_pack_field_value(*, gacha_ready: bool, gacha_cooldown_str: str) -> st
 
 
 async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
-    db = await get_client()
-    player_res = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
-    player = player_res.data if player_res else None
-    if not player:
-        await interaction.followup.send(embed=error_embed("Player profile not found."), ephemeral=True)
-        return
+    with perf_signals.hub_timer("store_hub") as _perf:
+        db = await get_client()
+        player_res = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
+        player = player_res.data if player_res else None
+        if not player:
+            await interaction.followup.send(embed=error_embed("Player profile not found."), ephemeral=True)
+            return
 
-    energy_row = await sync_action_energy(db, owner_id)
-    ae = energy_row.get("action_energy", 0)
-    max_e = energy_row.get("max_energy", 120)
-    gems = player.get("tokens", 0)
-    streak = player.get("login_streak", 0)
-    last_login = player.get("last_daily_login")
-    login_claimed_today = last_login is not None and str(last_login) == str(date.today())
+        energy_row = await sync_action_energy(db, owner_id)
+        ae = energy_row.get("action_energy", 0)
+        max_e = energy_row.get("max_energy", 120)
+        regen = float(energy_row.get("regen_per_min") or 0) or None
+        energy_line = (
+            format_action_energy_status(ae, max_e, regen_per_min=regen)
+            if regen
+            else await format_action_energy_status_async(db, ae, max_e)
+        )
+        gems = player.get("tokens", 0)
+        streak = player.get("login_streak", 0)
+        last_login = player.get("last_daily_login")
+        login_claimed_today = last_login is not None and str(last_login) == str(date.today())
 
-    cooldown_hours = await get_game_config_int(db, "daily_pack_cooldown_hours", 12)
-    last_claim_str = player.get("last_claim_at")
-    gacha_ready = True
-    gacha_cooldown_str = ""
-    if last_claim_str:
-        try:
-            last_claim = datetime.fromisoformat(last_claim_str.replace("Z", "+00:00"))
-            now = datetime.now(timezone.utc)
-            cooldown_delta = timedelta(hours=cooldown_hours)
-            elapsed = now - last_claim
-            if elapsed < cooldown_delta:
-                gacha_ready = False
-                remaining_seconds = (cooldown_delta - elapsed).total_seconds()
-                hours = int(remaining_seconds // 3600)
-                minutes = int((remaining_seconds % 3600) // 60)
-                gacha_cooldown_str = f"{hours}h {minutes}m"
-        except Exception:
-            logger.exception("Failed to parse last_claim_at.")
-
-    embed = discord.Embed(
-        title="🏪 Club Store",
-        description=(
-            "Claim your daily bonus and purchase action energy refills.\n\n"
-            f"🪙 **Coins**: `{player['coins']:,}`\n"
-            f"💎 **Gems**: `{gems:,}`\n"
-            f"{await format_action_energy_status_async(db, ae, max_e)}"
-        ),
-        color=0x00FF87,
-    )
-    embed.add_field(
-        name="🎁 Daily Login Bonus",
-        value=(
-            "Once per UTC day. Streak bonus up to +50 coins.\n"
-            + ("✅ Claimed today." if login_claimed_today else f"Current streak: **{streak or 0}** day(s).")
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="⚡ Energy Refill",
-        value="+50 action energy. Costs **200 / 400 / 600** coins (1st–3rd refill per day).",
-        inline=False,
-    )
-    embed.add_field(
-        name="🎫 Daily Gacha Pack",
-        value=_gacha_pack_field_value(gacha_ready=gacha_ready, gacha_cooldown_str=gacha_cooldown_str),
-        inline=False,
-    )
-    embed.add_field(
-        name="🏗️ Club Facilities",
-        value="Upgrade Youth Academy (intake quality) and Training Ground (drill XP bonus).",
-        inline=False,
-    )
-
-    view = StoreHubView(owner_id, login_claimed_today=login_claimed_today, gacha_ready=gacha_ready)
-    if interaction.response.is_done():
-        if interaction.message is not None:
+        cooldown_hours = await get_game_config_int(db, "daily_pack_cooldown_hours", 12)
+        last_claim_str = player.get("last_claim_at")
+        gacha_ready = True
+        gacha_cooldown_str = ""
+        if last_claim_str:
             try:
-                await interaction.followup.edit_message(interaction.message.id, embed=embed, view=view)
-            except discord.NotFound:
+                last_claim = datetime.fromisoformat(last_claim_str.replace("Z", "+00:00"))
+                now = datetime.now(timezone.utc)
+                cooldown_delta = timedelta(hours=cooldown_hours)
+                elapsed = now - last_claim
+                if elapsed < cooldown_delta:
+                    gacha_ready = False
+                    remaining_seconds = (cooldown_delta - elapsed).total_seconds()
+                    hours = int(remaining_seconds // 3600)
+                    minutes = int((remaining_seconds % 3600) // 60)
+                    gacha_cooldown_str = f"{hours}h {minutes}m"
+            except Exception:
+                logger.exception("Failed to parse last_claim_at.")
+
+        embed = discord.Embed(
+            title="🏪 Club Store",
+            description=(
+                "Claim your daily bonus and purchase action energy refills.\n\n"
+                f"🪙 **Coins**: `{player['coins']:,}`\n"
+                f"💎 **Gems**: `{gems:,}`\n"
+                f"{energy_line}"
+            ),
+            color=0x00FF87,
+        )
+        embed.add_field(
+            name="🎁 Daily Login Bonus",
+            value=(
+                "Once per UTC day. Streak bonus up to +50 coins.\n"
+                + ("✅ Claimed today." if login_claimed_today else f"Current streak: **{streak or 0}** day(s).")
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="⚡ Energy Refill",
+            value="+50 action energy. Costs **200 / 400 / 600** coins (1st–3rd refill per day).",
+            inline=False,
+        )
+        embed.add_field(
+            name="🎫 Daily Gacha Pack",
+            value=_gacha_pack_field_value(gacha_ready=gacha_ready, gacha_cooldown_str=gacha_cooldown_str),
+            inline=False,
+        )
+        embed.add_field(
+            name="🏗️ Club Facilities",
+            value="Upgrade Youth Academy (intake quality) and Training Ground (drill XP bonus).",
+            inline=False,
+        )
+
+        view = StoreHubView(owner_id, login_claimed_today=login_claimed_today, gacha_ready=gacha_ready)
+        if interaction.response.is_done():
+            if interaction.message is not None:
+                try:
+                    await interaction.followup.edit_message(interaction.message.id, embed=embed, view=view)
+                except discord.NotFound:
+                    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            else:
                 await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         else:
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-    else:
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 class StoreHubView(discord.ui.View):
@@ -188,10 +198,15 @@ class StoreHubView(discord.ui.View):
         try:
             db = await get_client()
             res = await db.rpc("purchase_energy_refill", {"p_club_id": self.owner_id}).execute()
-            data = res.data or {}
+            outcome = parse_idempotent_outcome(res.data if isinstance(res.data, dict) else {})
+            data = outcome.data or (res.data if isinstance(res.data, dict) else {})
+            # FR-006a: replay/already_applied still renders success (never false failure)
+            ae = data.get("action_energy", data.get("energy", "?"))
+            mx = data.get("max_energy", 120)
+            suffix = " (already applied)" if outcome.status == "already_applied" else ""
             await interaction.followup.send(
                 embed=success_embed(
-                    f"Refilled energy. Balance: **{data.get('action_energy', '?')}/{data.get('max_energy', 120)}**"
+                    f"Refilled energy. Balance: **{ae}/{mx}**{suffix}"
                 ),
                 ephemeral=True,
             )
@@ -251,13 +266,33 @@ class StoreHubView(discord.ui.View):
                 pack = generate_pack(n=5)
             cards_payload = [card_rpc_payload(p) for p in pack.players]
 
-            await db.rpc("claim_daily_pack", {
+            # Prefer Discord interaction id; fallback UTC-day key (data-model)
+            idem_key = f"interaction:{interaction.id}"
+            res = await db.rpc("claim_daily_pack", {
                 "p_club_id": self.owner_id,
                 "p_cards": cards_payload,
                 "p_topgg_vote_at": vote_at.isoformat(),
+                "p_idempotency_key": idem_key,
             }).execute()
+            raw = res.data if isinstance(res.data, dict) else {"status": "applied", "data": res.data or {}}
+            outcome = parse_idempotent_outcome(raw)
 
-            await interaction.followup.send(embed=gacha_claim_embed(pack), ephemeral=True)
+            if outcome.status == "already_applied":
+                await interaction.followup.send(
+                    embed=success_embed(
+                        "This pack claim already succeeded — no duplicate cards granted."
+                    ),
+                    ephemeral=True,
+                )
+            elif outcome.status == "rejected":
+                await interaction.followup.send(
+                    embed=error_embed(outcome.reason or "Pack claim rejected."),
+                    ephemeral=True,
+                )
+                set_view_controls_disabled(self, disabled=False)
+                return
+            else:
+                await interaction.followup.send(embed=gacha_claim_embed(pack), ephemeral=True)
             await show_store(interaction, self.owner_id)
 
         except Exception as exc:
