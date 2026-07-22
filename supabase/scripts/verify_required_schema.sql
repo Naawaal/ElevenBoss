@@ -344,6 +344,8 @@ BEGIN
         WHEN 'backfill_tier_fatigue_rebalance' THEN to_regprocedure('public.backfill_tier_fatigue_rebalance()')
         WHEN 'intensity_recovery_days' THEN to_regprocedure('public.intensity_recovery_days(integer,integer,integer)')
         WHEN 'repair_daily_drill_counts' THEN to_regprocedure('public.repair_daily_drill_counts()')
+        WHEN 'abandon_match_run' THEN to_regprocedure('public.abandon_match_run(uuid,text)')
+        WHEN 'reconcile_orphaned_match_locks' THEN to_regprocedure('public.reconcile_orphaned_match_locks()')
         WHEN 'academy_slot_cap' THEN to_regprocedure('public.academy_slot_cap(integer)')
         WHEN 'promote_academy_player' THEN to_regprocedure('public.promote_academy_player(bigint,uuid)')
         WHEN 'release_academy_player' THEN to_regprocedure('public.release_academy_player(bigint,uuid)')

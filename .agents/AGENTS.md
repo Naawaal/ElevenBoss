@@ -113,7 +113,7 @@ Player XP/level/skill points are **centralized**. Agents must not reintroduce ol
 * **Single XP pipe:** all XP (match, drill, fusion, mentor) goes through RPC `apply_card_xp`. Never `UPDATE player_cards SET xp = xp + N` or `level = level + 1` in app code or ad-hoc SQL.
 * **Pure formulas:** `packages/player_engine/player_engine/progression.py` is the source of truth for curves and rewards (`match_xp_reward`, `fusion_xp_reward`, `drill_xp_reward`, `level_from_xp`). Bot code **calls** these; it does not duplicate formulas.
 * **Match XP wiring:** use `apps/discord_bot/core/match_xp.py` → `build_process_match_result_rpc()` and RPC `process_match_result(..., p_xp_amounts)`. Do **not** pass hardcoded flat XP (e.g. `15`) from cogs.
-* **Drills:** `process_stat_drill` grants XP only — no direct `+1` stat bumps.
+* **Drills:** `process_stat_drill` grants XP **and** a soft-capped `+1` to the drill’s mapped attribute (PAC/SHO/PAS/DRI/DEF/PHY). Boost is skipped (no RAISE) when the attribute is at 99 or projected OVR would exceed potential — XP/costs still apply. Does **not** spend skill points; Allocate Skills remains the SP path.
 * **Fusion:** `train_with_fodder` grants fusion XP via `apply_card_xp` — no direct level/stat bump; respect `fusion_daily_log` cap.
 * **Skill allocation:** `allocate_skill_point` enforces POT caps and `skill_points_spent`; use `can_allocate_skill_point()` in packages before UI hints.
 * **Mentor Transfusion:** potential-maxed surplus SP → youth XP via RPC `transfer_mentor_xp` (5 SP = 1 MP = 500 XP; 3/club/UTC day; log `mentor_transfer_log`). Pure math in `packages/player_engine/mentor_math.py`. UI under `/development` Allocate Skills + profile Ready copy. Does not touch coins/energy or allocation daily caps.
@@ -132,7 +132,7 @@ Player XP/level/skill points are **centralized**. Agents must not reintroduce ol
 * **Match wiring:** `apps/discord_bot/core/economy_rpc.py` — `apply_match_economy`, `sync_action_energy`, `compute_*_match_coins`; `battle_cog` uses `match_run_id` as idempotency key.
 * **Agent sales:** `process_agent_sale` enforces `agent_sale_daily_cap` (default 10/day).
 * **Player faucets:** `/store` hub (`store_cog.py`) for `claim_daily_login` + `purchase_energy_refill` — **not** `/development`.
-* **Development hub:** drills (skill only), **Recover** (fitness), fusion, evolutions, skill allocation / mentor, claim level rewards only (`development_cog.py`).
+* **Development hub:** drills (XP + soft-capped attribute boost), **Recover** (fitness), fusion, evolutions, skill allocation / mentor, claim level rewards only (`development_cog.py`).
 * **Fusion sink:** `train_with_fodder` charges `fusion_coins` (default 200) via `apply_club_economy`.
 * **Ops tuning:** edit `game_config` in Supabase, `scripts/simulate_economy.py`, or ledger SQL — **no** Discord admin economy slash command.
 * **Player-facing changelog:** [`change_log.md`](change_log.md) at repo root (update when shipping economy/progression changes).

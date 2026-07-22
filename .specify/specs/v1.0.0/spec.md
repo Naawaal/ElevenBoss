@@ -702,7 +702,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 #### AC-22a: Stat Drill RPCs
 - **GIVEN** a manager opens Stat Training in `/development`,
-- **THEN** `sync_training_energy` and `process_stat_drill` RPCs exist and atomically enforce energy, coins, daily limits, match locks, level-tier gates, and POT-aware skill allocation (not direct stat bumps post-v1.9). *(Amended v1.9 — US-23: drills grant XP via `apply_card_xp`.)*
+- **THEN** `sync_training_energy` and `process_stat_drill` RPCs exist and atomically enforce energy, coins, daily limits, match locks, level-tier gates, and POT-aware progression. *(Amended v1.9 — US-23: drills grant XP via `apply_card_xp`. Amended 036 — also soft-capped `+1` to the mapped attribute; pot/99 blocks boost only, not XP.)*
 
 #### AC-22b: Server-Side Agent Sale Pricing
 - **GIVEN** a manager confirms an agent sale,
@@ -810,9 +810,10 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AND** per-match XP is clamped to `[1, 35]`.
 - **AND** abandoned/crashed matches award no XP (existing match-run recovery policy).
 
-#### AC-23f: Method 3 — Drill XP (replaces direct stat drills)
+#### AC-23f: Method 3 — Drill XP + soft-capped attribute boost
 - **GIVEN** a manager runs a stat drill in `/development`,
-- **THEN** the drill grants **XP only** (no direct attribute increment).
+- **THEN** the drill grants **XP** via `apply_card_xp` **and** attempts **exactly +1** to the drill’s mapped attribute (PAC/SHO/PAS/DRI/DEF/PHY).
+- **AND** if the attribute is at 99 or projected overall would exceed potential, the attribute boost is **skipped** (clear reason) while XP and costs still apply. *(Amended 036 — restores modest focused `+1` alongside XP; does not spend skill points.)*
 - **AND** drill tiers and gates:
 
 | Tier | Min level | Energy | Coin cost | Base XP |
@@ -859,7 +860,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 #### AC-23k: Deprecations & Breaking Changes
 - **GIVEN** the v1.9 deploy,
-- **THEN** `process_stat_drill` no longer grants direct `+1` stat (XP only).
+- **THEN** `process_stat_drill` stopped granting uncapped legacy direct stats and moved XP through `apply_card_xp`. *(Amended 036 — drills again grant a **soft-capped** `+1` alongside XP.)*
 - **AND** `train_with_fodder` no longer increments `level` or stats directly (fusion XP via `apply_card_xp`).
 - **AND** `process_match_result` delegates per-card XP to `apply_card_xp`.
 - **AND** existing player stats from pre-v1.9 drills/fusion are retained; only future gains use the new pipeline.

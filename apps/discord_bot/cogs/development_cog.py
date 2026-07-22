@@ -11,7 +11,7 @@ from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.core.api_errors import api_error_message
 from apps.discord_bot.core.card_payload import effective_card_age
-from apps.discord_bot.core.drill_rpc import parse_stat_drill_result
+from apps.discord_bot.core.drill_rpc import humanize_boost_block_reason, parse_stat_drill_result
 from apps.discord_bot.core.select_helpers import rebuild_select_options
 from apps.discord_bot.core.view_helpers import (
     disable_view_on_timeout,
@@ -28,6 +28,7 @@ from player_engine import (
     MAX_ACTIVE_EVOLUTIONS,
     DRILL_CATALOG,
     calculate_true_ovr,
+    can_allocate_skill_point,
     drill_spec,
     drill_unlocked,
     drill_xp_reward,
@@ -369,7 +370,9 @@ async def show_training_menu(interaction: discord.Interaction, owner_id: int) ->
     embed = discord.Embed(
         title="🏋️ Stat Training Drills",
         description=(
-            "Spend **action energy** and coins on **Skill Drills** (XP).\n\n"
+            "Spend **action energy** and coins on **Skill Drills** — "
+            "gain **XP** and attempt **+1** to the trained attribute "
+            "(blocked at attribute max / potential).\n\n"
             f"🏋️ **Training Ground L{tg_level}** — +{max(0, tg_level - 1)} bonus drill XP · "
             f"**+{daily_passive}** daily passive fatigue\n"
             f"⚡ **Action Energy**: `{training_energy}/{max_e}` *(+1 per {int(round(1 / regen_per_min))} min)*\n"
@@ -470,11 +473,24 @@ class StatDrillView(discord.ui.View):
                     age=effective_card_age(selected or {}),
                     training_ground_level=self.training_ground_level,
                 )
+                spec = drill_spec(drill_id)
+                stat_code = (spec.stat if spec else "?").upper()
+                boost_ok = False
+                if selected and spec:
+                    boost_ok, _ = can_allocate_skill_point(
+                        position=str(selected.get("position") or "FWD"),
+                        stats=stats_from_card(selected),
+                        playstyles=list(selected.get("playstyles") or []),
+                        potential=int(selected.get("potential") or 99),
+                        stat_key=spec.stat,
+                        overall=int(selected.get("overall") or 0),
+                    )
+                boost_bit = f"+1 {stat_code}" if boost_ok else f"{stat_code} capped"
                 drill_options.append(
                     discord.SelectOption(
                         label=name,
                         value=drill_id,
-                        description=f"+{xp_preview} XP · {tier_energy}⚡",
+                        description=f"{boost_bit} · +{xp_preview} XP · {tier_energy}⚡",
                         default=(self.selected_drill == drill_id),
                     )
                 )
@@ -569,7 +585,7 @@ class StatDrillView(discord.ui.View):
             levels = parsed["levels_gained"]
             skill_pts = parsed["skill_points_granted"]
             new_level = parsed["new_level"]
-            new_ovr = result.get("new_ovr", selected_p["overall"])
+            new_ovr = parsed["new_ovr"] if parsed["new_ovr"] is not None else selected_p["overall"]
             coins_spent = parsed["coins_spent"]
             energy_spent = parsed["energy_spent"]
 
@@ -577,10 +593,22 @@ class StatDrillView(discord.ui.View):
             if levels > 0:
                 level_note = f"\n• **Level Up!** Now level **{new_level}** (+{skill_pts} skill points)"
 
+            if parsed["stat_boosted"]:
+                stat = parsed["stat"] or "?"
+                new_val = parsed["new_stat_value"]
+                val_bit = f" → `{new_val}`" if new_val is not None else ""
+                attr_line = f"• Attribute: `+1 {stat}`{val_bit}\n• OVR: **{new_ovr}**"
+            else:
+                reason = humanize_boost_block_reason(parsed["boost_block_reason"])
+                attr_line = (
+                    f"• Attribute: unchanged — {reason}\n"
+                    f"• OVR: **{new_ovr}** _(Allocate Skills still spends skill points when eligible)_"
+                )
+
             msg = (
                 f"**{selected_p['name']}** completed **{STAT_DRILLS.get(self.selected_drill, self.selected_drill)}**.\n"
                 f"• XP gained: `+{xp_gained}`{level_note}\n"
-                f"• OVR: **{new_ovr}** (unchanged — spend skill points to raise stats)\n"
+                f"{attr_line}\n"
                 f"• Spent: `{energy_spent} energy` + `🪙 {coins_spent:,} coins`"
             )
             await interaction.followup.send(embed=success_embed(msg), ephemeral=True)

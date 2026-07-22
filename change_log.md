@@ -2,6 +2,16 @@
 
 Hey Managers!
 
+## Training Drills — tangible attribute payoff
+
+Skill drills still cost energy and coins and still grant **XP**, and now also attempt **+1** to the attribute you’re training (e.g. Finishing → +1 SHO):
+
+- If the attribute is already maxed or the boost would push overall past potential, you still get the XP — you’ll just see a clear “attribute blocked” note
+- Skill points are **not** spent by drills; Allocate Skills stays the way you spend SP
+- Daily drill caps are unchanged (20/club, 5/card)
+
+---
+
 ## Integrity lock (marketplace & economy)
 
 Under the hood we finished the remaining game-integrity checklist:

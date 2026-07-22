@@ -1220,7 +1220,7 @@ match_xp = clamp(floor(base ? type_mult) + bonuses, 1, 35)
 | # | Action | Expected |
 |---|--------|----------|
 | 1 | Play bot match | XP applied; level-up grants 3 skill points |
-| 2 | Run basic drill | XP only; no direct stat change |
+| 2 | Run basic drill | XP + soft-capped `+1` mapped attribute (036); pot/99 blocks boost only |
 | 3 | Fuse bench card | Keeper gains XP; sacrifice deleted |
 | 4 | Allocate skill point at POT | Rejected |
 | 5 | Claim retroactive DM | Points credited once |
@@ -1228,7 +1228,7 @@ match_xp = clamp(floor(base ? type_mult) + bonuses, 1, 35)
 
 ### O. Design Decisions (v1.9)
 * Coin `/player level-up` (US-06): **deprecated** ? redirect to `/development`.
-* Direct stat drills (pre-024 behavior): **replaced** by XP drills + skill allocation.
+* Direct stat drills (pre-024 uncapped): **replaced** by XP drills + skill allocation; **036** restores modest soft-capped `+1` alongside XP.
 * Legacy `level` column: **kept** but always synced from `xp` (no independent increments).
 * Daily match XP cap: **deferred** ? curve is slow enough; revisit if grinding emerges.
 * Async training slots (AC-07): remain deprecated; stat drills are instant RPC actions.
