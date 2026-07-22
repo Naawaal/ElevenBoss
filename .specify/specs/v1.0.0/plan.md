@@ -750,11 +750,19 @@ CREATE TABLE public.player_xp_log (
 
 ---
 
-## NSS Match Engine ? Highlight-Driven State Machine (v2_simulator.py)
+## NSS Match Engine — Highlight-Driven State Machine (v2 + v3 dual-run)
 
-### Architecture
+### Live path (production)
 
-The live-streaming match engine (`packages/match_engine/match_engine/v2_simulator.py`) uses a **Markov-chain state machine** with 6 discrete phases. Only `[VISIBLE]` phases yield events to the Discord handler.
+- **Default**: NSS **v2** via `stream_match` / `collect_match_events` (`v2_simulator.py`).
+- **Dual-run**: `match_runs.engine_version` pin (`nss_v2` | `nss_v3`); flags `match_engine_v3_bot|league|friendly` (default off).
+- **v3**: `packages/match_engine/match_engine/v3/` — `SimulationEngine.step` / digests / DecisionInbox; Discord adapters `stream_match_v3` / `collect_match_events_v3`.
+- **Settlement**: unchanged (economy / `process_match_result` / fatigue) — engine version does not fork reward pipes.
+- **Dixon-Coles**: offline calibration only (`match_engine.calibration.dixon_coles_harness`) — never Discord.
+
+See feature pack: `specs/041-match-engine-v3/`.
+
+### Architecture (v2_simulator Markov core — still the sporting loop under v3 Phase 0)
 
 ```
 MIDFIELD (Hidden) ?????? BUILD_UP (Hidden) ??? ATTACK [Visible] ??? SCORING_OPP [Visible]

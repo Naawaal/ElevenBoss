@@ -198,6 +198,12 @@ class MatchState(BaseModel):
     sub_resolution: dict | None = None
     # 016 — shared intensity for injury rolls (human owner's tier in bot matches)
     intensity_tier: int = 1
+    # Wave 2 TransitionProfile knobs (defaults = exact NSS v2 behaviour)
+    build_up_clock_mult: float = 1.0
+    counter_weight: float = 1.0
+    set_piece_rate: float = 0.08
+    transition_style: str = "balanced"
+    counters_triggered: int = 0
 
     def update_tags(self) -> None:
         tags: list[str] = []
@@ -315,9 +321,18 @@ _PHASE_MINUTES: dict[Phase, tuple[int, int]] = {
 }
 
 
-def _advance_clock(rng: random.Random, phase: Phase, current_minute: int) -> int:
+def _advance_clock(
+    rng: random.Random,
+    phase: Phase,
+    current_minute: int,
+    *,
+    build_up_clock_mult: float = 1.0,
+) -> int:
     lo, hi = _PHASE_MINUTES.get(phase, (2, 5))
-    return min(90, current_minute + rng.randint(lo, hi))
+    delta = rng.randint(lo, hi)
+    if phase == Phase.BUILD_UP and build_up_clock_mult != 1.0:
+        delta = max(1, int(round(delta * build_up_clock_mult)))
+    return min(90, current_minute + delta)
 
 
 def _player_card_id(player) -> str | None:
@@ -574,18 +589,28 @@ def _consume_injury_after_yield(
 
 
 # ---------------------------------------------------------------------------
-# stream_match — the async generator consumed by battle_cog.py
+# generate_match_events — sync sporting loop (NSS v2)
+# stream_match — async wrapper for battle_cog live pacing
 # ---------------------------------------------------------------------------
-async def stream_match(
+def generate_match_events(
     state: MatchState,
     home_squad: list,
     away_squad: list,
     home_name: str,
     away_name: str,
     rng: random.Random | None = None,
-) -> AsyncGenerator[dict, None]:
+):
+    """Synchronous event generator — shared by v2 async wrapper and v3 engine."""
     if rng is None:
         rng = random.Random()
+
+    def _tick(ph: Phase) -> int:
+        return _advance_clock(
+            rng, ph, state.minute, build_up_clock_mult=float(state.build_up_clock_mult or 1.0)
+        )
+
+    set_piece_p = float(state.set_piece_rate if state.set_piece_rate is not None else 0.08)
+    cw = float(state.counter_weight if state.counter_weight is not None else 1.0)
 
     home = MatchTeamState(home_name, home_squad, state.home_rating, is_home=True)
     away = MatchTeamState(away_name, away_squad, state.away_rating, is_home=False)
@@ -644,8 +669,8 @@ async def stream_match(
             atk_mid = attacking.phase_attack(PhaseStat.MIDFIELD) + (attacking.momentum * 2)
             def_mid = defending.phase_attack(PhaseStat.MIDFIELD) + (defending.momentum * 2)
 
-            if rng.random() < 0.08:
-                state.minute = _advance_clock(rng, phase, state.minute)
+            if rng.random() < set_piece_p:
+                state.minute = _tick(phase)
                 phase = Phase.SET_PIECE
                 # Set-piece side keeps the ball — count possession (was missing → 0% ghosts)
                 stats.record_possession(attacking.is_home)
@@ -675,7 +700,7 @@ async def stream_match(
                         _consume_injury_after_yield(state, home, away, inj, rng)
                 continue
 
-            state.minute = _advance_clock(rng, phase, state.minute)
+            state.minute = _tick(phase)
             if state.minute >= 90:
                 break
 
@@ -683,7 +708,13 @@ async def stream_match(
             won_midfield = _roll_chance(rng, midfield_base, atk_mid, def_mid, attacking.momentum, 0)
             if won_midfield:
                 stats.record_possession(attacking.is_home)
-                phase = Phase.BUILD_UP
+                # Wave 2: counter styles may skip build-up into a direct counter break
+                direct_counter_p = 0.12 * max(0.0, cw - 1.0)
+                if direct_counter_p > 0 and rng.random() < direct_counter_p:
+                    phase = Phase.COUNTER_ATTACK
+                    state.counters_triggered += 1
+                else:
+                    phase = Phase.BUILD_UP
             else:
                 stats.record_possession(defending.is_home)
                 phase = Phase.BUILD_UP
@@ -694,7 +725,7 @@ async def stream_match(
             atk_pass = attacking.phase_attack(PhaseStat.PASSING)
             def_def = defending.phase_defense()
 
-            state.minute = _advance_clock(rng, phase, state.minute)
+            state.minute = _tick(phase)
             if state.minute >= 90:
                 break
 
@@ -702,16 +733,23 @@ async def stream_match(
                             attacking.stagnation_counter):
                 phase = Phase.ATTACK
             else:
-                phase = Phase.COUNTER_ATTACK
-                attacking, defending = defending, attacking
-                tactics = state.home_tactics_modifier if attacking.is_home else 1.0
-                # Countering side wins the ball — was uncounted → 0% with chances
-                stats.record_possession(attacking.is_home)
+                # Wave 2: possession styles (cw < 1) may recycle to midfield instead of counter
+                if cw < 1.0 and rng.random() > cw:
+                    phase = Phase.MIDFIELD
+                    attacking, defending = defending, attacking
+                    tactics = state.home_tactics_modifier if attacking.is_home else 1.0
+                else:
+                    phase = Phase.COUNTER_ATTACK
+                    state.counters_triggered += 1
+                    attacking, defending = defending, attacking
+                    tactics = state.home_tactics_modifier if attacking.is_home else 1.0
+                    # Countering side wins the ball — was uncounted → 0% with chances
+                    stats.record_possession(attacking.is_home)
         elif phase == Phase.ATTACK:
             atk_stat = attacking.phase_attack(PhaseStat.ATTACK, tactics)
             def_stat = defending.phase_defense()
 
-            state.minute = _advance_clock(rng, phase, state.minute)
+            state.minute = _tick(phase)
             if state.minute >= 90:
                 break
 
@@ -738,7 +776,7 @@ async def stream_match(
             atk_shot = attacking.phase_attack(PhaseStat.SHOOTING, tactics)
             def_gk = defending.phase_gk()
 
-            state.minute = _advance_clock(rng, phase, state.minute)
+            state.minute = _tick(phase)
 
             scorer = _pick_player(rng, attacking.squad, "attack")
             scorer_name = _get_name(scorer)
@@ -819,7 +857,7 @@ async def stream_match(
                 phase = Phase.MIDFIELD
 
         elif phase == Phase.SET_PIECE:
-            state.minute = _advance_clock(rng, phase, state.minute)
+            state.minute = _tick(phase)
             if state.minute >= 90:
                 break
 
@@ -845,7 +883,7 @@ async def stream_match(
             atk_speed = attacking.phase_attack(PhaseStat.PACE, tactics)
             def_recovery = defending.phase_defense()
 
-            state.minute = _advance_clock(rng, phase, state.minute)
+            state.minute = _tick(phase)
             if state.minute >= 90:
                 break
 
@@ -888,6 +926,20 @@ async def stream_match(
     }
 
 
+async def stream_match(
+    state: MatchState,
+    home_squad: list,
+    away_squad: list,
+    home_name: str,
+    away_name: str,
+    rng: random.Random | None = None,
+) -> AsyncGenerator[dict, None]:
+    for ev in generate_match_events(
+        state, home_squad, away_squad, home_name, away_name, rng=rng
+    ):
+        yield ev
+
+
 async def collect_match_events(
     state: MatchState,
     home_squad: list,
@@ -896,11 +948,11 @@ async def collect_match_events(
     away_name: str,
     sim_seed: int,
 ) -> tuple[MatchState, list[dict]]:
-    """Run stream_match to completion without Discord delays (recovery / fast-forward)."""
+    """Run match to completion without Discord delays (recovery / fast-forward)."""
     # Silent sims never prompt — clear interactive sides so events auto-resolve
     state.interactive_sides = []
     rng = random.Random(sim_seed)
-    events: list[dict] = []
-    async for ev in stream_match(state, home_squad, away_squad, home_name, away_name, rng=rng):
-        events.append(ev)
+    events = list(
+        generate_match_events(state, home_squad, away_squad, home_name, away_name, rng=rng)
+    )
     return state, events

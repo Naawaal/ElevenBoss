@@ -8,9 +8,28 @@ from typing import Any
 
 from match_engine import MatchPlayerCard
 
+ENGINE_NSS_V2 = "nss_v2"
+ENGINE_NSS_V3 = "nss_v3"
+SIMULATION_SCHEMA_V3 = 2  # Wave 1 DecisionWindows (+ Wave 2 profiles available)
+
 
 def generate_sim_seed() -> int:
     return secrets.randbits(63)
+
+
+async def resolve_engine_version(db: Any, run_type: str) -> tuple[str, int]:
+    """Return (engine_version, simulation_schema_version) for a new run."""
+    from apps.discord_bot.core.economy_rpc import get_game_config_int
+
+    key = {
+        "bot": "match_engine_v3_bot",
+        "league": "match_engine_v3_league",
+        "friendly": "match_engine_v3_friendly",
+    }.get(run_type, "match_engine_v3_bot")
+    enabled = await get_game_config_int(db, key, 0)
+    if int(enabled) == 1:
+        return ENGINE_NSS_V3, SIMULATION_SCHEMA_V3
+    return ENGINE_NSS_V2, 1
 
 
 def _card_to_dict(card: MatchPlayerCard) -> dict[str, Any]:
@@ -104,7 +123,15 @@ async def create_league_run(
     thread_id: int | None,
     home_discord_id: int,
     away_discord_id: int,
+    engine_version: str | None = None,
+    simulation_schema_version: int | None = None,
 ) -> dict:
+    if engine_version is None or simulation_schema_version is None:
+        ev, ssv = await resolve_engine_version(db, "league")
+        engine_version = engine_version or ev
+        simulation_schema_version = (
+            simulation_schema_version if simulation_schema_version is not None else ssv
+        )
     payload = {
         "run_type": "league",
         "status": "streaming",
@@ -116,6 +143,10 @@ async def create_league_run(
         "squad_snapshot": squad_snapshot,
         "guild_id": guild_id,
         "thread_id": thread_id,
+        "engine_version": engine_version,
+        "simulation_schema_version": simulation_schema_version,
+        "event_schema_version": 1,
+        "events_flushed_thru": 0,
     }
     res = await db.table("match_runs").insert(payload).execute()
     return (res.data or [payload])[0]
@@ -132,7 +163,15 @@ async def create_ephemeral_run(
     guild_id: int | None,
     thread_id: int | None,
     squad_snapshot: dict | None = None,
+    engine_version: str | None = None,
+    simulation_schema_version: int | None = None,
 ) -> dict:
+    if engine_version is None or simulation_schema_version is None:
+        ev, ssv = await resolve_engine_version(db, run_type)
+        engine_version = engine_version or ev
+        simulation_schema_version = (
+            simulation_schema_version if simulation_schema_version is not None else ssv
+        )
     payload = {
         "run_type": run_type,
         "status": "streaming",
@@ -143,6 +182,10 @@ async def create_ephemeral_run(
         "squad_snapshot": squad_snapshot or {},
         "guild_id": guild_id,
         "thread_id": thread_id,
+        "engine_version": engine_version,
+        "simulation_schema_version": simulation_schema_version,
+        "event_schema_version": 1,
+        "events_flushed_thru": 0,
     }
     res = await db.table("match_runs").insert(payload).execute()
     return (res.data or [payload])[0]

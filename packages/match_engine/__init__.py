@@ -26,6 +26,14 @@ from .match_engine import (
     stats_from_events,
     zone_averages,
     format_zone_breakdown,
+    SimulationEngine,
+    stream_match_v3,
+    collect_match_events_v3,
+    sporting_digest,
+    deterministic_replay_digest,
+    settlement_digest,
+    NSS_V3_ENGINE_VERSION,
+    SIMULATION_SCHEMA_VERSION,
 )
 from .lineup_validator import validate_lineup
 from .lineup_builder import build_auto_lineup
@@ -89,4 +97,12 @@ __all__ = [
     "MatchCardEvent",
     "MatchInjuryEvent",
     "MatchSubstitutionEvent",
+    "SimulationEngine",
+    "stream_match_v3",
+    "collect_match_events_v3",
+    "sporting_digest",
+    "deterministic_replay_digest",
+    "settlement_digest",
+    "NSS_V3_ENGINE_VERSION",
+    "SIMULATION_SCHEMA_VERSION",
 ]

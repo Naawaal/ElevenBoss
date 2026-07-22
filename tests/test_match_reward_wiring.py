@@ -294,3 +294,16 @@ async def test_check_matchday_milestone_uses_atomic_rpc(monkeypatch: pytest.Monk
     upsert_calls = [c for c in db.rpc_calls if c[0] == "upsert_matchday_milestone_points"]
     assert len(upsert_calls) == 1
     assert upsert_calls[0][1]["p_points_delta"] == 3
+
+
+def test_reward_pipes_ignore_engine_version():
+    """V3 dual-run must not invent a parallel coin/XP pipe (T040 / SC-003)."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    rewards = (root / "apps/discord_bot/core/match_rewards.py").read_text(encoding="utf-8")
+    league = (root / "apps/discord_bot/core/league_rewards.py").read_text(encoding="utf-8")
+    assert "nss_v3" not in rewards and "ENGINE_NSS" not in rewards
+    assert "nss_v3" not in league and "ENGINE_NSS" not in league
+    assert "apply_match_economy" in rewards
+    assert "apply_match_xp_if_needed" in rewards

@@ -18,6 +18,21 @@ from .substitution_resolve import (
     MAX_SUBS_PER_MATCH,
 )
 from .bot_squad import build_bot_match_squad
+from .v2_simulator import generate_match_events
+from .v3 import (
+    ENGINE_VERSION as NSS_V3_ENGINE_VERSION,
+    SIMULATION_SCHEMA_VERSION,
+    SimulationEngine,
+    DecisionInbox,
+    DecisionIntent,
+    MatchContext,
+    MatchEventV3,
+    sporting_digest,
+    deterministic_replay_digest,
+    settlement_digest,
+    stream_match_v3,
+    collect_match_events_v3,
+)
 
 __all__ = [
     "MatchPlayerCard",
@@ -33,6 +48,7 @@ __all__ = [
     "MatchState",
     "stream_match",
     "collect_match_events",
+    "generate_match_events",
     "generate_round_robin_fixtures",
     "expected_fixture_counts",
     "get_coordinates_for_formation",
@@ -50,4 +66,16 @@ __all__ = [
     "play_on_tier_upgrade",
     "MAX_SUBS_PER_MATCH",
     "build_bot_match_squad",
+    "NSS_V3_ENGINE_VERSION",
+    "SIMULATION_SCHEMA_VERSION",
+    "SimulationEngine",
+    "DecisionInbox",
+    "DecisionIntent",
+    "MatchContext",
+    "MatchEventV3",
+    "sporting_digest",
+    "deterministic_replay_digest",
+    "settlement_digest",
+    "stream_match_v3",
+    "collect_match_events_v3",
 ]

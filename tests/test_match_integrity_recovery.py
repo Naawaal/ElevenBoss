@@ -82,3 +82,45 @@ def test_league_dual_lock_in_execute():
     )
     assert "Lock both human clubs" in battle
     assert "locks_held" in battle
+
+
+def test_v3_friendly_sandbox_no_event_flush():
+    """Friendly under nss_v3 must not write match_events (T040 / SC-003)."""
+    battle = (ROOT / "apps" / "discord_bot" / "cogs" / "battle_cog.py").read_text(
+        encoding="utf-8"
+    )
+    start = battle.find("async def start_friendly_match")
+    end = battle.find("\n    async def ", start + 1)
+    body = battle[start:end] if end > start else battle[start:]
+    assert "append_match_events" not in body
+    assert "friendly_match_logs" in body
+    assert "stream_match_v3" in body or "ENGINE_NSS_V3" in body
+    assert "process_match_result" not in body
+    assert "apply_match_economy" not in body
+
+
+def test_v3_league_bot_can_flush_events_but_settle_once_guards_remain():
+    battle = (ROOT / "apps" / "discord_bot" / "cogs" / "battle_cog.py").read_text(
+        encoding="utf-8"
+    )
+    assert "append_match_events" in battle
+    assert "ENGINE_NSS_V3" in battle
+    assert "rewards_applied = True" in battle
+    assert "never abandon-after-pay" in battle or "Present-retry only" in battle
+    # Recovery still classifies interrupted runs (settle-once)
+    recovery = (ROOT / "apps" / "discord_bot" / "core" / "match_recovery.py").read_text(
+        encoding="utf-8"
+    )
+    assert "classify_interrupted_run" in recovery
+    assert "complete_run" in recovery
+    assert "abandon_run" in recovery
+
+
+def test_v3_engine_pin_on_create_paths():
+    runs = (ROOT / "apps" / "discord_bot" / "core" / "match_runs.py").read_text(
+        encoding="utf-8"
+    )
+    assert "resolve_engine_version" in runs
+    assert 'ENGINE_NSS_V2 = "nss_v2"' in runs
+    assert 'ENGINE_NSS_V3 = "nss_v3"' in runs
+    assert "simulation_schema_version" in runs

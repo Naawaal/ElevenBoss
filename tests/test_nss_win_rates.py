@@ -135,3 +135,67 @@ def test_no_exact_zero_hundred_possession_batch() -> None:
     zero_splits, favorite_wins, n = asyncio.run(_run())
     assert zero_splits == 0, f"{zero_splits} matches had exact 0–100 possession"
     assert favorite_wins >= n // 2, f"favorite wins {favorite_wins}/{n} too low"
+
+
+# --- NSS v3 Balanced (Phase 0 / T051 / SC-008) ---
+
+from match_engine import stream_match_v3  # noqa: E402
+
+
+async def _run_n_v3(home_ovr: int, away_ovr: int, n: int, seed0: int = 0) -> tuple[float, float, float]:
+    hw = aw = d = 0
+    for i in range(n):
+        state = MatchState(home_rating=float(home_ovr), away_rating=float(away_ovr))
+        async for _ in stream_match_v3(
+            state,
+            _squad11(home_ovr, "H"),
+            _squad11(away_ovr, "A"),
+            "Home",
+            "Away",
+            sim_seed=seed0 + i,
+        ):
+            pass
+        if state.home_score > state.away_score:
+            hw += 1
+        elif state.away_score > state.home_score:
+            aw += 1
+        else:
+            d += 1
+    return hw / n, aw / n, d / n
+
+
+def test_v3_seed_aligned_scores_match_v2() -> None:
+    """exact_parity: same seed → identical final score (v2 stream vs v3 adapter)."""
+
+    async def _pair(seed: int) -> tuple[tuple[int, int], tuple[int, int]]:
+        home, away = _squad11(80, "H"), _squad11(75, "A")
+        s2 = MatchState(home_rating=80.0, away_rating=75.0)
+        async for _ in stream_match(
+            s2, home, away, "Home", "Away", rng=random.Random(seed)
+        ):
+            pass
+        s3 = MatchState(home_rating=80.0, away_rating=75.0)
+        async for _ in stream_match_v3(
+            s3, home, away, "Home", "Away", sim_seed=seed
+        ):
+            pass
+        return (s2.home_score, s2.away_score), (s3.home_score, s3.away_score)
+
+    async def _batch() -> None:
+        for seed in range(50, 100):
+            a, b = await _pair(seed)
+            assert a == b, f"seed {seed}: v2 {a} != v3 {b}"
+
+    asyncio.run(_batch())
+
+
+def test_v3_even_match_home_win_band() -> None:
+    hw, aw, _ = asyncio.run(_run_n_v3(80, 80, 200, seed0=7000))
+    assert 0.30 <= hw <= 0.50, f"v3 home win {hw:.1%} outside 30-50%"
+    assert 0.30 <= aw <= 0.50, f"v3 away win {aw:.1%} outside 30-50%"
+
+
+def test_v3_moderate_favorite_85_vs_75() -> None:
+    hw, _, dr = asyncio.run(_run_n_v3(85, 75, 200, seed0=8000))
+    assert hw >= 0.75, f"v3 home win rate {hw:.1%} below 75% gate"
+    assert dr <= 0.25

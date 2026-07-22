@@ -257,6 +257,10 @@ async def _recover_league_run(bot: commands.Bot, db, run: dict) -> None:
 
 
 async def recover_interrupted_matches(bot: commands.Bot) -> None:
+    """
+    Boot recovery. League v3 runs re-sim via battle_cog with
+    `load_run_decision_intents` when engine_version=nss_v3 (T058).
+    """
     db = await get_client()
     res = await db.table("match_runs").select("*").in_(
         "status", ["streaming", "completing"]

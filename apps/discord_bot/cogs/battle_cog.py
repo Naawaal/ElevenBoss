@@ -11,12 +11,13 @@ from discord.ext import commands
 from match_engine import (
     MatchPlayerCard,
     MatchInput,
-    simulate_match,
     EventType,
     CommentaryEngine,
     MatchState,
     stream_match,
     collect_match_events,
+    stream_match_v3,
+    collect_match_events_v3,
     MatchResult,
     format_zone_breakdown,
     build_bot_match_squad,
@@ -71,6 +72,7 @@ from apps.discord_bot.core.match_runs import (
     get_active_fixture_run,
     mark_completing,
     squads_from_snapshot,
+    ENGINE_NSS_V3,
 )
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
@@ -83,8 +85,15 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
+async def _ensure_thread_writable(channel: discord.abc.Messageable) -> None:
+    """Force-unarchive a Discord thread (do not trust cached ``archived`` — it goes stale)."""
+    if isinstance(channel, discord.Thread):
+        # Always hit the API: local channel.archived is often False while Discord returns 50083
+        await channel.edit(archived=False, locked=False)
+
+
 async def safe_edit_message(message: discord.Message, **kwargs) -> None:
-    """Edit with basic 429 backoff for match tickers."""
+    """Edit with 429 backoff + unarchive if the stadium thread was archived mid-match."""
     for attempt in range(3):
         try:
             await message.edit(**kwargs)
@@ -92,8 +101,20 @@ async def safe_edit_message(message: discord.Message, **kwargs) -> None:
         except discord.HTTPException as e:
             if e.status == 429 and attempt < 2:
                 await asyncio.sleep(float(getattr(e, "retry_after", 2) or 2))
-            else:
-                raise
+                continue
+            # 50083 = Thread is archived
+            if getattr(e, "code", None) == 50083 and attempt < 2:
+                try:
+                    await _ensure_thread_writable(message.channel)
+                except Exception:
+                    logger.warning(
+                        "Could not unarchive thread for ticker edit (channel=%s)",
+                        getattr(message.channel, "id", None),
+                        exc_info=True,
+                    )
+                    raise e
+                continue
+            raise
 
 
 def _fixture_in_window(fixture: dict) -> bool:
@@ -185,10 +206,37 @@ MATCH_ENGINE_FOOTER = (
 )
 
 class TouchlineView(discord.ui.View):
-    def __init__(self, state: MatchState, owner_id: int) -> None:
+    """Live touchline — Attack/Balanced/Defend always; Wave 2 styles when v3 inbox is live."""
+
+    _WAVE2_STYLES = (
+        ("Possession", "possession", "🧠"),
+        ("Counter", "counter", "⚡"),
+        ("Long Ball", "long_ball", "🚀"),
+        ("High Press", "high_press", "🔥"),
+    )
+
+    def __init__(
+        self,
+        state: MatchState,
+        owner_id: int,
+        *,
+        inbox: Any | None = None,
+        styles_enabled: bool = False,
+    ) -> None:
         super().__init__(timeout=300)
         self.state = state
         self.owner_id = owner_id
+        self.inbox = inbox  # DecisionInbox when engine_version=nss_v3
+        if styles_enabled and inbox is not None:
+            for label, key, emoji in self._WAVE2_STYLES:
+                btn = discord.ui.Button(
+                    style=discord.ButtonStyle.success,
+                    label=f"{emoji} {label}",
+                    custom_id=f"battle_touchline_style_{key}",
+                    row=1,
+                )
+                btn.callback = self._make_style_callback(key, label)
+                self.add_item(btn)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -196,22 +244,55 @@ class TouchlineView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(style=discord.ButtonStyle.danger, label="⚔️ Attack", custom_id="battle_touchline_attack")
+    def _apply_tactic(self, tactic: str, modifier: float, momentum: float) -> None:
+        if self.inbox is not None:
+            from match_engine.v3 import DecisionIntent
+
+            self.inbox.push(
+                DecisionIntent(
+                    side="home",
+                    kind="set_tactic",
+                    payload={"tactic": tactic, "stance_modifier": modifier},
+                    requested_at_minute=int(getattr(self.state, "minute", 0) or 0),
+                    source="human",
+                )
+            )
+            # Optimistic UI + momentum (generator reads pending_home_momentum on shared state)
+            self.state.home_tactics_modifier = modifier
+            self.state.pending_home_momentum = momentum
+            if hasattr(self.state, "transition_style"):
+                self.state.transition_style = tactic
+        else:
+            self.state.home_tactics_modifier = modifier
+            self.state.pending_home_momentum = momentum
+
+    def _make_style_callback(self, style_key: str, label: str):
+        async def _cb(interaction: discord.Interaction) -> None:
+            from match_engine.v3.tactics import get_transition_profile
+
+            prof = get_transition_profile(style_key)
+            self._apply_tactic(style_key, float(prof.stance_modifier), 0.0)
+            await interaction.response.send_message(
+                f"📣 **Touchline**: Style set to **{label}** "
+                f"(applies at the next Decision Window).",
+                ephemeral=True,
+            )
+
+        return _cb
+
+    @discord.ui.button(style=discord.ButtonStyle.danger, label="⚔️ Attack", custom_id="battle_touchline_attack", row=0)
     async def attack_callback(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        self.state.home_tactics_modifier = 1.3
-        self.state.pending_home_momentum = 5.0
+        self._apply_tactic("attack", 1.3, 5.0)
         await interaction.response.send_message("📣 **Touchline**: Tactical focus shifted to **Attack**!", ephemeral=True)
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="⚖️ Balanced", custom_id="battle_touchline_balanced")
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="⚖️ Balanced", custom_id="battle_touchline_balanced", row=0)
     async def balanced_callback(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        self.state.home_tactics_modifier = 1.0
-        self.state.pending_home_momentum = 0.0
+        self._apply_tactic("balanced", 1.0, 0.0)
         await interaction.response.send_message("📣 **Touchline**: Tactics set to **Balanced** shape.", ephemeral=True)
 
-    @discord.ui.button(style=discord.ButtonStyle.primary, label="🛡️ Defend", custom_id="battle_touchline_defend")
+    @discord.ui.button(style=discord.ButtonStyle.primary, label="🛡️ Defend", custom_id="battle_touchline_defend", row=0)
     async def defend_callback(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        self.state.home_tactics_modifier = 0.7
-        self.state.pending_home_momentum = -5.0
+        self._apply_tactic("defend", 0.7, -5.0)
         await interaction.response.send_message("📣 **Touchline**: Tactical focus shifted to **Defend**!", ephemeral=True)
 
 class ChallengeView(discord.ui.View):
@@ -316,7 +397,7 @@ class StandardMatchHandler(IMatchOutputHandler):
         )
         if matchday:
             ticket_embed.add_field(name="Matchday", value=f"Matchday {matchday}", inline=True)
-            
+
         if energy_cost is not None and energy_cost > 0:
             ticket_embed.add_field(name="Cost", value=f"⚡ **{energy_cost}** Action Energy", inline=True)
         elif energy_cost == 0:
@@ -324,27 +405,37 @@ class StandardMatchHandler(IMatchOutputHandler):
         else:
             ticket_embed.add_field(name="Cost", value="⚡ Energy cost applies", inline=True)
 
-        if interaction.response.is_done():
-            self.ticket_msg = await interaction.channel.send(embed=ticket_embed)
-        else:
-            self.ticket_msg = await interaction.followup.send(embed=ticket_embed)
+        channel = interaction.channel
+        # Always ticket + spawn from the parent text channel — never reuse an old stadium
+        # thread (leftover archive_thread_after_delay tasks re-archive mid-match → 50083).
+        ticket_dest: discord.abc.Messageable = channel
+        if isinstance(channel, discord.Thread) and channel.parent is not None:
+            ticket_dest = channel.parent
+
+        # Prefer parent channel send (works after defer); avoids posting into archived threads
+        self.ticket_msg = await ticket_dest.send(embed=ticket_embed)
 
         self.thread = None
-        if not self.league_mode and interaction.guild and hasattr(interaction.channel, "create_thread"):
+        if (
+            not self.league_mode
+            and interaction.guild
+            and hasattr(ticket_dest, "create_thread")
+            and not isinstance(ticket_dest, discord.Thread)
+        ):
             try:
-                self.thread = await interaction.channel.create_thread(
+                self.thread = await ticket_dest.create_thread(
                     name=f"🏟️ {home_name} vs {away_name} - Live",
                     message=self.ticket_msg,
-                    auto_archive_duration=60
+                    auto_archive_duration=1440,  # 24h — live matches outlast 60m idle archive
                 )
             except Exception as e:
                 logger.warning(f"Failed to create public match thread: {e}. Falling back to main channel.")
 
         if self.thread:
             ticket_embed.add_field(name="Stadium Thread", value=self.thread.mention, inline=False)
-            await self.ticket_msg.edit(embed=ticket_embed)
+            await safe_edit_message(self.ticket_msg, embed=ticket_embed)
 
-        return self.thread if self.thread else interaction.channel
+        return self.thread if self.thread else ticket_dest
 
     async def start_match(self, target: discord.abc.Messageable, home_name: str, away_name: str, touchline_view: discord.ui.View | None) -> None:
         self.home_name = home_name
@@ -442,6 +533,17 @@ class StandardMatchHandler(IMatchOutputHandler):
         fitness_line = (kwargs.get("fitness_summary") or {}).get("line")
         if fitness_line:
             press_embed.add_field(name="💪 Fitness", value=fitness_line, inline=False)
+        explanation = kwargs.get("explanation")
+        if explanation:
+            tips = explanation.get("turning_points") or []
+            lines = [explanation.get("headline") or "Key moments"]
+            for tp in tips[:3]:
+                lines.append(f"• {tp.get('minute', '?')}' — {tp.get('type', 'moment')}")
+            press_embed.add_field(
+                name="🔍 How it was decided",
+                value="\n".join(lines)[:1024],
+                inline=False,
+            )
         press_embed.set_footer(
             text=f"✅ Rewards saved. Check `/leaderboard` for rankings. {MATCH_ENGINE_FOOTER}"
         )
@@ -641,6 +743,18 @@ class LeagueMatchHandler(IMatchOutputHandler):
         fitness_line = (kwargs.get("fitness_summary") or {}).get("line")
         if fitness_line:
             press_embed.add_field(name="💪 Fitness", value=fitness_line, inline=False)
+
+        explanation = kwargs.get("explanation")
+        if explanation:
+            tips = explanation.get("turning_points") or []
+            lines = [explanation.get("headline") or "Key moments"]
+            for tp in tips[:3]:
+                lines.append(f"• {tp.get('minute', '?')}' — {tp.get('type', 'moment')}")
+            press_embed.add_field(
+                name="🔍 How it was decided",
+                value="\n".join(lines)[:1024],
+                inline=False,
+            )
 
         press_embed.set_footer(
             text=f"✅ Season Pts updated. `/leaderboard` → Season tab. {MATCH_ENGINE_FOOTER}"
@@ -842,10 +956,14 @@ async def run_league_match_simulation(
     sim_seed = sim_seed if sim_seed is not None else generate_sim_seed()
     match_rng = random.Random(sim_seed)
     bot_squad_rng = random.Random(sim_seed ^ 0xB075AD)
+    engine_version = "nss_v2"
 
     if recovery and run_id:
-        run_res = await db.table("match_runs").select("squad_snapshot").eq("id", run_id).maybe_single().execute()
+        run_res = await db.table("match_runs").select(
+            "squad_snapshot,engine_version"
+        ).eq("id", run_id).maybe_single().execute()
         snapshot = (run_res.data or {}).get("squad_snapshot") or {}
+        engine_version = (run_res.data or {}).get("engine_version") or "nss_v2"
         home_squad, away_squad = squads_from_snapshot(snapshot)
         home_rating = float(snapshot.get("home_rating", 60.0))
         away_rating = float(snapshot.get("away_rating", 60.0))
@@ -987,6 +1105,7 @@ async def run_league_match_simulation(
             away_discord_id=int(fixture["away_team_id"]),
         )
         run_id = run_row.get("id", run_id)
+        engine_version = run_row.get("engine_version") or engine_version
 
     state = MatchState(home_rating=home_rating, away_rating=away_rating)
     state.injuries_enabled = True
@@ -1023,7 +1142,21 @@ async def run_league_match_simulation(
     target = await handler.initialize(None, home_name, away_name, fixture["matchday"])
 
     touchline_user_id = active_player_id if active_player_id else 0
-    touchline_view = TouchlineView(state, touchline_user_id) if touchline_user_id and not silent else None
+    touchline_inbox = None
+    if engine_version == ENGINE_NSS_V3 and touchline_user_id and not silent:
+        from match_engine.v3 import DecisionInbox
+
+        touchline_inbox = DecisionInbox()
+    touchline_view = (
+        TouchlineView(
+            state,
+            touchline_user_id,
+            inbox=touchline_inbox,
+            styles_enabled=touchline_inbox is not None,
+        )
+        if touchline_user_id and not silent
+        else None
+    )
 
     owner_by_side = {}
     if not home_p["is_ai"]:
@@ -1094,9 +1227,29 @@ async def run_league_match_simulation(
             await asyncio.sleep(sleep_time)
 
     if silent:
-        state, events = await collect_match_events(
-            state, home_squad, away_squad, home_name, away_name, sim_seed
-        )
+        recovery_decisions = None
+        if engine_version == ENGINE_NSS_V3 and recovery and run_id:
+            from apps.discord_bot.core.match_events_store import load_run_decision_intents
+
+            recovery_decisions = await load_run_decision_intents(db, run_id)
+        if engine_version == ENGINE_NSS_V3:
+            state, events, _canon = await collect_match_events_v3(
+                state,
+                home_squad,
+                away_squad,
+                home_name,
+                away_name,
+                sim_seed,
+                decisions=recovery_decisions or None,
+            )
+            if run_id:
+                from apps.discord_bot.core.match_events_store import append_match_events
+
+                await append_match_events(db, run_id, _canon, flushed_thru=0)
+        else:
+            state, events = await collect_match_events(
+                state, home_squad, away_squad, home_name, away_name, sim_seed
+            )
         for ev in events:
             variables = {"actor": ev["actor"], "team": ev["team"]}
             comm = commentary_engine.get_commentary(ev["type"], state.context_tags, variables)
@@ -1112,10 +1265,29 @@ async def run_league_match_simulation(
                     entry["assister"] = ev["assister"]
                 key_events_list.append(entry)
     else:
-        async for ev in stream_match(
-            state, home_squad, away_squad, home_name, away_name, rng=match_rng
-        ):
+        event_stream = (
+            stream_match_v3(
+                state,
+                home_squad,
+                away_squad,
+                home_name,
+                away_name,
+                sim_seed=sim_seed,
+                inbox=touchline_inbox,
+            )
+            if engine_version == ENGINE_NSS_V3
+            else stream_match(
+                state, home_squad, away_squad, home_name, away_name, rng=match_rng
+            )
+        )
+        async for ev in event_stream:
             await _consume_event(ev)
+        if engine_version == ENGINE_NSS_V3 and run_id:
+            from apps.discord_bot.core.match_events_store import append_match_events
+
+            live_canon = list(getattr(state, "_nss_v3_events", []) or [])
+            if live_canon:
+                await append_match_events(db, run_id, live_canon, flushed_thru=0)
 
     if touchline_view:
         for child in touchline_view.children:
@@ -1285,6 +1457,24 @@ async def run_league_match_simulation(
     active_earned = h_coins if active_player_id == fixture["home_team_id"] else a_coins
     active_pts = h_pts if active_player_id == fixture["home_team_id"] else a_pts
 
+    explanation_kw: dict = {}
+    if engine_version == ENGINE_NSS_V3:
+        from match_engine.v3 import project_explanation
+
+        v3_events = list(getattr(state, "_nss_v3_events", []) or [])
+        if v3_events:
+            league_res = (
+                "win"
+                if state.home_score > state.away_score
+                else ("loss" if state.home_score < state.away_score else "draw")
+            )
+            expl = project_explanation(v3_events, result=league_res)
+            explanation_kw["explanation"] = {
+                "headline": expl.headline,
+                "turning_points": expl.turning_points,
+                "primary_turning_seq": expl.primary_turning_seq,
+            }
+
     await handler.finalize_match(
         result=match_res,
         state=state,
@@ -1307,6 +1497,7 @@ async def run_league_match_simulation(
         fitness_summary=(
             h_fitness if active_player_id == fixture["home_team_id"] else a_fitness
         ),
+        **explanation_kw,
     )
 
 class ArenaHubView(discord.ui.View):
@@ -1592,8 +1783,19 @@ class BattleCog(commands.Cog):
                 thread_id=getattr(handler.thread, "id", None),
             )
             bot_run_id = run_row.get("id")
+            engine_version = run_row.get("engine_version") or "nss_v2"
 
-            touchline_view = TouchlineView(state, interaction.user.id)
+            touchline_inbox = None
+            if engine_version == ENGINE_NSS_V3:
+                from match_engine.v3 import DecisionInbox
+
+                touchline_inbox = DecisionInbox()
+            touchline_view = TouchlineView(
+                state,
+                interaction.user.id,
+                inbox=touchline_inbox,
+                styles_enabled=touchline_inbox is not None,
+            )
             await handler.start_match(target, player["club_name"], opp_name, touchline_view)
 
             match_rng = random.Random(sim_seed)
@@ -1605,9 +1807,22 @@ class BattleCog(commands.Cog):
             owner_by_side = {"home": interaction.user.id}
             injury_channel = getattr(handler, "thread", None) or target
 
-            async for ev in stream_match(
-                state, match_cards, opp_squad, player["club_name"], opp_name, rng=match_rng
-            ):
+            bot_stream = (
+                stream_match_v3(
+                    state,
+                    match_cards,
+                    opp_squad,
+                    player["club_name"],
+                    opp_name,
+                    sim_seed=sim_seed,
+                    inbox=touchline_inbox,
+                )
+                if engine_version == ENGINE_NSS_V3
+                else stream_match(
+                    state, match_cards, opp_squad, player["club_name"], opp_name, rng=match_rng
+                )
+            )
+            async for ev in bot_stream:
                 variables = {
                     "actor": ev["actor"],
                     "team": ev["team"]
@@ -1658,6 +1873,13 @@ class BattleCog(commands.Cog):
                     sleep_time = 1.5
 
                 await asyncio.sleep(sleep_time)
+
+            if engine_version == ENGINE_NSS_V3 and bot_run_id:
+                from apps.discord_bot.core.match_events_store import append_match_events
+
+                bot_canon = list(getattr(state, "_nss_v3_events", []) or [])
+                if bot_canon:
+                    await append_match_events(db, bot_run_id, bot_canon, flushed_thru=0)
 
             for child in touchline_view.children:
                 child.disabled = True
@@ -1722,6 +1944,19 @@ class BattleCog(commands.Cog):
 
             weekly_total = int(player.get("league_points", 0)) + points_earned
 
+            explanation_kw: dict = {}
+            if engine_version == ENGINE_NSS_V3:
+                from match_engine.v3 import project_explanation
+
+                v3_events = list(getattr(state, "_nss_v3_events", []) or [])
+                if v3_events:
+                    expl = project_explanation(v3_events, result=res_str)
+                    explanation_kw["explanation"] = {
+                        "headline": expl.headline,
+                        "turning_points": expl.turning_points,
+                        "primary_turning_seq": expl.primary_turning_seq,
+                    }
+
             try:
                 await handler.finalize_match(
                     result=result,
@@ -1741,6 +1976,7 @@ class BattleCog(commands.Cog):
                     weekly_total=weekly_total,
                     global_divisions=divisions,
                     fitness_summary=fitness_summary,
+                    **explanation_kw,
                 )
             except Exception:
                 # Present-retry only — rewards already durable; never abandon-after-pay
@@ -2047,6 +2283,7 @@ class BattleCog(commands.Cog):
                 thread_id=thread.id,
             )
             friendly_run_id = run_row.get("id")
+            engine_version = run_row.get("engine_version") or "nss_v2"
             match_rng = random.Random(sim_seed)
 
             # Ticker Streaming Loop
@@ -2054,9 +2291,27 @@ class BattleCog(commands.Cog):
             goal_scroll: list[str] = []
             key_events_list: list[dict] = []
 
-            async for ev in stream_match(
-                state, c_cards, o_cards, c_player["club_name"], o_player["club_name"], rng=match_rng
-            ):
+            # Friendly remains sandbox — no match_events flush even on v3
+            friendly_stream = (
+                stream_match_v3(
+                    state,
+                    c_cards,
+                    o_cards,
+                    c_player["club_name"],
+                    o_player["club_name"],
+                    sim_seed=sim_seed,
+                )
+                if engine_version == ENGINE_NSS_V3
+                else stream_match(
+                    state,
+                    c_cards,
+                    o_cards,
+                    c_player["club_name"],
+                    o_player["club_name"],
+                    rng=match_rng,
+                )
+            )
+            async for ev in friendly_stream:
                 variables = {
                     "actor": ev["actor"],
                     "team": ev["team"]

@@ -2,6 +2,20 @@
 
 Hey Managers!
 
+## Match engine Wave 1–2 (pending flag enable)
+
+Under the hood, NSS v3 now supports:
+- **Touchline Decision Windows** at 15' / 30' / 45' / 60' / 75' / 85' (changes apply at the next window, not mid-phrase spam)
+- **Tactical transition styles** on the live touchline when v3 is on: **Possession / Counter / Long Ball / High Press** (plus classic Attack / Balanced / Defend) — these change how attacks build, not a hidden goal% buff
+
+Nothing changes in your matches until we flip the staging/prod engine flags. Default remains classic NSS.
+
+---
+## Match engine (pending enable)
+
+We're shipping the **NSS Match Engine V3** plumbing under the hood — same matches for now (flags off). When we turn it on for bot/league, you'll get the same sporting outcomes with stronger replay/recovery. No player-facing change until we flip the staging/prod flags.
+
+---
 ## Faster hubs & safer pack claims
 
 Opening **Development**, **Training Drills**, and the **Store** should feel snappier — we cut repeat database lookups for game settings. If a free pack claim retries after a timeout, you won’t get charged twice or see a scary “failed” message when it actually already worked.
