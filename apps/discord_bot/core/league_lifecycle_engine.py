@@ -1008,42 +1008,102 @@ async def pause_season(db: Any, season_id: str) -> None:
 
 
 async def resume_season(db: Any, season: dict) -> bool:
-    paused_at = _utc(season.get("pause_started_at"))
-    if not paused_at:
-        return False
-    delta = int((datetime.now(timezone.utc) - paused_at).total_seconds())
-    if delta <= 0:
-        return False
-    from leagues.schedule import MatchdayUtcWindow
+    """Resume a paused season: rebase open windows by pause duration, set active.
 
-    matchdays = await db.table("league_matchdays").select("*").eq("season_id", season["id"]).in_(
-        "status", ["scheduled", "open", "closing_soon", "locked", "resolution_failed"]
-    ).execute()
-    updates = []
-    for row in matchdays.data or []:
-        ws, we = _utc(row["window_start"]), _utc(row["window_end"])
-        if not ws or not we:
-            continue
-        windows = rebase_windows([
-            MatchdayUtcWindow(
-                matchday_number=int(row["matchday_number"]),
-                window_start=ws,
-                window_end=we,
-            )
-        ], delta)
-        w = windows[0]
-        updates.append({"id": row["id"], "window_start": w.window_start.isoformat(), "window_end": w.window_end.isoformat()})
-    if updates:
-        await db.table("league_matchdays").upsert(updates, on_conflict="id").execute()
-        for row in updates:
-            await db.table("league_fixtures").update({
-                "window_start": row["window_start"], "window_end": row["window_end"],
-            }).eq("matchday_id", row["id"]).eq("is_played", False).execute()
+    Idempotent. Null ``pause_started_at`` clears pause without rebasing (fail-safe;
+    avoids corrupting windows). ``delta <= 0`` also clears without rebase.
+    """
+    if season.get("status") != "paused":
+        return False
+    paused_at = _utc(season.get("pause_started_at"))
+    delta = 0
+    if paused_at:
+        delta = int((datetime.now(timezone.utc) - paused_at).total_seconds())
+    else:
+        logger.warning(
+            "resume_season: season %s missing pause_started_at — clearing pause without rebase",
+            season.get("id"),
+        )
+
+    if delta > 0:
+        from leagues.schedule import MatchdayUtcWindow
+
+        matchdays = await db.table("league_matchdays").select("*").eq("season_id", season["id"]).in_(
+            "status", ["scheduled", "open", "closing_soon", "locked", "resolution_failed"]
+        ).execute()
+        updates = []
+        for row in matchdays.data or []:
+            ws, we = _utc(row["window_start"]), _utc(row["window_end"])
+            if not ws or not we:
+                continue
+            windows = rebase_windows([
+                MatchdayUtcWindow(
+                    matchday_number=int(row["matchday_number"]),
+                    window_start=ws,
+                    window_end=we,
+                )
+            ], delta)
+            w = windows[0]
+            updates.append({
+                "id": row["id"],
+                "window_start": w.window_start.isoformat(),
+                "window_end": w.window_end.isoformat(),
+            })
+        if updates:
+            await db.table("league_matchdays").upsert(updates, on_conflict="id").execute()
+            for row in updates:
+                await db.table("league_fixtures").update({
+                    "window_start": row["window_start"], "window_end": row["window_end"],
+                }).eq("matchday_id", row["id"]).eq("is_played", False).execute()
+
     await db.table("league_seasons").update({
-        "status": "active", "pause_started_at": None,
-        "total_paused_seconds": int(season.get("total_paused_seconds") or 0) + delta,
+        "status": "active",
+        "pause_started_at": None,
+        "total_paused_seconds": int(season.get("total_paused_seconds") or 0) + max(delta, 0),
     }).eq("id", season["id"]).execute()
     return True
+
+
+async def try_resume_paused_season(
+    bot: Any,
+    db: Any,
+    season: dict,
+    *,
+    guild_id: int | None = None,
+) -> dict | None:
+    """If season is paused and guild is reachable, resume and return refreshed row.
+
+    Returns updated season dict on success, ``None`` if still paused / not applicable.
+    """
+    if not season or season.get("status") != "paused":
+        return None
+    sid = season.get("id")
+    gid = guild_id
+    if gid is None:
+        try:
+            league_res = await db.table("leagues").select("guild_id").eq(
+                "id", season["league_id"]
+            ).maybe_single().execute()
+            raw = (league_res.data or {}).get("guild_id")
+            gid = int(raw) if raw is not None else None
+        except Exception:
+            logger.debug("try_resume: guild lookup failed for season %s", sid, exc_info=True)
+            return None
+    if gid is None:
+        return None
+
+    from apps.discord_bot.core.guild_resolver import resolve_bot_guild
+
+    if bot is None:
+        return None
+    guild, unreachable = await resolve_bot_guild(bot, int(gid))
+    if unreachable or guild is None:
+        return None
+
+    if not await resume_season(db, season):
+        return None
+    refreshed = await db.table("league_seasons").select("*").eq("id", sid).maybe_single().execute()
+    return refreshed.data if refreshed and refreshed.data else {**season, "status": "active", "pause_started_at": None}
 
 
 async def process_due_transitions(bot: Any, db: Any, now: datetime | None = None) -> dict[str, int]:
@@ -1074,6 +1134,19 @@ async def process_due_transitions(bot: Any, db: Any, now: datetime | None = None
         if status == "cancelled":
             stats["skipped"] += 1
             continue
+        if status == "paused":
+            # US-42.5 / 037: resume when guild is reachable; otherwise stay paused
+            resumed = await try_resume_paused_season(bot, db, season)
+            if resumed:
+                stats["transitions"] += 1
+                season = resumed
+                status = season.get("status")
+            else:
+                stats["skipped"] += 1
+                continue
+            if status != "active":
+                continue
+            # fall through to active matchday processing below
         if status == "completed":
             off_end = _utc((season.get("phase_deadlines") or {}).get("offseason_end"))
             if not off_end or now < off_end:

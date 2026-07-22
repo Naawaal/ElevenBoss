@@ -2,6 +2,12 @@
 
 Hey Managers!
 
+## League pause auto-resume
+
+If the Seasonal League Hub said **Season Paused** even though the bot was online in your server, that was a stranded pause. Opening `/league hub` (or the next automation wake) now resumes play and extends remaining matchday windows for the downtime — you shouldn’t need an admin to unstick it.
+
+---
+
 ## Evolution claim fix
 
 If a player finished an evolution track while still in your starting XI, **Claim** could fail with `CARD_STATE: state_conflict`. That’s fixed — you can claim the reward (stat boost / skill point) without benching them first.

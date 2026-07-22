@@ -4,11 +4,20 @@
 
 **Created**: 2026-07-22
 
-**Status**: Draft
+**Status**: Implemented (2026-07-22)
 
 **Parent**: `specs/029-game-integrity` (US-42) | Related: `034-league-integrity` (US-42.5), `026-league-lifecycle-rulebook`, `027-league-autonomous-admin`
 
 **Input**: User description: "Issue in league hub — why am I seeing league is paused: ⏸️ Season Paused — matchdays are frozen until the server is available again…"
+
+## Implementation notes *(shipped)*
+
+| Path | Behavior |
+|------|----------|
+| `/league hub` → `build_hub_embed` | If `status=paused` and guild reachable via `try_resume_paused_season`, resume + show normal matchday UI |
+| `process_due_transitions` | Paused V1 seasons: attempt resume when guild reachable; then continue active matchday processing |
+| `resume_season` | Null `pause_started_at`: clear pause **without** window rebase (fail-safe). `delta > 0`: rebase then activate |
+| Ops | `scratch/resume_paused_seasons.py` for one-shot recovery |
 
 ## Analysis Verdict *(investigation result)*
 

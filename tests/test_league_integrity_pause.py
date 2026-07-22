@@ -95,3 +95,19 @@ def test_resume_requires_pause_started_at():
     assert "async def resume_season" in text
     assert "pause_started_at" in text
     assert "rebase_windows" in text
+
+
+def test_resume_has_production_call_sites():
+    """037: resume_season must be wired (hub + sweeper), not dead code."""
+    lifecycle = LIFECYCLE.read_text(encoding="utf-8")
+    league = LEAGUE_COG.read_text(encoding="utf-8")
+    assert "async def try_resume_paused_season" in lifecycle
+    assert "try_resume_paused_season" in league
+    assert 'status == "paused"' in lifecycle
+    assert "try_resume_paused_season(bot, db, season)" in lifecycle
+
+
+def test_resume_null_pause_started_at_fail_safe():
+    text = LIFECYCLE.read_text(encoding="utf-8")
+    assert "missing pause_started_at" in text
+    assert "clearing pause without rebase" in text

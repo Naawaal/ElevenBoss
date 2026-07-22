@@ -1077,11 +1077,29 @@ class LeagueCog(commands.Cog):
             return embed
 
         if season.get("status") == "paused":
-            embed.description = (
-                "⏸️ **Season Paused** — matchdays are frozen until the server is available again. "
-                "When play resumes, remaining windows extend so nothing expires from downtime alone."
+            # 037: opening the hub in-guild proves reachability — resume stranded pauses
+            from apps.discord_bot.core.league_lifecycle_engine import try_resume_paused_season
+
+            resumed = await try_resume_paused_season(
+                self.bot, db, season, guild_id=guild.id if guild else None
             )
-            return embed
+            if resumed:
+                season = resumed
+            else:
+                paused_at = season.get("pause_started_at")
+                since = ""
+                if paused_at:
+                    try:
+                        dt = datetime.fromisoformat(str(paused_at).replace("Z", "+00:00"))
+                        since = f"\nPaused since <t:{int(dt.timestamp())}:R>."
+                    except (TypeError, ValueError):
+                        since = ""
+                embed.description = (
+                    "⏸️ **Season Paused** — matchdays are frozen until the server is available again. "
+                    "When play resumes, remaining windows extend so nothing expires from downtime alone."
+                    f"{since}"
+                )
+                return embed
 
         curr = season["current_matchday"]
         total = season["total_matchdays"]
