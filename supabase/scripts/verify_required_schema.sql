@@ -60,6 +60,9 @@ BEGIN
       ('column:public.players.daily_drill_count'),
       ('column:public.players.daily_drill_reset_at'),
       ('column:public.players.last_evolution_started_at'),
+      ('column:public.players.identity_status'),
+      ('column:public.players.last_qualifying_activity_at'),
+      ('column:public.players.identity_status_changed_at'),
       ('column:public.player_cards.skill_points_earned'),
       ('column:public.player_cards.skill_points_spent'),
       ('column:public.player_cards.last_level_up_at'),
@@ -96,6 +99,10 @@ BEGIN
       ('function:claim_evolution_reward'),
       ('function:start_player_evolution'),
       ('function:claim_pending_level_rewards'),
+      ('function:register_new_player'),
+      ('function:touch_club_activity'),
+      ('function:classify_club_identity_status'),
+      ('function:recover_club_identity'),
       ('function:level_from_xp'),
       ('function:count_unclaimed_level_rewards'),
       ('function:daily_match_xp_used'),
@@ -148,6 +155,13 @@ BEGIN
       ('function:p2p_transfer_market_enabled'),
       ('function:card_is_on_transfer_list'),
       ('function:assert_card_not_on_transfer_list'),
+      ('function:assert_card_action_allowed'),
+      ('function:card_primary_state'),
+      ('function:assert_club_action_allowed'),
+      ('function:register_league_season'),
+      ('function:register_league_membership'),
+      ('function:abandon_match_run'),
+      ('function:reconcile_orphaned_match_locks'),
       ('function:create_transfer_listing'),
       ('function:cancel_transfer_listing'),
       ('function:purchase_transfer_listing'),
@@ -253,6 +267,10 @@ BEGIN
         WHEN 'claim_evolution_reward' THEN to_regprocedure('public.claim_evolution_reward(bigint,uuid)')
         WHEN 'start_player_evolution' THEN to_regprocedure('public.start_player_evolution(bigint,uuid,text)')
         WHEN 'claim_pending_level_rewards' THEN to_regprocedure('public.claim_pending_level_rewards(bigint)')
+        WHEN 'register_new_player' THEN to_regprocedure('public.register_new_player(bigint,text,text,text,jsonb)')
+        WHEN 'touch_club_activity' THEN to_regprocedure('public.touch_club_activity(bigint)')
+        WHEN 'classify_club_identity_status' THEN to_regprocedure('public.classify_club_identity_status(bigint)')
+        WHEN 'recover_club_identity' THEN to_regprocedure('public.recover_club_identity(bigint)')
         WHEN 'level_from_xp' THEN to_regprocedure('public.level_from_xp(integer)')
         WHEN 'count_unclaimed_level_rewards' THEN to_regprocedure('public.count_unclaimed_level_rewards(bigint)')
         WHEN 'daily_match_xp_used' THEN to_regprocedure('public.daily_match_xp_used(uuid)')
@@ -297,6 +315,11 @@ BEGIN
         WHEN 'p2p_transfer_market_enabled' THEN to_regprocedure('public.p2p_transfer_market_enabled()')
         WHEN 'card_is_on_transfer_list' THEN to_regprocedure('public.card_is_on_transfer_list(uuid)')
         WHEN 'assert_card_not_on_transfer_list' THEN to_regprocedure('public.assert_card_not_on_transfer_list(uuid)')
+        WHEN 'assert_card_action_allowed' THEN to_regprocedure('public.assert_card_action_allowed(bigint,uuid,text)')
+        WHEN 'card_primary_state' THEN to_regprocedure('public.card_primary_state(uuid)')
+        WHEN 'assert_club_action_allowed' THEN to_regprocedure('public.assert_club_action_allowed(bigint,text)')
+        WHEN 'register_league_season' THEN to_regprocedure('public.register_league_season(bigint,bigint,uuid,jsonb)')
+        WHEN 'register_league_membership' THEN to_regprocedure('public.register_league_membership(bigint,bigint)')
         WHEN 'create_transfer_listing' THEN to_regprocedure('public.create_transfer_listing(bigint,uuid,bigint)')
         WHEN 'cancel_transfer_listing' THEN to_regprocedure('public.cancel_transfer_listing(bigint,uuid)')
         WHEN 'purchase_transfer_listing' THEN to_regprocedure('public.purchase_transfer_listing(bigint,uuid,bigint)')

@@ -216,7 +216,14 @@ If any of this raises a real question, that's a gap — go fix it in code, don't
 
 ---
 
-## 12. Verification Checklist (before saying "done")
+## 12. US-42 Game Integrity (constitution)
+
+* **Epic SoT**: [`specs/029-game-integrity/spec.md`](specs/029-game-integrity/spec.md) — principles + INV-01…INV-18. Review gate: [`contracts/invariant-checklist.md`](specs/029-game-integrity/contracts/invariant-checklist.md) (index: [`invariant-index.md`](specs/029-game-integrity/contracts/invariant-index.md)).
+* **PR / plan citation**: mutating PRs MUST name **US-42 + child ID** (US-42.1–42.10). Example blurbs: [`contracts/review-citation-example.md`](specs/029-game-integrity/contracts/review-citation-example.md).
+* **Children own runtime depth** — `029` ships **no migrations alone**. Folders: `030`…`034` + consolidated `035` (42.6–42.10). Map: epic §0.3 / [`contracts/child-backlog.md`](specs/029-game-integrity/contracts/child-backlog.md).
+* Do not invent parallel coin/XP pipes, silent exclusive-state skips, or sporting forfeits from infrastructure outages.
+
+## 13. Verification Checklist (before saying "done")
 
 * [ ] Migration applied and `verify_required_schema.sql` passes
 * [ ] New pure logic has a small test in `tests/` (or extends an existing file)
@@ -231,3 +238,5 @@ If any of this raises a real question, that's a gap — go fix it in code, don't
 * [ ] If old logic was superseded, it's deleted and grep confirms zero remaining callers
 * [ ] No new slash command/hub button/table beyond what the approved spec requires
 * [ ] Persona walkthrough done for user-facing changes (manager, opposing manager, bot-controlled club, admin as applicable), including matchday-lock, double-invoke, and stale-embed cases
+* [ ] Mutating change cites US-42 + child ID and passes the invariant checklist when applicable
+

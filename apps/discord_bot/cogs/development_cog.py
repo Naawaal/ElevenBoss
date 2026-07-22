@@ -32,6 +32,7 @@ from player_engine import (
     drill_unlocked,
     drill_xp_reward,
     effective_daily_drill_count,
+    evolution_hub_start_cost_line,
     evolution_start_cost,
     evolution_unlocked,
     format_cooldown_remaining,
@@ -106,14 +107,15 @@ async def fetch_evolution_hub_status(db, owner_id: int) -> dict:
 
 def evolution_start_gate_message(status: dict) -> str | None:
     active_count = int(status.get("active_count", 0))
-    if active_count > MAX_ACTIVE_EVOLUTIONS:
+    max_active = int(status.get("max_active", MAX_ACTIVE_EVOLUTIONS) or MAX_ACTIVE_EVOLUTIONS)
+    if active_count > max_active:
         return (
-            f"You have **{active_count}** active evolutions but the club limit is **{MAX_ACTIVE_EVOLUTIONS}**. "
+            f"You have **{active_count}** active evolutions but the club limit is **{max_active}**. "
             "Cancel excess tracks from the Evolution hub to start new ones."
         )
-    if active_count >= MAX_ACTIVE_EVOLUTIONS:
+    if active_count >= max_active:
         return (
-            f"You already have {MAX_ACTIVE_EVOLUTIONS} evolutions in progress. "
+            f"You already have {max_active} evolutions in progress. "
             "Wait for one to complete or cancel an existing one."
         )
     if status.get("can_start"):
@@ -1151,13 +1153,14 @@ async def show_club_evolutions_hub(interaction: discord.Interaction, owner_id: i
 
     slots_label = status.get("slots_label") or f"{len(active)}/{MAX_ACTIVE_EVOLUTIONS} slots used"
     active_count = int(status.get("active_count", len(active)))
+    max_active = int(status.get("max_active", MAX_ACTIVE_EVOLUTIONS) or MAX_ACTIVE_EVOLUTIONS)
     embed.add_field(name="Slots", value=slots_label, inline=True)
-    if active_count > MAX_ACTIVE_EVOLUTIONS:
+    if active_count > max_active:
         embed.add_field(
             name="⚠️ Over Slot Limit",
             value=(
-                f"**{active_count}** tracks are active but only **{MAX_ACTIVE_EVOLUTIONS}** are allowed. "
-                "Cancel excess tracks from **Manage Active** below."
+                f"**{active_count}** tracks are active but only **{max_active}** are allowed. "
+                "Cancel excess tracks from the cancel menu below."
             ),
             inline=False,
         )
@@ -1167,17 +1170,25 @@ async def show_club_evolutions_hub(interaction: discord.Interaction, owner_id: i
         cooldown_text = "Ready to start a new evolution"
     elif status.get("can_replace"):
         cooldown_text = "Replacement start available (after cancel)"
-    else:
+    elif remaining > 0:
         cooldown_text = f"Next evolution available in {format_cooldown_remaining(remaining)}"
+    else:
+        # Cooldown elapsed but start still blocked (full / over-slot) — don't say "in Ready"
+        cooldown_text = "No free slots — complete or cancel an active track"
     embed.add_field(name="Cooldown", value=cooldown_text, inline=True)
 
-    training_energy = status.get("training_energy", 0)
+    training_energy = status.get("action_energy", status.get("training_energy", 0))
     energy_max = int(status.get("max_energy", status.get("action_energy_max", 120)) or 120)
+    cost_line = evolution_hub_start_cost_line(
+        energy=status.get("start_energy_cost"),
+        flat=status.get("start_coin_flat"),
+        ovr_mult=status.get("start_coin_ovr_mult", status.get("start_coin_multiplier")),
+    )
     embed.add_field(
         name="Resources",
         value=(
-            f"⚡ Training Energy: `{training_energy}/{energy_max}`\n"
-            f"💰 Start cost: `{EVOLUTION_START_ENERGY} energy` + `10×OVR` coins per track"
+            f"⚡ Action Energy: `{training_energy}/{energy_max}`\n"
+            f"💰 Start cost: {cost_line}"
         ),
         inline=False,
     )
@@ -1218,7 +1229,7 @@ class ClubEvolutionsHubView(discord.ui.View):
         self.active_evos = active_evos
         self.hub_status = hub_status or {}
 
-        can_start = bool(self.hub_status.get("can_start")) and len(active_evos) < MAX_ACTIVE_EVOLUTIONS
+        can_start = bool(self.hub_status.get("can_start"))
         start_btn = discord.ui.Button(
             style=discord.ButtonStyle.success,
             label="Start New Evolution ⚡",

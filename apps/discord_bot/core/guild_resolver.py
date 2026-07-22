@@ -2,11 +2,21 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
 
 logger = logging.getLogger(__name__)
+
+# V1 + legacy open statuses that may enter paused (US-42.5)
+OPEN_PAUSEABLE_STATUSES: tuple[str, ...] = (
+    "active",
+    "registration",
+    "registration_open",
+    "registration_locked",
+    "preparing",
+)
 
 # ponytail: per-process dedupe — resets on bot restart; upgrade path: persist pause_reason column
 _logged_pause_attempts: set[str] = set()
@@ -47,43 +57,72 @@ async def resolve_bot_guild(
         return None, False
 
 
+async def pause_league_season(db, season_id: str, *, reason: str | None = None) -> bool:
+    """Pause an open season with ``pause_started_at`` for resume rebase (US-42.5).
+
+    Does not reset ``pause_started_at`` if already paused. Returns True if the season
+    is paused after this call (newly or already).
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        res = await (
+            db.table("league_seasons")
+            .update({
+                "status": "paused",
+                "pause_started_at": now,
+            })
+            .eq("id", season_id)
+            .in_("status", list(OPEN_PAUSEABLE_STATUSES))
+            .execute()
+        )
+        if res.data:
+            if reason:
+                logger.warning(
+                    "Paused season %s (%s)",
+                    season_id,
+                    reason,
+                )
+            return True
+        cur = await (
+            db.table("league_seasons")
+            .select("status")
+            .eq("id", season_id)
+            .maybe_single()
+            .execute()
+        )
+        return bool(cur and cur.data and cur.data.get("status") == "paused")
+    except Exception:
+        logger.exception("Failed to pause season %s", season_id)
+        return False
+
+
 async def pause_season_if_guild_unreachable(
     db,
     season_id: str,
     guild_id: int,
     reason: str,
 ) -> bool:
-    """Pause an active/registration season when the bot cannot reach its guild."""
+    """Pause an open season when the bot cannot reach its guild."""
     log_key = f"{season_id}:{reason}"
-    try:
-        res = await (
-            db.table("league_seasons")
-            .update({"status": "paused"})
-            .eq("id", season_id)
-            .in_("status", ["active", "registration"])
-            .execute()
-        )
-        paused = bool(res.data)
-        if paused and log_key not in _logged_pause_attempts:
-            _logged_pause_attempts.add(log_key)
-            logger.warning(
-                "Paused season %s for guild %s (%s)",
-                season_id,
-                guild_id,
-                reason,
-            )
-        return paused
-    except Exception:
-        logger.exception(
-            "Failed to pause season %s for unreachable guild %s",
+    paused = await pause_league_season(
+        db, season_id, reason=f"guild={guild_id} {reason}"
+    )
+    if paused and log_key not in _logged_pause_attempts:
+        _logged_pause_attempts.add(log_key)
+        logger.warning(
+            "Paused season %s for guild %s (%s)",
             season_id,
             guild_id,
+            reason,
         )
-        return False
+    return paused
 
 
 async def pause_seasons_for_guild(db, guild_id: int, reason: str) -> int:
-    """Pause all active/registration seasons for a guild's league."""
+    """Pause all open seasons for a guild's league.
+
+    US-42.1: must not delete ``players`` / cards — guild context only.
+    """
     league_res = await (
         db.table("leagues")
         .select("id")
@@ -98,7 +137,7 @@ async def pause_seasons_for_guild(db, guild_id: int, reason: str) -> int:
         db.table("league_seasons")
         .select("id")
         .eq("league_id", league_res.data["id"])
-        .in_("status", ["active", "registration"])
+        .in_("status", list(OPEN_PAUSEABLE_STATUSES))
         .execute()
     )
     paused = 0

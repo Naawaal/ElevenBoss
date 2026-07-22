@@ -16,6 +16,8 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 
 ### US-01: User Registration — Interactive Onboarding Wizard
 
+> **Identity / ownership integrity**: [`specs/030-identity-ownership/spec.md`](../../../specs/030-identity-ownership/spec.md) (US-42.1) — one Discord user → one club; leave/bot-remove never deletes the club.
+
 > **As a** new Discord user,
 > **I want to** run `/register` to be guided through a cinematic, interactive onboarding flow,
 > **So that** I feel invested in my club from the moment I start playing.
@@ -331,8 +333,8 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-08d:** Entering the **Skill Allocation** sub-menu of the `/development` hub allows managers to allocate skill points earned from XP level-ups to 6 core attributes (PAC, SHO, PAS, DRI, DEF, PHY), subject to POT caps. *(Amended v1.9 — US-23.)*
 - **AC-08e:** Entering the **Evolutions** sub-menu of the `/development` hub displays options/select menu for 3 basic evolution tracks allowing players to undergo progressive training challenges.
 - **AC-08f:** A club may have at most **3** simultaneous active evolutions (`status = 'active'`). Attempting to start a 4th is rejected server-side with a clear error message.
-- **AC-08g:** After a **cold** evolution start, the club enters a **10-hour cooldown** before another cold start. Cancelling an active evolution grants a **replacement** start in the freed slot without waiting for the cooldown; replacement starts do not reset the cooldown timer.
-- **AC-08h:** The Evolution Command Center displays active slot usage (e.g. `2/3 slots used`), training energy, start-cost summary, cooldown until the next cold start, active evolutions with match progress, and recently completed history.
+- **AC-08g:** After a **cold** evolution start, the club enters a cold-start cooldown from `game_config.evolution_cooldown_hours` (seeded **6**; not a hard-coded 10h) before another cold start. Cancelling an active evolution grants a **replacement** start in the freed slot without waiting for the cooldown; replacement starts do not reset the cooldown timer.
+- **AC-08h:** The Evolution Command Center displays active slot usage (e.g. `2/3 slots used` from live `evolution_max_active`), action energy, start-cost summary (`energy + flat+ovr×OVR`), cooldown until the next cold start (same duration source as `start_player_evolution` via `get_evolution_hub_status`), active evolutions with match progress, and recently completed history.
 - **AC-08i:** Starting an evolution deducts **25 training energy** and **10 × player OVR coins** atomically in `start_player_evolution`. Insufficient training energy or coins blocks the start with no partial deduction. Replacement starts pay the same fee.
 
 ### US-31: Player Age & Lifecycle (Phase A)
@@ -685,6 +687,12 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 ## 22. Pre-Launch Hardening (Audit Remediation)
 
 ### US-22: Security, Integrity & UX Hardening
+
+> **Player card state machine**: [`specs/031-player-state-machine/spec.md`](../../../specs/031-player-state-machine/spec.md) (US-42.2) — exclusive busy states + MatchLocked overlay enforced via `assert_card_action_allowed` (migration `075`).
+> **Club state machine**: [`specs/032-club-state-machine/spec.md`](../../../specs/032-club-state-machine/spec.md) (US-42.3) — soft Active/Inactive/Abandoned + league join gates via `assert_club_action_allowed` / `register_league_season` (migration `076`).
+> **Match integrity**: [`specs/033-match-integrity/spec.md`](../../../specs/033-match-integrity/spec.md) (US-42.4) — settle-once / present-retry, dual league locks, `abandon_match_run` + boot lock reconcile (migration `077`).
+> **League integrity**: [`specs/034-league-integrity/spec.md`](../../../specs/034-league-integrity/spec.md) (US-42.5) — pause with rebase clock, prize/transition once, absence≠outage; overlay on `026`/`027`.
+> **Integrity remainder**: [`specs/035-integrity-remainder/spec.md`](../../../specs/035-integrity-remainder/spec.md) (US-42.6–42.10) — marketplace race lock, economy faucet/sink registry, job catalog, RPC checklist, soft threat/edge catalog.
 
 > **As a** platform operator,
 > **I want** all economy, roster, and match flows enforced at the database layer with consistent UI behavior,
@@ -1353,4 +1361,16 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-41c:** Max **3 successful transfers per club per UTC day**; independent of allocation/fusion daily caps.
 - **AC-41d:** Allocate Skills shows Mentor Transfer for maxed sources; non-maxed allocate unchanged; profile shows Mentor Ready copy.
 - **AC-41e:** No new slash command; no coin/energy/match-engine/marketplace formula changes.
+
+### US-42: Game Integrity & State Management (Epic)
+
+> **As a** platform that must stay fair under retries, races, and outages,
+> **I want** a standing integrity constitution (ownership, reward-once, exclusive states, fail-closed dependencies),
+> **So that** economy, progression, match, league, and marketplace mutations cannot fork pipes or invent undefined behavior.
+
+**Status:** Locked (epic governance). Runtime depth is in children US-42.1–42.10.
+
+**Design:** [`specs/029-game-integrity/spec.md`](../../../specs/029-game-integrity/spec.md) — child map §0.3; backlog [`contracts/child-backlog.md`](../../../specs/029-game-integrity/contracts/child-backlog.md).
+
+**Children (pointers):** `030` Identity · `031` Player SM · `032` Club SM · `033` Match · `034` League · `035` Remainder (42.6–42.10).
 

@@ -2,6 +2,77 @@
 
 Hey Managers!
 
+## Integrity lock (marketplace & economy)
+
+Under the hood we finished the remaining game-integrity checklist:
+
+- Transfer buy/sell stays **one winner** on races; you still can’t buy your own listing; busy cards stay unlistable
+- Every coin faucet and sink is now on an internal registry (no shadow coin writers)
+- Background jobs (payroll, listing expiry, league wake, recovery, …) are catalogued so restarts don’t double-pay
+
+You shouldn’t notice new buttons — just fewer “paid twice / sold twice” failure modes.
+
+---
+
+## League pause & downtime
+
+If the bot can’t reach your server mid-season, the league **pauses** instead of inventing forfeits:
+
+- Remaining matchday windows **extend** when play resumes (downtime doesn’t eat your deadline)
+- Play is blocked while paused — you’ll see a clear “season paused” message (not “ask an admin”)
+- Season prizes and standings still settle **once** when the season ends — restarts don’t double-pay
+
+Leaving Discord mid-season still does **not** delete your club; the assistant keeps the table going.
+
+---
+
+## Match integrity (settle once)
+
+Bot and league matches now **save your result before** the Discord summary posts. If the bot restarts mid-match:
+
+- Rewards already applied stay applied — the run is marked **complete** (not abandoned)
+- Matches that never paid out are abandoned cleanly so you can play again
+- League play locks **both** managers so neither can start another match at the same time
+
+Friendly matches are unchanged (no coins/XP).
+
+---
+
+## Game integrity: clubs & players
+
+Two integrity updates keep busy or quiet clubs from double-booking themselves — without wiping your progress.
+
+### Soft club status (Inactive / Abandoned)
+
+Your club is still yours after a long quiet spell — **nothing is deleted**, and `/register` never creates a second club.
+
+- **Inactive** (~30 days without play) or **Abandoned** (~90 days): you can still train, recover, use the store, and manage your squad
+- **New league registration** needs an **Active** club — play a match, run a drill, or claim a store bonus first, then tap **Register** again
+- Double-tap Register is safe (already seated stays already seated)
+- Leaving the Discord server mid-season still does **not** wipe your club
+
+### Busy player cards
+
+Cards now share one rulebook across Development, Marketplace, Squad, Hospital, and Academy:
+
+- **Listed**, **Hospital**, **Evolving**, **Academy**, or **Retired** cards can’t take conflicting actions (e.g. drill / start evolution / list / XI swap while busy)
+- **Match lock** still blocks roster and development changes until the match ends
+- **Injured** players (even if not hospitalized) still can’t be transfer-listed or agent-sold
+- Fatigue alone does **not** block listing
+- Cancel listing / discharge / claim or cancel evolution still work when you’re in that busy state (unless you’re match-locked)
+
+Stale hub buttons show clearer block reasons instead of failing silently.
+
+---
+
+## Evolution Start button & cost display
+
+- **Start New Evolution** cooldown now matches the live **6-hour** rule (hub no longer used an old 10-hour clock that kept the button grey too long)
+- Start cost copy shows **`25 energy + 500+5×OVR coins`** (not the outdated `10×OVR` line)
+- Slot limit / readiness still come from live club config — button stays grey only when you are truly blocked (cooldown or full slots)
+
+---
+
 ## Autonomous League Admin (League Time only)
 
 Guild seasonal leagues run **without Discord admin babysitting**:

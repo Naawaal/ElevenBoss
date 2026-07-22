@@ -22,6 +22,19 @@ async def release_match_lock(db: AsyncClient, discord_id: int) -> None:
     await db.rpc("release_match_lock", {"p_discord_id": discord_id}).execute()
 
 
+async def abandon_match_run(db: AsyncClient, run_id: str, *, reason: str | None = None):
+    """Proxy to match_runs.abandon_match_run (status + lock release)."""
+    from apps.discord_bot.core.match_runs import abandon_match_run as _abandon
+
+    return await _abandon(db, run_id, reason=reason)
+
+
+async def reconcile_orphaned_match_locks(db: AsyncClient) -> int:
+    from apps.discord_bot.core.match_runs import reconcile_orphaned_match_locks as _reconcile
+
+    return await _reconcile(db)
+
+
 async def assert_not_in_match(db: AsyncClient, discord_id: int) -> str | None:
     """Returns an error message if locked, else None."""
     if await is_in_match(db, discord_id):

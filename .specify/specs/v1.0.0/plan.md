@@ -981,9 +981,9 @@ Challenger: /battle friendly [Opponent]
 ### G. Evolution Lifecycle (v1)
 * **`active_evolutions`** extended with `status` (`active`/`completed`/`cancelled`), `matches_played`, `owner_id`, history retained on claim.
 * **RPCs**: `start_player_evolution`, `cancel_player_evolution` (100 coin fee), `tick_evolution_match_progress`, `get_evolution_hub_status`; claim marks `completed` instead of delete.
-* **Club pacing (v1.1)**: max **3** active evolutions per owner; **10-hour** cold-start cooldown on `players.last_evolution_started_at`; replacement bypass after cancel.
-* **Start cost**: **25 training energy** + **10 ? OVR coins** (ledger source `evolution_start`).
-* **UI**: Club Evolution Command Center in `/development` ? Evolutions; progress bars on profile.
+* **Club pacing (v1.1+)**: max active evolutions and cold-start cooldown from `game_config` (`evolution_max_active`, `evolution_cooldown_hours` seeded **6**); replacement bypass after cancel. Migration **073** aligns `get_evolution_hub_status` with the same keys as `start_player_evolution` (removes hardcoded 10h / 10×OVR hub drift).
+* **Start cost**: **25 action energy** + **`evolution_start_flat` + `evolution_start_ovr_mult` × OVR** coins (defaults 500 + 5×OVR; ledger source `evolution_start`).
+* **UI**: Club Evolution Command Center in `/development` → Evolutions; progress bars on profile; Start button gated by hub `can_start`.
 * **Friendly matches** now tick evolution progress via `tick_evolution_match_progress`.
 
 ### H. Evolution Club Limits Migration (023)

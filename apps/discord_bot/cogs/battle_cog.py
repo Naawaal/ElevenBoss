@@ -1204,6 +1204,10 @@ async def run_league_match_simulation(
         "engine_version": "v1",
     }).eq("id", fixture_id).eq("is_played", False).execute()
 
+    # Durable settle before Discord present (US-42.4) — never abandon-after-pay
+    if run_id:
+        await complete_run(db, run_id, home_score=state.home_score, away_score=state.away_score)
+
     # Live standings + result line in journal (dual_v2) or commentary thread (legacy)
     if not silent and handler.season_id:
         standings_target = getattr(handler, "journal_thread", None) or handler.commentary_thread
@@ -1296,9 +1300,6 @@ async def run_league_match_simulation(
             h_fitness if active_player_id == fixture["home_team_id"] else a_fitness
         ),
     )
-
-    if run_id:
-        await complete_run(db, run_id, home_score=state.home_score, away_score=state.away_score)
 
 class ArenaHubView(discord.ui.View):
     def __init__(self, cog: BattleCog, owner_id: int) -> None:
@@ -1452,6 +1453,9 @@ class BattleCog(commands.Cog):
             await interaction.response.defer(ephemeral=True)
         lock_acquired = False
         bot_run_id: str | None = None
+        rewards_applied = False
+        settled = False
+        state = None
         try:
             db = await get_client()
 
@@ -1686,6 +1690,12 @@ class BattleCog(commands.Cog):
                 bot=self.bot,
                 recorded_injuries=recorded_for_side(state.recorded_injuries, "home"),
             )
+            rewards_applied = True
+
+            # Durable settle before Discord present (US-42.4)
+            if bot_run_id:
+                await complete_run(db, bot_run_id, home_score=state.home_score, away_score=state.away_score)
+                settled = True
 
             result = MatchResult(
                 result=res_str,
@@ -1704,31 +1714,54 @@ class BattleCog(commands.Cog):
 
             weekly_total = int(player.get("league_points", 0)) + points_earned
 
-            await handler.finalize_match(
-                result=result,
-                state=state,
-                home_name=player["club_name"],
-                away_name=opp_name,
-                motm=motm,
-                active_earned=result.coins_earned,
-                active_pts=result.points_earned,
-                user_id=interaction.user.id,
-                home_team_id=interaction.user.id,
-                away_team_id=0,
-                zone_home=format_zone_breakdown(match_cards, player["club_name"]),
-                zone_away=format_zone_breakdown(opp_squad, opp_name),
-                lp_change=actual_lp_change,
-                total_lp=new_lp,
-                weekly_total=weekly_total,
-                global_divisions=divisions,
-                fitness_summary=fitness_summary,
-            )
-            if bot_run_id:
-                await complete_run(db, bot_run_id, home_score=state.home_score, away_score=state.away_score)
+            try:
+                await handler.finalize_match(
+                    result=result,
+                    state=state,
+                    home_name=player["club_name"],
+                    away_name=opp_name,
+                    motm=motm,
+                    active_earned=result.coins_earned,
+                    active_pts=result.points_earned,
+                    user_id=interaction.user.id,
+                    home_team_id=interaction.user.id,
+                    away_team_id=0,
+                    zone_home=format_zone_breakdown(match_cards, player["club_name"]),
+                    zone_away=format_zone_breakdown(opp_squad, opp_name),
+                    lp_change=actual_lp_change,
+                    total_lp=new_lp,
+                    weekly_total=weekly_total,
+                    global_divisions=divisions,
+                    fitness_summary=fitness_summary,
+                )
+            except Exception:
+                # Present-retry only — rewards already durable; never abandon-after-pay
+                logger.exception(
+                    "Bot match present failed after settle (run=%s); rewards kept.",
+                    bot_run_id,
+                )
+                if interaction.response.is_done():
+                    await interaction.followup.send(
+                        embed=error_embed(
+                            "Match result was saved, but the summary failed to post. "
+                            "Your rewards are safe — check `/development` if needed."
+                        ),
+                        ephemeral=True,
+                    )
         except Exception as e:
             logger.exception("Failed to simulate match.")
-            if bot_run_id:
-                await abandon_run(db, bot_run_id)
+            if bot_run_id and not settled:
+                if rewards_applied:
+                    try:
+                        await complete_run(
+                            db, bot_run_id,
+                            home_score=state.home_score if state else 0,
+                            away_score=state.away_score if state else 0,
+                        )
+                    except Exception:
+                        logger.exception("complete_run after partial rewards failed for %s", bot_run_id)
+                else:
+                    await abandon_run(db, bot_run_id, reason="bot_sim_failed")
             if interaction.response.is_done():
                 await interaction.followup.send(embed=error_embed(api_error_message(e)), ephemeral=True)
             else:
@@ -1738,25 +1771,20 @@ class BattleCog(commands.Cog):
                 await release_match_lock(db, interaction.user.id)
 
     async def execute_league_match(self, interaction: discord.Interaction, fixture: dict) -> None:
-        lock_acquired = False
+        locks_held: list[int] = []
+        fixture_id: str | None = None
+        db = await get_client()
+        user_id = interaction.user.id
         try:
-            db = await get_client()
-            user_id = interaction.user.id
-
-            if not await acquire_match_lock(db, user_id, "league"):
-                await interaction.followup.send(embed=error_embed("You are currently locked in another match."), ephemeral=True)
-                return
-            lock_acquired = True
-
             fixture_id = fixture["id"]
-            
+
             # Re-fetch fixture to make sure it's not already played
             f_res = await db.table("league_fixtures").select("*, home:players!league_fixtures_home_team_id_fkey(*), away:players!league_fixtures_away_team_id_fkey(*)").eq("id", fixture_id).maybe_single().execute()
             f = f_res.data if f_res else None
             if not f:
                 await interaction.followup.send(embed=error_embed("Fixture not found."), ephemeral=True)
                 return
-                
+
             if f["is_played"]:
                 await interaction.followup.send(embed=error_embed("This fixture has already been played."), ephemeral=True)
                 return
@@ -1771,7 +1799,13 @@ class BattleCog(commands.Cog):
 
             season_res = await db.table("league_seasons").select("status").eq("id", f["season_id"]).maybe_single().execute()
             if season_res.data and season_res.data.get("status") == "paused":
-                await interaction.followup.send(embed=error_embed("Season is paused. Wait for admin to resume."), ephemeral=True)
+                await interaction.followup.send(
+                    embed=error_embed(
+                        "Season is paused. Matchdays are frozen until the server is available again "
+                        "(windows will extend when play resumes)."
+                    ),
+                    ephemeral=True,
+                )
                 return
 
             if not _fixture_in_window(f):
@@ -1780,12 +1814,12 @@ class BattleCog(commands.Cog):
                     ephemeral=True,
                 )
                 return
-                
+
             # Verify user is home or away team manager
             if user_id not in [f["home_team_id"], f["away_team_id"]]:
                 await interaction.followup.send(embed=error_embed("You are not a manager in this fixture."), ephemeral=True)
                 return
-                
+
             # Fetch active player metadata (the one who triggered the match)
             active_p_res = await db.table("players").select("*").eq("discord_id", user_id).maybe_single().execute()
             active_p = active_p_res.data if active_p_res else None
@@ -1817,6 +1851,21 @@ class BattleCog(commands.Cog):
                     ephemeral=True
                 )
                 return
+
+            # Lock both human clubs after eligibility (parity with league_lifecycle_engine)
+            for club_id, is_ai in (
+                (int(f["home_team_id"]), bool(f["home"].get("is_ai"))),
+                (int(f["away_team_id"]), bool(f["away"].get("is_ai"))),
+            ):
+                if is_ai:
+                    continue
+                if not await acquire_match_lock(db, club_id, "league"):
+                    await interaction.followup.send(
+                        embed=error_embed("You or your opponent are currently locked in another match."),
+                        ephemeral=True,
+                    )
+                    return
+                locks_held.append(club_id)
 
             season_threads = await resolve_season_threads(self.bot, db, interaction.guild, fixture["season_id"])
             if not season_threads:
@@ -1855,13 +1904,20 @@ class BattleCog(commands.Cog):
                 await notify_matchday_complete(self.bot, interaction.guild, db, f["season_id"], completed_md)
         except Exception as e:
             logger.exception("Failed to execute league match.")
+            if fixture_id:
+                active = await get_active_fixture_run(db, fixture_id)
+                if active:
+                    try:
+                        await abandon_run(db, active["id"], reason="league_play_failed")
+                    except Exception:
+                        logger.exception("abandon_match_run failed for fixture %s", fixture_id)
             if interaction.response.is_done():
                 await interaction.followup.send(embed=error_embed(api_error_message(e)), ephemeral=True)
             else:
                 await interaction.followup.send(embed=error_embed(api_error_message(e)), ephemeral=True)
         finally:
-            if lock_acquired:
-                await release_match_lock(db, user_id)
+            for held_id in locks_held:
+                await release_match_lock(db, held_id)
 
     async def start_friendly_match(
         self,

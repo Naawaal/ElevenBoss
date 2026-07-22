@@ -350,6 +350,7 @@ class ElevenBossBot(commands.Bot):
             logger.error(f"Support legendary notification failed on startup: {e}", exc_info=True)
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
+        # US-42.1: pause seasons only — never delete players/clubs on bot remove
         try:
             from apps.discord_bot.db.client import get_client
             from apps.discord_bot.core.guild_resolver import pause_seasons_for_guild

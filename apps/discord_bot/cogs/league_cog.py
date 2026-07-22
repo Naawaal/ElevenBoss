@@ -18,6 +18,11 @@ from apps.discord_bot.core.league_journal import (
     get_or_create_league_journal,
     resolve_season_threads,
 )
+from apps.discord_bot.core.club_rpc import (
+    club_state_error_message,
+    register_league_membership,
+    register_league_season,
+)
 from leagues import apply_fixture_to_row, compute_form, format_standings_table, sort_standings, tie_breaker_footer
 
 logger = logging.getLogger(__name__)
@@ -301,7 +306,16 @@ async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> in
                 await asyncio.sleep(2.0)
             except Exception as e:
                 logger.exception(f"Failed to auto-simulate fixture {f['id']}: {e}")
-                
+                active = await get_active_fixture_run(db, f["id"])
+                if active:
+                    from apps.discord_bot.core.match_runs import abandon_run
+
+                    try:
+                        await abandon_run(db, active["id"], reason="auto_sim_failed")
+                    except Exception:
+                        logger.exception(
+                            "abandon_match_run failed for fixture %s", f["id"]
+                        )
     if simulated_count > 0:
         completed_md = await update_current_matchday(db, season_id, bot=bot)
         if completed_md:
@@ -920,47 +934,28 @@ class LeagueCog(commands.Cog):
             v1_season = (v1.data or [None])[0]
 
         if v1_season:
-            existing_season_reg = await (
-                db.table("league_registrations")
-                .select("id,status")
-                .eq("season_id", v1_season["id"])
-                .eq("player_id", user_id)
-                .maybe_single()
-                .execute()
-            )
-            if existing_season_reg and existing_season_reg.data and existing_season_reg.data.get("status") in (
-                "registered", "locked",
-            ):
-                await interaction.followup.send(
-                    embed=error_embed("⚠️ You are already registered for this season!"),
-                    ephemeral=True,
-                )
-                return
-
-            # Ensure permanent membership exists, then write seasonal registration
-            mem = await db.table("league_members").select("player_id").eq(
-                "guild_id", guild_id
-            ).eq("player_id", user_id).maybe_single().execute()
-            if not (mem and mem.data):
-                await db.table("league_members").insert({
-                    "guild_id": guild_id,
-                    "player_id": user_id,
-                }).execute()
-
             try:
-                await db.table("league_registrations").upsert({
-                    "season_id": v1_season["id"],
-                    "player_id": user_id,
-                    "status": "registered",
-                    "eligibility_snapshot": {
+                result = await register_league_season(
+                    db,
+                    user_id,
+                    guild_id,
+                    v1_season["id"],
+                    {
                         "matches_played": played,
                         "account_age_days": age_days,
                     },
-                }, on_conflict="season_id,player_id").execute()
-            except Exception:
-                logger.exception("V1 league_registrations write failed user=%s", user_id)
+                )
+            except Exception as exc:
+                logger.exception("register_league_season failed user=%s", user_id)
+                msg = club_state_error_message(exc) or (
+                    "Could not complete seasonal registration. Try again shortly."
+                )
+                await interaction.followup.send(embed=error_embed(msg), ephemeral=True)
+                return
+
+            if result.get("already_seated"):
                 await interaction.followup.send(
-                    embed=error_embed("Could not complete seasonal registration. Try again shortly."),
+                    embed=error_embed("⚠️ You are already registered for this season!"),
                     ephemeral=True,
                 )
                 return
@@ -975,15 +970,22 @@ class LeagueCog(commands.Cog):
             )
             return
 
-        reg_res = await db.table("league_members").select("*").eq("guild_id", guild_id).eq("player_id", user_id).maybe_single().execute()
-        if reg_res and reg_res.data:
-            await interaction.followup.send(embed=error_embed("⚠️ You are already registered for this server's league!"), ephemeral=True)
+        try:
+            result = await register_league_membership(db, user_id, guild_id)
+        except Exception as exc:
+            logger.exception("register_league_membership failed user=%s", user_id)
+            msg = club_state_error_message(exc) or (
+                "Could not complete league registration. Try again shortly."
+            )
+            await interaction.followup.send(embed=error_embed(msg), ephemeral=True)
             return
 
-        await db.table("league_members").insert({
-            "guild_id": guild_id,
-            "player_id": user_id
-        }).execute()
+        if result.get("already_seated"):
+            await interaction.followup.send(
+                embed=error_embed("⚠️ You are already registered for this server's league!"),
+                ephemeral=True,
+            )
+            return
 
         await interaction.followup.send(
             embed=success_embed(
@@ -1075,7 +1077,10 @@ class LeagueCog(commands.Cog):
             return embed
 
         if season.get("status") == "paused":
-            embed.description = "⏸️ **Season Paused** — matchdays are frozen until an admin resumes."
+            embed.description = (
+                "⏸️ **Season Paused** — matchdays are frozen until the server is available again. "
+                "When play resumes, remaining windows extend so nothing expires from downtime alone."
+            )
             return embed
 
         curr = season["current_matchday"]

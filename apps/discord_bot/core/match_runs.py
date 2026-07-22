@@ -168,13 +168,31 @@ async def complete_run(db, run_id: str, *, home_score: int, away_score: int) -> 
     }).eq("id", run_id).execute()
 
 
-async def abandon_run(db, run_id: str) -> None:
-    now = datetime.now(timezone.utc).isoformat()
-    await db.table("match_runs").update({
-        "status": "abandoned",
-        "completed_at": now,
-        "updated_at": now,
-    }).eq("id", run_id).execute()
+async def abandon_match_run(db, run_id: str, *, reason: str | None = None) -> Any:
+    """Terminal abandon via RPC — clears locks for home/away/active."""
+    params: dict[str, Any] = {"p_run_id": run_id}
+    if reason is not None:
+        params["p_reason"] = reason
+    res = await db.rpc("abandon_match_run", params).execute()
+    return res.data
+
+
+async def abandon_run(db, run_id: str, *, reason: str | None = None) -> None:
+    """Abandon interrupted run (RPC; releases match locks)."""
+    await abandon_match_run(db, run_id, reason=reason)
+
+
+async def reconcile_orphaned_match_locks(db) -> int:
+    res = await db.rpc("reconcile_orphaned_match_locks", {}).execute()
+    data = res.data
+    if data is None:
+        return 0
+    if isinstance(data, int):
+        return data
+    try:
+        return int(data)
+    except (TypeError, ValueError):
+        return 0
 
 
 async def league_history_exists(db, player_id: int, fixture_id: str) -> bool:

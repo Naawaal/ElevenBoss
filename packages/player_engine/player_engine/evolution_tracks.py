@@ -70,6 +70,18 @@ def evolution_start_cost(ovr: int) -> tuple[int, int]:
     return EVOLUTION_START_ENERGY, EVOLUTION_START_FLAT + EVOLUTION_START_OVR_MULT * ovr
 
 
+def evolution_hub_start_cost_line(
+    energy: int | None = None,
+    flat: int | None = None,
+    ovr_mult: int | None = None,
+) -> str:
+    """Club-level Resources formula for Evolution Command Center (not a specific OVR)."""
+    e = EVOLUTION_START_ENERGY if energy is None else int(energy)
+    f = EVOLUTION_START_FLAT if flat is None else int(flat)
+    m = EVOLUTION_START_OVR_MULT if ovr_mult is None else int(ovr_mult)
+    return f"`{e} energy` + `{f}+{m}×OVR` coins per track"
+
+
 def format_cooldown_remaining(seconds: int) -> str:
     """Format seconds as e.g. '7h 32m' for hub display."""
     if seconds <= 0:

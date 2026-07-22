@@ -702,6 +702,14 @@ async def _resolve_fixture(bot: Any, db: Any, fixture: dict, *, guild: Any | Non
                 away_card_ids=away_override,
             )
         except Exception:
+            active = await get_active_fixture_run(db, f["id"])
+            if active:
+                from apps.discord_bot.core.match_runs import abandon_run
+
+                try:
+                    await abandon_run(db, active["id"], reason="lifecycle_sim_failed")
+                except Exception:
+                    logger.exception("abandon_match_run failed for fixture %s", f["id"])
             await db.table("league_fixtures").update({"status": "failed_retryable"}).eq(
                 "id", f["id"]
             ).eq("is_played", False).execute()
@@ -993,9 +1001,10 @@ async def force_cancel_season(db: Any, season: dict, *, trigger: str = "admin") 
 
 
 async def pause_season(db: Any, season_id: str) -> None:
-    await db.table("league_seasons").update({
-        "status": "paused", "pause_started_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", season_id).eq("status", "active").execute()
+    """Pause open season with rebase clock (US-42.5 — shared pause helper)."""
+    from apps.discord_bot.core.guild_resolver import pause_league_season
+
+    await pause_league_season(db, season_id, reason="lifecycle_pause")
 
 
 async def resume_season(db: Any, season: dict) -> bool:

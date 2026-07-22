@@ -375,7 +375,12 @@ async def apply_club_economy(
         "p_meta": meta or {},
     }
     res = await db.rpc("apply_club_economy", payload).execute()
-    return res.data or {}
+    data = res.data or {}
+    # US-42.1: best-effort activity touch — never roll back economy on failure
+    from apps.discord_bot.core.identity_rpc import touch_club_activity_best_effort
+
+    await touch_club_activity_best_effort(db, club_id)
+    return data
 
 
 async def apply_match_economy(

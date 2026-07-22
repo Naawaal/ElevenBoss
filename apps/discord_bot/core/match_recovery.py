@@ -1,5 +1,5 @@
 # apps/discord_bot/core/match_recovery.py
-"""Boot-time recovery for interrupted match runs."""
+"""Boot-time recovery for interrupted match runs (US-42.4)."""
 from __future__ import annotations
 
 import asyncio
@@ -7,9 +7,15 @@ import logging
 
 import discord
 from discord.ext import commands
+from player_engine import classify_interrupted_run
 
 from apps.discord_bot.core.guild_resolver import resolve_bot_guild
-from apps.discord_bot.core.match_runs import abandon_run
+from apps.discord_bot.core.match_runs import (
+    abandon_run,
+    complete_run,
+    fetch_match_reward_row,
+    reconcile_orphaned_match_locks,
+)
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.embeds.common_embeds import error_embed
 
@@ -48,6 +54,62 @@ async def _notify_participants(bot: commands.Bot, run: dict, message: str) -> No
             logger.debug("Could not DM user %s about abandoned match", uid)
 
 
+async def _run_rewards_applied(db, run: dict) -> bool:
+    """True if durable match_history exists for this run (bot/league)."""
+    run_id = run.get("id")
+    if not run_id:
+        return False
+    run_type = run.get("run_type")
+    if run_type == "friendly":
+        return False
+    if run_type == "league":
+        fixture_id = run.get("fixture_id")
+        if fixture_id:
+            f_res = await db.table("league_fixtures").select("is_played").eq(
+                "id", fixture_id
+            ).maybe_single().execute()
+            if f_res and f_res.data and f_res.data.get("is_played"):
+                return True
+        for key in ("home_discord_id", "away_discord_id", "active_discord_id"):
+            uid = run.get(key)
+            if not uid:
+                continue
+            row = await fetch_match_reward_row(db, int(uid), run_id=run_id)
+            if row:
+                return True
+            if fixture_id:
+                row = await fetch_match_reward_row(db, int(uid), fixture_id=fixture_id)
+                if row:
+                    return True
+        return False
+    # bot / other
+    uid = run.get("active_discord_id") or run.get("home_discord_id")
+    if not uid:
+        return False
+    row = await fetch_match_reward_row(db, int(uid), run_id=run_id)
+    return bool(row)
+
+
+async def _complete_ephemeral_run(bot: commands.Bot, db, run: dict) -> None:
+    await complete_run(
+        db,
+        run["id"],
+        home_score=int(run.get("home_score") or 0),
+        away_score=int(run.get("away_score") or 0),
+    )
+    logger.info(
+        "Completed interrupted %s match run %s (rewards already applied)",
+        run.get("run_type"),
+        run["id"],
+    )
+    await _notify_participants(
+        bot,
+        run,
+        "Your ElevenBoss match was interrupted after rewards were saved. "
+        "Your coins/XP are safe — the match is marked complete.",
+    )
+
+
 async def _abandon_ephemeral_run(bot: commands.Bot, db, run: dict) -> None:
     thread = await _resolve_thread(bot, run)
     if thread:
@@ -69,8 +131,22 @@ async def _abandon_ephemeral_run(bot: commands.Bot, db, run: dict) -> None:
         run,
         "Your ElevenBoss match was interrupted by a restart. No rewards were applied — you can play again.",
     )
-    await abandon_run(db, run["id"])
+    await abandon_run(db, run["id"], reason="boot_recovery")
     logger.info("Abandoned %s match run %s", run.get("run_type"), run["id"])
+
+
+async def _recover_ephemeral_run(bot: commands.Bot, db, run: dict) -> None:
+    rewards = await _run_rewards_applied(db, run)
+    action = classify_interrupted_run(
+        status=str(run.get("status") or ""),
+        rewards_applied=rewards,
+    )
+    if action == "complete":
+        await _complete_ephemeral_run(bot, db, run)
+    elif action == "abandon":
+        await _abandon_ephemeral_run(bot, db, run)
+    else:
+        logger.info("No-op recovery for run %s status=%s", run.get("id"), run.get("status"))
 
 
 async def _recover_league_run(bot: commands.Bot, db, run: dict) -> None:
@@ -79,7 +155,7 @@ async def _recover_league_run(bot: commands.Bot, db, run: dict) -> None:
 
     fixture_id = run.get("fixture_id")
     if not fixture_id:
-        await abandon_run(db, run["id"])
+        await abandon_run(db, run["id"], reason="league_recovery_no_fixture")
         return
 
     f_res = await db.table("league_fixtures").select(
@@ -87,26 +163,50 @@ async def _recover_league_run(bot: commands.Bot, db, run: dict) -> None:
     ).eq("id", fixture_id).maybe_single().execute()
     fixture = f_res.data if f_res else None
     if not fixture:
-        await abandon_run(db, run["id"])
+        await abandon_run(db, run["id"], reason="league_recovery_fixture_missing")
         return
 
     if fixture.get("is_played"):
-        from apps.discord_bot.core.match_runs import complete_run
-        await complete_run(db, run["id"], home_score=fixture.get("home_score") or 0, away_score=fixture.get("away_score") or 0)
+        await complete_run(
+            db,
+            run["id"],
+            home_score=fixture.get("home_score") or 0,
+            away_score=fixture.get("away_score") or 0,
+        )
         logger.info("League run %s already played; marked completed", run["id"])
+        return
+
+    # Rewards already applied but fixture not marked — complete, don't re-sim
+    if await _run_rewards_applied(db, run):
+        await complete_run(
+            db,
+            run["id"],
+            home_score=int(run.get("home_score") or 0),
+            away_score=int(run.get("away_score") or 0),
+        )
+        logger.info("League run %s had rewards; marked completed without re-sim", run["id"])
         return
 
     guild_id = run.get("guild_id")
     guild = (await resolve_bot_guild(bot, int(guild_id)))[0] if guild_id else None
     if not guild:
-        logger.warning("Cannot recover league run %s — guild %s unavailable", run["id"], guild_id)
+        logger.warning(
+            "Cannot recover league run %s — guild %s unavailable; abandoning",
+            run["id"],
+            guild_id,
+        )
+        await abandon_run(db, run["id"], reason="league_recovery_no_guild")
         return
 
     season_threads = await resolve_season_threads(bot, db, guild, fixture["season_id"])
     if not season_threads:
         thread = await _resolve_thread(bot, run)
         if not thread:
-            logger.warning("Cannot recover league run %s — thread missing", run["id"])
+            logger.warning(
+                "Cannot recover league run %s — thread missing; abandoning",
+                run["id"],
+            )
+            await abandon_run(db, run["id"], reason="league_recovery_no_thread")
             return
         season_threads_commentary = thread
         journal_thread = None
@@ -164,6 +264,9 @@ async def recover_interrupted_matches(bot: commands.Bot) -> None:
     runs = res.data or []
     if not runs:
         logger.info("No interrupted match runs to recover.")
+        deleted = await reconcile_orphaned_match_locks(db)
+        if deleted:
+            logger.info("Reconciled %s orphaned match lock(s).", deleted)
         return
 
     logger.info("Recovering %d interrupted match run(s)...", len(runs))
@@ -172,10 +275,25 @@ async def recover_interrupted_matches(bot: commands.Bot) -> None:
             if run.get("run_type") == "league":
                 await _recover_league_run(bot, db, run)
             else:
-                await _abandon_ephemeral_run(bot, db, run)
+                await _recover_ephemeral_run(bot, db, run)
         except Exception:
             logger.exception("Recovery failed for match run %s", run.get("id"))
+            try:
+                action = classify_interrupted_run(
+                    status=str(run.get("status") or "streaming"),
+                    rewards_applied=await _run_rewards_applied(db, run),
+                )
+                if action == "complete":
+                    await complete_run(
+                        db,
+                        run["id"],
+                        home_score=int(run.get("home_score") or 0),
+                        away_score=int(run.get("away_score") or 0),
+                    )
+                elif action == "abandon":
+                    await abandon_run(db, run["id"], reason="recovery_exception")
+            except Exception:
+                logger.exception("Fallback terminalization failed for %s", run.get("id"))
 
-    # Clear stale per-player locks; active runs are now completed or abandoned.
-    await db.table("match_locks").delete().neq("discord_id", 0).execute()
-    logger.info("Match recovery complete; stale locks cleared.")
+    deleted = await reconcile_orphaned_match_locks(db)
+    logger.info("Match recovery complete; reconciled %s orphaned lock(s).", deleted)
