@@ -131,7 +131,7 @@ Injury-without-hospital (play-on), fatigue bands, and contract/wage flags are **
 - **FR-002**: System MUST enforce the Allowed/Blocked matrix in §B for all listed actions; Discord UI MUST NOT be the sole enforcer.
 - **FR-003**: Mutations MUST re-check current `owner_id` (US-42.1 / INV-02) before applying state transitions.
 - **FR-004**: Exclusive busy states Listed, Hospitalized, Evolving (active), TrainingBusy, InAcademy, and Retired MUST be mutually exclusive with each other.
-- **FR-005**: InXI MUST be mutually exclusive with Listed, Hospitalized, Evolving (active), TrainingBusy, InAcademy, Retired (cannot be starting XI while those busy states hold).
+- **FR-005**: InXI MUST be mutually exclusive with Listed, Hospitalized, TrainingBusy, InAcademy, Retired (cannot be starting XI while those busy states hold). **Evolving MAY coexist with InXI** so match-based evolution tracks can progress via Starting XI appearances (US-18 / match tick).
 - **FR-006**: MatchLocked MUST block roster assignment changes and development/sale/list/evo-start/claim/cancel/hospital/academy mutations until cleared (INV-17).
 - **FR-007**: View-only actions (open profile, browse) MUST remain Allowed unless ownership fails.
 - **FR-008**: Entry to a busy state MUST fail closed if any conflicting exclusive state is present.
@@ -239,14 +239,14 @@ Legend: **A** = Allowed (if owner + other non-state gates pass); **B** = Blocked
 | Action | RosterFree | InXI | Listed | Evolving | Hospital | TrainBusy | Academy | Retired | Sold | MatchLocked* |
 |--------|------------|------|--------|----------|----------|-----------|---------|---------|------|--------------|
 | View profile | V | V | V | V | V | V | V | V | B† | V |
-| Assign to XI | A | — | B | B | B | B | B | B | B | B |
-| Bench from XI | — | A | B | B | B | B | B | B | B | B |
-| Include in match | A‡ | A‡ | B | B | B | B | B | B | B | B§ |
+| Assign to XI | A | — | B | A | B | B | B | B | B | B |
+| Bench from XI | — | A | B | A | B | B | B | B | B | B |
+| Include in match | A‡ | A‡ | B | A‡ | B | B | B | B | B | B§ |
 | Stat drill | A | A | B | B | B | B | B | B | B | B |
 | Fusion (as keeper/fodder) | A | B¶ | B | B | B | B | B | B | B | B |
 | Allocate / mentor | A | A | B | B | B | B | B | B | B | B |
 | Fatigue recover | A | A | B | B | B | B | B | B | B | B |
-| Start evolution | A | B | B | B | B | B | B | B | B | B |
+| Start evolution | A | A | B | B | B | B | B | B | B | B |
 | Claim / cancel evolution | — | — | B | A | B | B | B | B | B | B |
 | Admit hospital | A | B | B | B | — | B | B | B | B | B |
 | Discharge hospital | — | — | B | B | A | B | B | B | B | B |

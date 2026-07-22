@@ -74,3 +74,19 @@ def test_evolving_in_xi_not_conflict_claim_allowed():
     ok, reason = can_perform_action_from_flags(flags, action="claim_evolution")
     assert ok is True
     assert reason == ""
+
+
+def test_start_evolution_from_xi_and_reassign_while_evolving():
+    """Option A: starters can start tracks; evolving cards can return to / stay in XI."""
+    ok, _ = can_perform_action_from_flags(
+        CardStateFlags(in_xi=True), action="start_evolution"
+    )
+    assert ok is True
+    ok2, _ = can_perform_action_from_flags(
+        CardStateFlags(evolving=True, in_xi=False), action="assign_xi"
+    )
+    assert ok2 is True
+    ok3, _ = can_perform_action_from_flags(
+        CardStateFlags(evolving=True, in_xi=True), action="match_include"
+    )
+    assert ok3 is True

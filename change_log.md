@@ -2,6 +2,11 @@
 
 Hey Managers!
 
+## Evolution + Starting XI fix
+
+You can start an evolution on a player who is **already in your Starting XI**, and keep them there while the track runs. Play bot/league matches with that player to fill the match objective, then claim as usual. (Bench-first was a dead end — that loop is closed.)
+
+---
 ## Match engine Wave 1–2 (pending flag enable)
 
 Under the hood, NSS v3 now supports:

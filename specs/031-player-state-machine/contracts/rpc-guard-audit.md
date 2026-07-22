@@ -13,7 +13,8 @@ Before patching, record whether each mutating RPC already enforces matrix cells.
 | `create_transfer_listing` (062) | list_transfer | Y | self | Y | Y | Y | Y | Y (block XI) | No |
 | `cancel_transfer_listing` (062) | cancel_listing | ? | owns listing | — | — | — | — | — | Soft — add assert |
 | `process_agent_sale` (062) | agent_sell | Y | Y | Y | Y | — | Y | — | Soft — injury OK; academy soft |
-| `start_player_evolution` (062) | start_evolution | Y | Y | **N** | self | **N** | **N** | **N** (must RosterFree) | **Yes Critical** |
+| `start_player_evolution` (062→084) | start_evolution | Y | Y | Y | self | Y | Y | **Allow RosterFree + InXI**; Evolving may stay InXI | Closed (084) |
+
 | `claim_evolution_reward` (038) / `cancel_player_evolution` (047) | claim/cancel | partial | partial | — | self | — | — | — | Soft — add assert |
 | `process_stat_drill` (062) | drill | Y | Y | **N** | Y | **N** | Y | OK (InXI allow) | **Yes Critical** |
 | `train_with_fodder` (062) | fusion | Y | Y | — | Y | — | — | — | Soft |

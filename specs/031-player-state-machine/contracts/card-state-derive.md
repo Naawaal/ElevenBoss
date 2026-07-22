@@ -17,6 +17,8 @@ can_perform_action(primary, overlay, modifiers, action: str) -> tuple[bool, str]
 
 Retired > SoldTransferred > Listed > Hospitalized > Evolving > TrainingBusy > InAcademy > InXI > RosterFree
 
+**Evolving + InXI**: not a conflict (084). Primary label remains `Evolving`; `start_evolution` allowed from `InXI`; `assign_xi` / `match_include` / `bench` allowed while `Evolving` so match tracks can complete.
+
 ## Tests
 
 - Each busy flag alone → expected primary  
