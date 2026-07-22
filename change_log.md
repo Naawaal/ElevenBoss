@@ -2,6 +2,12 @@
 
 Hey Managers!
 
+## Evolution claim fix
+
+If a player finished an evolution track while still in your starting XI, **Claim** could fail with `CARD_STATE: state_conflict`. That’s fixed — you can claim the reward (stat boost / skill point) without benching them first.
+
+---
+
 ## Training Drills — tangible attribute payoff
 
 Skill drills still cost energy and coins and still grant **XP**, and now also attempt **+1** to the attribute you’re training (e.g. Finishing → +1 SHO):

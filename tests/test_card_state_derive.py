@@ -49,7 +49,6 @@ def test_hospitalized_not_injury_modifier_primary():
         {"listed": True, "in_hospital": True},
         {"listed": True, "evolving": True},
         {"in_hospital": True, "in_academy": True},
-        {"evolving": True, "in_xi": True},
         {"listed": True, "in_xi": True},
         {"retired": True, "in_academy": True},
     ],
@@ -67,3 +66,11 @@ def test_single_busy_no_conflict():
     flags = CardStateFlags(listed=True)
     assert has_exclusive_conflict(flags) is False
     assert detect_exclusive_conflict(flags) is None
+
+
+def test_evolving_in_xi_not_conflict_claim_allowed():
+    flags = CardStateFlags(evolving=True, in_xi=True)
+    assert has_exclusive_conflict(flags) is False
+    ok, reason = can_perform_action_from_flags(flags, action="claim_evolution")
+    assert ok is True
+    assert reason == ""

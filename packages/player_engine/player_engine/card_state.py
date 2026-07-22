@@ -148,6 +148,9 @@ def has_exclusive_conflict(flags: CardStateFlags) -> bool:
     if len(proofs) > 1:
         return True
     if proofs and flags.in_xi:
+        # Starters completing evolution tracks stay in XI; claim/cancel must work.
+        if proofs == ["Evolving"]:
+            return False
         return True
     return False
 
