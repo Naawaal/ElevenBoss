@@ -990,8 +990,16 @@ async def run_league_match_simulation(
 
     state = MatchState(home_rating=home_rating, away_rating=away_rating)
     state.injuries_enabled = True
-    # Sim injury rolls: prefer active human's intensity; each side still persists own tier
-    active_row = home_p if int(home_p.get("discord_id") or 0) == int(active_player_id) else away_p
+    # Sim injury rolls: prefer active human's intensity; each side still persists own tier.
+    # auto_sim passes active_player_id=None — do not int(None).
+    if active_player_id is not None:
+        active_row = (
+            home_p
+            if int(home_p.get("discord_id") or 0) == int(active_player_id)
+            else away_p
+        )
+    else:
+        active_row = home_p if not home_p.get("is_ai") else away_p
     if active_row.get("is_ai"):
         active_row = home_p if not home_p.get("is_ai") else away_p
     state.intensity_tier = int(active_row.get("intensity_tier") or 1)

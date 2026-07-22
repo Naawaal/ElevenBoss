@@ -111,3 +111,10 @@ def test_resume_null_pause_started_at_fail_safe():
     text = LIFECYCLE.read_text(encoding="utf-8")
     assert "missing pause_started_at" in text
     assert "clearing pause without rebase" in text
+
+
+def test_auto_sim_handles_null_active_player_id():
+    """auto_sim passes active_player_id=None — must not int(None) for intensity pick."""
+    battle = BATTLE.read_text(encoding="utf-8")
+    assert "if active_player_id is not None:" in battle
+    assert 'active_player_id=None' in LEAGUE_COG.read_text(encoding="utf-8")
