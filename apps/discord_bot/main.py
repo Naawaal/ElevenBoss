@@ -169,6 +169,7 @@ class ElevenBossBot(commands.Bot):
             "apps.discord_bot.cogs.admin_cog",
             "apps.discord_bot.cogs.league_cog",
             "apps.discord_bot.cogs.leaderboard_cog",
+            "apps.discord_bot.cogs.help_cog",
         ]
 
     async def setup_hook(self) -> None:

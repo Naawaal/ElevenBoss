@@ -57,35 +57,28 @@ async def _league_join_limits(db) -> tuple[int, int]:
 
 
 async def _load_league_and_open_season(db, guild_id: int) -> tuple[dict | None, dict | None]:
-    """Fetch league row + newest open/active season for a guild."""
+    """Fetch league row + preferred open season for a guild.
+
+    Prefers ``active`` / ``paused`` / ``settling`` over leftover ``registration``
+    rows from earlier seasons (created_at-newest alone was wrong when both exist).
+    Avoids ``maybe_single`` so sibling open seasons cannot 406 the whole lookup.
+    """
+    from leagues import OPEN_SEASON_STATUSES, prefer_open_league_season
+
     league_res = await (
-        db.table("leagues").select("*").eq("guild_id", guild_id).maybe_single().execute()
+        db.table("leagues").select("*").eq("guild_id", guild_id).limit(1).execute()
     )
-    league = league_res.data if league_res else None
+    league = (league_res.data or [None])[0]
     if not league:
         return None, None
     season_res = await (
         db.table("league_seasons")
         .select("*")
         .eq("league_id", league["id"])
-        .in_(
-            "status",
-            [
-                "active",
-                "registration",
-                "registration_open",
-                "registration_locked",
-                "preparing",
-                "paused",
-                "settling",
-            ],
-        )
-        .order("created_at", desc=True)
-        .limit(1)
-        .maybe_single()
+        .in_("status", sorted(OPEN_SEASON_STATUSES))
         .execute()
     )
-    season = season_res.data if season_res else None
+    season = prefer_open_league_season(season_res.data or [])
     return league, season
 
 

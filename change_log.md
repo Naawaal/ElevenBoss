@@ -2,18 +2,64 @@
 
 Hey Managers!
 
+## In-Discord Help
+
+New **`/help`** guide — systems, hubs, and a live commands list without leaving Discord:
+- Hub buttons for Getting Started, Battle, Squad, Training, Evolutions, League, Economy, Hospital, and Commands
+- Optional **`/help topic:`** with autocomplete to jump straight in
+- **Full Documentation** / **Read More** links to [ElevenBoss docs on Jotbird](https://share.jotbird.com/bright-serene-sandia)
+- Works in servers (private to you) and in DMs with the bot
+- Reminder in Help: after **voting on Top.gg**, you can **buy energy** from **`/store`**
+
+---
+## Marketplace polish
+
+`/marketplace` feels clearer and faster to shop:
+- Hub title is **Marketplace** with Transfer Board · Scouting · Agent · My Listings
+- Transfer Board shows a **scannable list** (price + time left) before you pick a player
+- Listing detail shows **rarity**, **ask vs fair**, and clearer market trend / recent sales
+- Buy confirm keeps a short market/fair cue so you don’t lose context at the last step
+- My Listings shows **time remaining**; agent offers show **POT** before you confirm
+
+---
+## Marketplace intelligence
+
+On the Transfer Board (when player-to-player trading is on):
+- **Sort** listings by lowest/highest price, OVR, potential, newest, ending soon, or best value
+- **Price discovery** shows real similar-sale averages (or “not enough data yet”) when you inspect a listing or confirm a list price
+- **Career trail** shows which clubs have owned that player
+
+---
+## Leaderboard Season tab fix
+
+`/leaderboard` → **Season** now uses the same season as `/league hub`, so you won’t see “No active guild season” while Matchday standings are live. Stale leftover registration seasons no longer hide the active table.
+
+---
+## Store, Swap & Hospital visuals
+
+- **Store**: Buy Energy Refill greys out when your energy is already full or near the cap (within 5 of max, or ≥95%), so you don’t waste coins.
+- **Squad Swap**: Picking who goes out/in now shows a side-by-side player compare image (name, position, OVR, attributes).
+- **Hospital**: Manage Hospital shows the patient board image with admitted names overlaid; it updates when you admit or discharge.
+
+---
+## Daily pack odds
+
+Standard pack rarity mix is now **~60% Common / 35% Rare / 5% Epic** (Epic was 10%). Still no Legendary from the daily pack.
+
+---
 ## Evolution + Starting XI fix
 
 You can start an evolution on a player who is **already in your Starting XI**, and keep them there while the track runs. Play bot/league matches with that player to fill the match objective, then claim as usual. (Bench-first was a dead end — that loop is closed.)
 
 ---
-## Match engine Wave 1–2 (pending flag enable)
+## Match engine Wave 1–2 (ready for bot soak)
 
-Under the hood, NSS v3 now supports:
-- **Touchline Decision Windows** at 15' / 30' / 45' / 60' / 75' / 85' (changes apply at the next window, not mid-phrase spam)
-- **Tactical transition styles** on the live touchline when v3 is on: **Possession / Counter / Long Ball / High Press** (plus classic Attack / Balanced / Defend) — these change how attacks build, not a hidden goal% buff
+When ops enables `match_engine_v3_bot` (league stays off until soak):
+- **Touchline Decision Windows** at 15' / 30' / 45' / 60' / 75' / 85' (changes apply at the next window)
+- **Tactical transition styles**: Possession / Counter / Long Ball / High Press (plus Attack / Balanced / Defend)
+- Post-match **How it was decided** shows short turning points from the match (goals, tactics, key chances) — not opaque RNG
 
-Nothing changes in your matches until we flip the staging/prod engine flags. Default remains classic NSS.
+Until the bot flag is on, matches stay on classic NSS. League and friendly have separate flags (friendly stays sandbox either way).
 
 ---
 ## Match engine (pending enable)
@@ -933,7 +979,6 @@ Retroactive level rewards were scaled (75%, cap 18 per player) for veterans with
 | `/development` | Stat drills (age + TG bonus), fusion, evolutions, skills, claim rewards |
 | `/marketplace` | **Search Market** (regens), **Sell Player** (agent, 10/day) |
 | `/profile` | Club finance, Hospital, resources, records |
-| `/battle how-it-works` | Match engine transparency |
 
 ---
 
@@ -947,7 +992,7 @@ Retroactive level rewards were scaled (75%, cap 18 per player) for veterans with
 - Stronger squads win more often at +10 OVR (~75%+); large gaps (+30) remain dominant.
 
 ### How to read your result
-- Use `/battle how-it-works` for the full breakdown.
+- Post-match press / zone strengths explain the story of the game.
 - A better squad improves odds — it does not guarantee every match. Upsets are part of the design.
 
 ### Dev note: interval xG engine (future)

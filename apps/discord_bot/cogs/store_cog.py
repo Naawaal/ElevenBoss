@@ -32,16 +32,22 @@ from apps.discord_bot.core import perf_signals
 from apps.discord_bot.core.topgg_vote import check_topgg_vote, resolve_topgg_bot_id, topgg_vote_url
 from apps.discord_bot.core.view_helpers import disable_view_on_timeout, set_view_controls_disabled
 from apps.discord_bot.core.card_payload import card_rpc_payload
+from energy import near_full_reason
 from gacha import generate_pack
 
 logger = logging.getLogger(__name__)
+
+_REFILL_BASE = "+50 action energy. Costs **200 / 400 / 600** coins (1st–3rd refill per day)."
+_REFILL_LABEL_DEFAULT = "⚡ Buy Energy Refill"
+_REFILL_LABEL_FULL = "⚡ Energy already full"
+_REFILL_LABEL_NEAR = "⚡ Near maximum"
 
 
 def _gacha_pack_field_value(*, gacha_ready: bool, gacha_cooldown_str: str) -> str:
     base = (
         "Vote on Top.gg, then claim a free pack of 5 random players "
         "(Common / Rare / Epic — no Legendary).\n"
-        "Odds ~60% / 30% / 10%. Available every 12 hours after your last claim.\n"
+        "Odds ~60% / 35% / 5%. Available every 12 hours after your last claim.\n"
     )
     if gacha_ready:
         return base + "🟢 Vote & claim available now!"
@@ -58,8 +64,14 @@ async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
             return
 
         energy_row = await sync_action_energy(db, owner_id)
-        ae = energy_row.get("action_energy", 0)
-        max_e = energy_row.get("max_energy", 120)
+        ae = int(energy_row.get("action_energy") or 0)
+        # ponytail: gate uses raw max (fail-open if missing/≤0); display still falls back to 120
+        try:
+            max_for_gate = int(energy_row["max_energy"]) if energy_row.get("max_energy") is not None else 0
+        except (TypeError, ValueError):
+            max_for_gate = 0
+        max_e = max_for_gate if max_for_gate > 0 else 120
+        energy_reason = near_full_reason(ae, max_for_gate)
         regen = float(energy_row.get("regen_per_min") or 0) or None
         energy_line = (
             format_action_energy_status(ae, max_e, regen_per_min=regen)
@@ -108,11 +120,12 @@ async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
             ),
             inline=False,
         )
-        embed.add_field(
-            name="⚡ Energy Refill",
-            value="+50 action energy. Costs **200 / 400 / 600** coins (1st–3rd refill per day).",
-            inline=False,
-        )
+        refill_value = _REFILL_BASE
+        if energy_reason == "full":
+            refill_value += "\n🚫 Energy already full — refill unavailable."
+        elif energy_reason == "near":
+            refill_value += "\n🚫 Near maximum — refill unavailable."
+        embed.add_field(name="⚡ Energy Refill", value=refill_value, inline=False)
         embed.add_field(
             name="🎫 Daily Gacha Pack",
             value=_gacha_pack_field_value(gacha_ready=gacha_ready, gacha_cooldown_str=gacha_cooldown_str),
@@ -124,7 +137,12 @@ async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
             inline=False,
         )
 
-        view = StoreHubView(owner_id, login_claimed_today=login_claimed_today, gacha_ready=gacha_ready)
+        view = StoreHubView(
+            owner_id,
+            login_claimed_today=login_claimed_today,
+            gacha_ready=gacha_ready,
+            energy_reason=energy_reason,
+        )
         if interaction.response.is_done():
             if interaction.message is not None:
                 try:
@@ -144,12 +162,18 @@ class StoreHubView(discord.ui.View):
         *,
         login_claimed_today: bool = False,
         gacha_ready: bool = True,
+        energy_reason: str | None = None,
     ) -> None:
         super().__init__(timeout=900)
         self.owner_id = owner_id
-        self._sync_button_states(login_claimed_today, gacha_ready)
+        self._sync_button_states(login_claimed_today, gacha_ready, energy_reason)
 
-    def _sync_button_states(self, login_claimed_today: bool, gacha_ready: bool) -> None:
+    def _sync_button_states(
+        self,
+        login_claimed_today: bool,
+        gacha_ready: bool,
+        energy_reason: str | None = None,
+    ) -> None:
         for child in self.children:
             if not isinstance(child, discord.ui.Button):
                 continue
@@ -157,6 +181,16 @@ class StoreHubView(discord.ui.View):
                 child.disabled = login_claimed_today
             elif child.custom_id == "store_gacha_claim":
                 child.disabled = not gacha_ready
+            elif child.custom_id == "store_energy_refill":
+                if energy_reason == "full":
+                    child.disabled = True
+                    child.label = _REFILL_LABEL_FULL
+                elif energy_reason == "near":
+                    child.disabled = True
+                    child.label = _REFILL_LABEL_NEAR
+                else:
+                    child.disabled = False
+                    child.label = _REFILL_LABEL_DEFAULT
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:

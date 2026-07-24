@@ -20,12 +20,12 @@ class PackConfig:
     position_weights: tuple[int, ...]
 
 
-# Epic-capped standard mix (Legendary folded into Epic: former 60/30/8/2 → 60/30/10).
+# Epic-capped standard mix (no Legendary). 085: Epic 5%; Rare takes the former Epic share → 60/35/5.
 _STANDARD_EPIC_CAP = PackConfig(
     id="standard",
     card_count=5,
     rarities=("Common", "Rare", "Epic"),
-    rarity_weights=(60, 30, 10),
+    rarity_weights=(60, 35, 5),
     positions=("GK", "DEF", "MID", "FWD"),
     position_weights=(10, 30, 30, 30),
 )

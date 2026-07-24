@@ -34,6 +34,20 @@ from .facility_effects import (
     youth_academy_tier,
 )
 
+from .market_intelligence import (
+    SORT_MODE_LABELS,
+    SORT_MODES,
+    ask_vs_fair_line,
+    average_price,
+    cohort_matches,
+    format_discovery_presentation,
+    format_relative_deadline,
+    insufficient_data,
+    median_price,
+    sort_transfer_listings,
+    trend_from_medians,
+    trend_label,
+)
 from .scouting_market import scouting_purchase_price
 from .transfer_market import (
     DEFAULT_CEIL_MULT,
@@ -105,4 +119,16 @@ __all__ = [
     "listing_price_bounds",
     "validate_listing_price",
     "price_bounds_for_card",
+    "SORT_MODES",
+    "SORT_MODE_LABELS",
+    "cohort_matches",
+    "insufficient_data",
+    "average_price",
+    "median_price",
+    "trend_from_medians",
+    "sort_transfer_listings",
+    "ask_vs_fair_line",
+    "format_discovery_presentation",
+    "format_relative_deadline",
+    "trend_label",
 ]

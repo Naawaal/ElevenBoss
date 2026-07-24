@@ -9,6 +9,7 @@ import discord
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.embeds.hospital_embeds import hospital_panel_embed
+from apps.discord_bot.core.hospital_board import generate_hospital_board
 from apps.discord_bot.core.view_helpers import (
     add_select_if_options,
     disable_view_on_timeout,
@@ -388,15 +389,29 @@ async def show_hospital_panel(
         "id, name, position, injury_tier, injury_recovery_days, in_hospital"
     ).eq("owner_id", owner_id).not_.is_("injury_tier", "null").eq("in_hospital", False).execute()
     waiting = waiting_res.data or []
-    embed = hospital_panel_embed(player, patients=patients, waiting=waiting)
+    # ponytail: missing admited.png → None → text-only panel (FR-014)
+    board_file = await generate_hospital_board(patients)
+    embed = hospital_panel_embed(
+        player,
+        patients=patients,
+        waiting=waiting,
+        attach_board_image=board_file is not None,
+    )
     view = HospitalPanelView(owner_id, player, patients, waiting, origin=origin)
+    attachments = [board_file] if board_file is not None else []
     if interaction.response.is_done():
         if interaction.message:
-            await interaction.followup.edit_message(interaction.message.id, embed=embed, view=view)
+            await interaction.followup.edit_message(
+                interaction.message.id, embed=embed, view=view, attachments=attachments
+            )
         else:
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            await interaction.followup.send(
+                embed=embed, view=view, ephemeral=True, files=attachments or None
+            )
     else:
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.response.edit_message(
+            embed=embed, view=view, attachments=attachments
+        )
 
 
 async def show_facilities(interaction: discord.Interaction, owner_id: int) -> None:

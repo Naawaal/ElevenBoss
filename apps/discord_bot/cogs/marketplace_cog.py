@@ -8,6 +8,13 @@ from discord.ext import commands
 
 from apps.discord_bot.core.card_payload import effective_card_age
 from economy import GameConfig, generate_agent_offer
+from apps.discord_bot.core.marketplace_copy import (
+    BACK_TO_MARKET,
+    OWNERSHIP_DASHBOARD_ERROR,
+    OWNERSHIP_SESSION_ERROR,
+    PRODUCT_NAME,
+    hub_subtitle,
+)
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
@@ -33,7 +40,11 @@ async def show_marketplace_hub(interaction: discord.Interaction, owner_id: int):
     with perf_signals.hub_timer("marketplace"):
         db = await get_client()
         player_res, enabled = await asyncio.gather(
-            db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute(),
+            db.table("players")
+            .select("discord_id, manager_name, coins, tokens")
+            .eq("discord_id", owner_id)
+            .maybe_single()
+            .execute(),
             transfer_market_enabled(db),
         )
         player = player_res.data
@@ -43,10 +54,11 @@ async def show_marketplace_hub(interaction: discord.Interaction, owner_id: int):
         tokens = player.get("tokens", 0)
         listing_status = f"`{active_count} / {slot_cap}` slots filled" if enabled else "unavailable"
         embed = discord.Embed(
-            title="🏪 Global Transfer Market",
+            title=f"🏪 {PRODUCT_NAME}",
             description=(
-                f"Welcome to the ElevenBoss Marketplace, Manager **{player['manager_name']}**!\n\n"
-                f"💰 **Your Balance**: `🪙 {player['coins']:,} coins` | `🎟️ {tokens:,} tokens`\n"
+                f"**{hub_subtitle(transfer_enabled=enabled)}**\n\n"
+                f"Welcome, Manager **{player['manager_name']}**!\n"
+                f"💰 **Balance**: `🪙 {player['coins']:,} coins` | `🎟️ {tokens:,} tokens`\n"
                 f"📋 **Active Listings**: {listing_status}"
             ),
             color=0x00FF87
@@ -68,7 +80,7 @@ class MarketplaceHubView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("This dashboard is managed by another club.", ephemeral=True)
+            await interaction.response.send_message(OWNERSHIP_DASHBOARD_ERROR, ephemeral=True)
             return False
         return True
 
@@ -97,7 +109,10 @@ async def show_sell_menu(interaction: discord.Interaction, owner_id: int):
 
     roster_res, assignments_res, evo_res, training_res, listing_card_ids = await asyncio.gather(
         db.table("player_cards")
-        .select("*")
+        .select(
+            "id, name, position, overall, potential, rarity, date_of_birth, "
+            "is_retired, in_academy, injury_tier, in_hospital"
+        )
         .eq("owner_id", owner_id)
         .order("overall", desc=True)
         .execute(),
@@ -110,7 +125,7 @@ async def show_sell_menu(interaction: discord.Interaction, owner_id: int):
         .eq("owner_id", owner_id)
         .eq("status", "active")
         .execute(),
-        db.table("active_training").select("card_id").execute(),
+        db.table("active_training").select("card_id").eq("club_id", owner_id).execute(),
         listed_card_ids(db, owner_id),
     )
     roster = roster_res.data or []
@@ -200,7 +215,7 @@ class SellPlayerSubView(discord.ui.View):
         # 3. Back to Market button
         back_btn = discord.ui.Button(
             style=discord.ButtonStyle.secondary,
-            label="⬅️ Back to Market",
+            label=BACK_TO_MARKET,
             custom_id="sell_back_market",
             row=2
         )
@@ -209,7 +224,7 @@ class SellPlayerSubView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("This belongs to another manager.", ephemeral=True)
+            await interaction.response.send_message(OWNERSHIP_SESSION_ERROR, ephemeral=True)
             return False
         return True
 
@@ -241,9 +256,10 @@ class SellPlayerSubView(discord.ui.View):
                 f"An agent has made an offer to purchase **{selected_player['name']}**.\n\n"
                 f"**Position**: {selected_player['position']}\n"
                 f"**Rating**: **{selected_player['overall']} OVR** · **{card_age} yrs**\n"
+                f"**Potential**: **{selected_player.get('potential', '?')} POT**\n"
                 f"**Rarity**: {selected_player['rarity']}\n\n"
                 f"### Offer: 🪙 **{offer:,} coins**\n"
-                f"*Click the button below to finalize this transaction. This action is irreversible.*"
+                f"*Confirm to finalize — this sale is irreversible.*"
             ),
             color=0x00FF87
         )
@@ -277,8 +293,7 @@ class SellPlayerSubView(discord.ui.View):
             if sale_value:
                 await interaction.followup.send(
                     embed=success_embed(
-                        f"🤝 **Agent Sale Complete!**\n\n"
-                        f"Sold **{self.selected_card['name']}** to the transfer agent for **🪙 {sale_value:,} coins**."
+                        f"Sold **{self.selected_card['name']}** for **🪙 {sale_value:,}**."
                     ),
                     ephemeral=True
                 )
@@ -301,7 +316,7 @@ async def show_scouting_menu(interaction: discord.Interaction, owner_id: int) ->
     db = await get_client()
     pool_res = await (
         db.table("scouting_pool_players")
-        .select("*")
+        .select("id, name, overall, position, potential, rarity, list_price, age")
         .is_("claimed_by", "null")
         .order("overall", desc=True)
         .limit(25)
@@ -356,13 +371,13 @@ class ScoutingSubView(discord.ui.View):
             btn.callback = self.confirm_callback
             self.add_item(btn)
 
-        back = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Back to Market", row=2)
+        back = discord.ui.Button(style=discord.ButtonStyle.secondary, label=BACK_TO_MARKET, row=2)
         back.callback = self.back_callback
         self.add_item(back)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("This belongs to another manager.", ephemeral=True)
+            await interaction.response.send_message(OWNERSHIP_SESSION_ERROR, ephemeral=True)
             return False
         return True
 
@@ -440,7 +455,10 @@ class MarketplaceCog(commands.Cog):
 
         except Exception as e:
             logger.exception("Failed to load Marketplace.")
-            await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
+            msg = str(e)
+            if "ConnectionTerminated" in msg or "RemoteProtocolError" in msg:
+                msg = "Temporary connection issue with the game database. Please try again in a moment."
+            await interaction.followup.send(embed=error_embed(msg), ephemeral=True)
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(MarketplaceCog(bot))

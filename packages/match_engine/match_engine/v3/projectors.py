@@ -1,5 +1,5 @@
 # packages/match_engine/match_engine/v3/projectors.py
-"""Event projectors — box score, replay timeline stubs, explainability stub."""
+"""Event projectors — box score, replay timeline, post-match explainability."""
 from __future__ import annotations
 
 from typing import Any
@@ -138,36 +138,104 @@ def project_replay_timeline(events: list[MatchEventV3]) -> ReplayTimeline:
     return ReplayTimeline(entries=entries)
 
 
+def _humanize_hint(raw: str) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return "moment"
+    if "_" in text and " " not in text:
+        return text.replace("_", " ")
+    return text
+
+
+def _tip_from_event(ev: MatchEventV3, *, text_key: str, default_hint: str) -> dict[str, Any]:
+    hint = ev.causal_hint or default_hint
+    if not ev.causal_hint:
+        if ev.type == "GOAL":
+            actor = ev.payload.get("actor")
+            hint = f"Goal — {actor}" if actor else "Goal"
+        elif ev.type == "TACTICAL_DECISION":
+            tactic = ev.payload.get("tactic") or "tactical change"
+            hint = f"Tactical switch — {tactic}"
+        elif ev.type == "DECISION_WINDOW":
+            hint = f"Decision window ({ev.minute}')"
+        elif ev.type == "CHANCE":
+            hint = "Clear chance"
+        elif ev.type == "SAVE":
+            hint = "Crucial save"
+    return {
+        "minute": ev.minute,
+        "type": ev.type,
+        "causal_hint": _humanize_hint(str(hint)),
+        "seq": ev.seq,
+        "text_key": text_key,
+    }
+
+
 def project_explanation(
     events: list[MatchEventV3],
     *,
     result: str = "draw",
 ) -> Explanation:
-    """Phase 0 stub — deterministic turning points from GOAL events."""
+    """Deterministic turning points from goals, decisions, then chance/save fallbacks.
+
+    Never invents events — only projects from the provided stream. Caps at 5 tips.
+    """
     goals = [ev for ev in events if ev.type == "GOAL"]
+    decisions = [
+        ev
+        for ev in events
+        if ev.type in ("TACTICAL_DECISION", "DECISION_WINDOW")
+    ]
+    chances = [ev for ev in events if ev.type == "CHANCE"]
+    saves = [ev for ev in events if ev.type == "SAVE"]
+
+    selected: list[MatchEventV3] = []
+    seen: set[int] = set()
+
+    def _take(ev: MatchEventV3) -> None:
+        if ev.seq in seen or len(selected) >= 5:
+            return
+        seen.add(ev.seq)
+        selected.append(ev)
+
+    for ev in goals:
+        _take(ev)
+    for ev in decisions:
+        _take(ev)
+
+    if not selected:
+        if chances:
+            _take(chances[len(chances) // 2])
+        elif saves:
+            _take(saves[-1])
+
+    text_key_for = {
+        "GOAL": "goal",
+        "TACTICAL_DECISION": "tactical",
+        "DECISION_WINDOW": "window",
+        "CHANCE": "chance",
+        "SAVE": "save",
+    }
+    default_hint_for = {
+        "GOAL": "goal",
+        "TACTICAL_DECISION": "tactical change",
+        "DECISION_WINDOW": "decision window",
+        "CHANCE": "chance_pattern",
+        "SAVE": "crucial_save",
+    }
+    selected.sort(key=lambda e: e.seq)
     turning = [
-        {
-            "minute": ev.minute,
-            "type": ev.type,
-            "causal_hint": ev.causal_hint or "goal",
-            "seq": ev.seq,
-            "text_key": "goal",
-        }
-        for ev in goals
+        _tip_from_event(
+            ev,
+            text_key=text_key_for.get(ev.type, "moment"),
+            default_hint=default_hint_for.get(ev.type, "moment"),
+        )
+        for ev in selected[:5]
     ]
     primary = turning[-1]["seq"] if turning else None
-    if not turning:
-        chances = [ev for ev in events if ev.type == "CHANCE"]
-        if chances:
-            ev = chances[len(chances) // 2]
-            turning = [{
-                "minute": ev.minute,
-                "type": ev.type,
-                "causal_hint": "chance_pattern",
-                "seq": ev.seq,
-                "text_key": "chance",
-            }]
-            primary = ev.seq
+    if goals:
+        primary = goals[-1].seq
+
     headline = {
         "win": "Victory forged in key moments",
         "loss": "Decided by critical passages of play",
@@ -175,6 +243,6 @@ def project_explanation(
     }.get(result, "Match complete")
     return Explanation(
         headline=headline,
-        turning_points=turning[:5],
+        turning_points=turning,
         primary_turning_seq=primary,
     )

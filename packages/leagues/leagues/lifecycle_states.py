@@ -92,6 +92,19 @@ OPEN_SEASON_STATUSES: Final[frozenset[str]] = frozenset({
     "failed",
 })
 
+# Hub / Season standings: prefer in-play over leftover registration from an older season.
+# Lower index = higher priority. Same rank → newest created_at wins.
+_OPEN_SEASON_DISPLAY_PRIORITY: Final[tuple[str, ...]] = (
+    "active",
+    "paused",
+    "settling",
+    "preparing",
+    "failed",
+    "registration_locked",
+    "registration_open",
+    "registration",
+)
+
 
 def can_transition_season(current: str, nxt: str) -> bool:
     return nxt in SEASON_TRANSITIONS.get(current, frozenset())
@@ -107,6 +120,31 @@ def is_fixture_terminal(status: str) -> bool:
 
 def is_open_season_status(status: str) -> bool:
     return status in OPEN_SEASON_STATUSES
+
+
+def prefer_open_league_season(seasons: list[dict]) -> dict | None:
+    """Choose which open season the hub / Season standings should show.
+
+    Avoids picking a stale ``registration`` row when a newer ``active`` season exists
+    (or the reverse: prefer ``active`` even if an older leftover registration remains).
+    """
+    best: dict | None = None
+    best_rank = len(_OPEN_SEASON_DISPLAY_PRIORITY)
+    best_created = ""
+    for season in seasons:
+        status = str(season.get("status") or "")
+        if status not in OPEN_SEASON_STATUSES:
+            continue
+        try:
+            rank = _OPEN_SEASON_DISPLAY_PRIORITY.index(status)
+        except ValueError:
+            continue
+        created = str(season.get("created_at") or "")
+        if rank < best_rank or (rank == best_rank and created > best_created):
+            best = season
+            best_rank = rank
+            best_created = created
+    return best
 
 
 def normalize_registration_status(status: str) -> str:

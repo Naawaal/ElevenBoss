@@ -45,6 +45,26 @@ async def test_resolve_engine_flag_enables_v3(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_resolve_bot_on_league_off(monkeypatch):
+    """Soak cutover: bot V3 does not force league V3."""
+
+    async def _cfg(_db, key, default=0):
+        return 1 if key == "match_engine_v3_bot" else 0
+
+    monkeypatch.setattr(
+        "apps.discord_bot.core.economy_rpc.get_game_config_int",
+        _cfg,
+    )
+    ev_bot, ssv = await resolve_engine_version(MagicMock(), "bot")
+    assert ev_bot == ENGINE_NSS_V3
+    assert ssv == 2
+    ev_league, _ = await resolve_engine_version(MagicMock(), "league")
+    assert ev_league == ENGINE_NSS_V2
+    ev_friendly, _ = await resolve_engine_version(MagicMock(), "friendly")
+    assert ev_friendly == ENGINE_NSS_V2
+
+
+@pytest.mark.asyncio
 async def test_create_ephemeral_run_pins_version(monkeypatch):
     inserted: dict = {}
 

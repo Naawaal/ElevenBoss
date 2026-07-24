@@ -256,25 +256,35 @@ class LeaderboardCog(commands.Cog):
             )
             return embed
 
-        league_res = await db.table("leagues").select("id, name").eq(
-            "guild_id", guild_id
-        ).maybe_single().execute()
-        if not league_res or not league_res.data:
+        # Same season resolution as /league hub (prefer active over stale registration).
+        from apps.discord_bot.cogs.league_cog import _load_league_and_open_season, fetch_standings
+
+        league, season = await _load_league_and_open_season(db, guild_id)
+        if not league:
             embed.description = "No league configured for this server. Ask an admin to set one up."
             return embed
 
-        season_res = await db.table("league_seasons").select("id, status, current_matchday").eq(
-            "league_id", league_res.data["id"]
-        ).eq("status", "active").maybe_single().execute()
-        if not season_res or not season_res.data:
+        if not season:
             embed.description = (
                 "No **active** guild season. Check `/league hub` for registration or the next season."
             )
             return embed
 
-        from apps.discord_bot.cogs.league_cog import fetch_standings
+        status = str(season.get("status") or "")
+        if status in (
+            "registration",
+            "registration_open",
+            "registration_locked",
+            "preparing",
+        ):
+            embed.title = f"🏆 Season Standings — {league.get('name') or 'League'}"
+            embed.description = (
+                f"Season #{season.get('season_number', '?')} is in **{status.replace('_', ' ')}** — "
+                "the table unlocks once matchdays start.\n"
+                "Open `/league hub` to register or check status."
+            )
+            return embed
 
-        season = season_res.data
         standings, fixtures_res, part_res = await asyncio.gather(
             fetch_standings(db, season["id"]),
             db.table("league_fixtures").select("*").eq("season_id", season["id"]).execute(),
@@ -290,9 +300,11 @@ class LeaderboardCog(commands.Cog):
 
         registered = bool(part_res and part_res.data)
 
-        embed.title = f"🏆 Season Standings — {league_res.data['name']}"
+        embed.title = f"🏆 Season Standings — {league.get('name') or 'League'}"
+        paused_note = " · **Paused**" if status == "paused" else ""
         embed.description = (
-            f"Matchday **{season.get('current_matchday', '?')}** · "
+            f"Matchday **{season.get('current_matchday', '?')}**"
+            f"{paused_note} · "
             "**Season Pts** from league fixtures only (not Division Rank)."
         )
         embed.add_field(name="Table", value=f"```\n{table}\n```\n{tie_breaker_footer()}", inline=False)
@@ -452,6 +464,9 @@ class LeaderboardView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         self.tab = tab
         self.page = 0
+        # Prefer live interaction guild (stale view guild_id can miss Season tab data).
+        guild_id = interaction.guild_id or self.guild_id
+        self.guild_id = guild_id
         db = await get_client()
         player_res = await db.table("players").select("*").eq(
             "discord_id", self.owner_id
@@ -463,7 +478,7 @@ class LeaderboardView(discord.ui.View):
             tab=tab,
             division=self.division,
             page=0,
-            guild_id=self.guild_id,
+            guild_id=guild_id,
         )
         embed = await self.cog.build_embed(
             db,
@@ -471,7 +486,7 @@ class LeaderboardView(discord.ui.View):
             viewer=viewer,
             division=self.division,
             page=0,
-            guild_id=self.guild_id,
+            guild_id=guild_id,
         )
         unclaimed = await self.cog.unclaimed_tier_for(db, viewer)
         new_view.set_claim_state(unclaimed)
@@ -480,6 +495,8 @@ class LeaderboardView(discord.ui.View):
 
     async def _refresh(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
+        guild_id = interaction.guild_id or self.guild_id
+        self.guild_id = guild_id
         db = await get_client()
         player_res = await db.table("players").select("*").eq(
             "discord_id", self.owner_id
@@ -491,7 +508,7 @@ class LeaderboardView(discord.ui.View):
             viewer=viewer,
             division=self.division,
             page=self.page,
-            guild_id=self.guild_id,
+            guild_id=guild_id,
         )
         unclaimed = await self.cog.unclaimed_tier_for(db, viewer)
         set_view_controls_disabled(self, disabled=False)

@@ -189,6 +189,27 @@ def format_ticker_line(ev_type: str, minute: int, text: str) -> str:
     return f"{emo} **{minute}'** - {text}"
 
 
+def format_explanation_tip(tp: dict) -> str:
+    """Readable tip line — prefer causal_hint over raw event type."""
+    minute = tp.get("minute", "?")
+    text = tp.get("causal_hint") or tp.get("type") or "moment"
+    if isinstance(text, str) and "_" in text and " " not in text:
+        text = text.replace("_", " ")
+    return f"• {minute}' — {text}"
+
+
+def explanation_field_value(explanation: dict) -> str | None:
+    """Embed body for How it was decided; None if nothing useful to show."""
+    tips = explanation.get("turning_points") or []
+    headline = (explanation.get("headline") or "").strip()
+    if not tips and not headline:
+        return None
+    lines = [headline or "Key moments"]
+    for tp in tips[:3]:
+        lines.append(format_explanation_tip(tp))
+    return "\n".join(lines)[:1024]
+
+
 def _match_stats_from_state(state: MatchState) -> tuple[int, int, int, int]:
     """Possession and shots derived from NSS live counters."""
     ls = state.live_stats
@@ -535,15 +556,13 @@ class StandardMatchHandler(IMatchOutputHandler):
             press_embed.add_field(name="💪 Fitness", value=fitness_line, inline=False)
         explanation = kwargs.get("explanation")
         if explanation:
-            tips = explanation.get("turning_points") or []
-            lines = [explanation.get("headline") or "Key moments"]
-            for tp in tips[:3]:
-                lines.append(f"• {tp.get('minute', '?')}' — {tp.get('type', 'moment')}")
-            press_embed.add_field(
-                name="🔍 How it was decided",
-                value="\n".join(lines)[:1024],
-                inline=False,
-            )
+            expl_value = explanation_field_value(explanation)
+            if expl_value:
+                press_embed.add_field(
+                    name="🔍 How it was decided",
+                    value=expl_value,
+                    inline=False,
+                )
         press_embed.set_footer(
             text=f"✅ Rewards saved. Check `/leaderboard` for rankings. {MATCH_ENGINE_FOOTER}"
         )
@@ -746,15 +765,13 @@ class LeagueMatchHandler(IMatchOutputHandler):
 
         explanation = kwargs.get("explanation")
         if explanation:
-            tips = explanation.get("turning_points") or []
-            lines = [explanation.get("headline") or "Key moments"]
-            for tp in tips[:3]:
-                lines.append(f"• {tp.get('minute', '?')}' — {tp.get('type', 'moment')}")
-            press_embed.add_field(
-                name="🔍 How it was decided",
-                value="\n".join(lines)[:1024],
-                inline=False,
-            )
+            expl_value = explanation_field_value(explanation)
+            if expl_value:
+                press_embed.add_field(
+                    name="🔍 How it was decided",
+                    value=expl_value,
+                    inline=False,
+                )
 
         press_embed.set_footer(
             text=f"✅ Season Pts updated. `/leaderboard` → Season tab. {MATCH_ENGINE_FOOTER}"
@@ -1459,21 +1476,24 @@ async def run_league_match_simulation(
 
     explanation_kw: dict = {}
     if engine_version == ENGINE_NSS_V3:
-        from match_engine.v3 import project_explanation
+        try:
+            from match_engine.v3 import project_explanation
 
-        v3_events = list(getattr(state, "_nss_v3_events", []) or [])
-        if v3_events:
-            league_res = (
-                "win"
-                if state.home_score > state.away_score
-                else ("loss" if state.home_score < state.away_score else "draw")
-            )
-            expl = project_explanation(v3_events, result=league_res)
-            explanation_kw["explanation"] = {
-                "headline": expl.headline,
-                "turning_points": expl.turning_points,
-                "primary_turning_seq": expl.primary_turning_seq,
-            }
+            v3_events = list(getattr(state, "_nss_v3_events", []) or [])
+            if v3_events:
+                league_res = (
+                    "win"
+                    if state.home_score > state.away_score
+                    else ("loss" if state.home_score < state.away_score else "draw")
+                )
+                expl = project_explanation(v3_events, result=league_res)
+                explanation_kw["explanation"] = {
+                    "headline": expl.headline,
+                    "turning_points": expl.turning_points,
+                    "primary_turning_seq": expl.primary_turning_seq,
+                }
+        except Exception:
+            logger.exception("V3 league explainability projection failed (settlement unaffected)")
 
     await handler.finalize_match(
         result=match_res,
@@ -1564,34 +1584,6 @@ class BattleCog(commands.Cog):
     @app_commands.check(ensure_registered)
     async def bot_battle_command(self, interaction: discord.Interaction) -> None:
         await self.execute_bot_battle(interaction)
-
-    @battle_group.command(name="how-it-works", description="How the NSS match engine uses your squad.")
-    @app_commands.guild_only()
-    @app_commands.check(ensure_registered)
-    async def how_it_works(self, interaction: discord.Interaction) -> None:
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-        embed = discord.Embed(
-            title="⚙️ How Matches Work (NSS Engine)",
-            description=(
-                "ElevenBoss simulates matches as a **phase-by-phase** highlight reel — not minute-by-minute physics.\n\n"
-                "**What matters in each phase:**\n"
-                "• **Midfield** — MID zone strength (+ home edge)\n"
-                "• **Build-up** — PAS vs DEF\n"
-                "• **Attack** — DRI/ATT vs DEF\n"
-                "• **Counter** — PAC vs DEF\n"
-                "• **Shot** — SHO vs GK\n\n"
-                "**Your squad rating** is the average of **zone OVR** (GK / DEF / MID / ATT) from your starting XI.\n"
-                "Training stats feed into OVR; **morale** and **PlayStyles** adjust kickoff strength.\n\n"
-                "**Variance is real:** a +10 OVR squad still loses ~10% of matches. Upsets happen — "
-                "they are not bugs.\n\n"
-                "**Post-match stats** (possession, shots) are counted from the live simulation, "
-                "not random numbers."
-            ),
-            color=0x3498DB,
-        )
-        embed.set_footer(text=MATCH_ENGINE_FOOTER)
-        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @battle_group.command(name="friendly", description="Challenge another manager to a live friendly match.")
     @app_commands.describe(opponent="The manager you want to challenge.")
@@ -1946,16 +1938,21 @@ class BattleCog(commands.Cog):
 
             explanation_kw: dict = {}
             if engine_version == ENGINE_NSS_V3:
-                from match_engine.v3 import project_explanation
+                try:
+                    from match_engine.v3 import project_explanation
 
-                v3_events = list(getattr(state, "_nss_v3_events", []) or [])
-                if v3_events:
-                    expl = project_explanation(v3_events, result=res_str)
-                    explanation_kw["explanation"] = {
-                        "headline": expl.headline,
-                        "turning_points": expl.turning_points,
-                        "primary_turning_seq": expl.primary_turning_seq,
-                    }
+                    v3_events = list(getattr(state, "_nss_v3_events", []) or [])
+                    if v3_events:
+                        expl = project_explanation(v3_events, result=res_str)
+                        explanation_kw["explanation"] = {
+                            "headline": expl.headline,
+                            "turning_points": expl.turning_points,
+                            "primary_turning_seq": expl.primary_turning_seq,
+                        }
+                except Exception:
+                    logger.exception(
+                        "V3 bot explainability projection failed (settlement unaffected)"
+                    )
 
             try:
                 await handler.finalize_match(

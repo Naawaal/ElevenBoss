@@ -7,7 +7,7 @@
 
 ```text
 standard.rarities = ("Common", "Rare", "Epic")
-standard.rarity_weights = (60, 30, 10)
+standard.rarity_weights = (60, 35, 5)  # 085: Epic 5%; Rare 35%
 ```
 
 ## `sanitize_pack_config(cfg) -> PackConfig`

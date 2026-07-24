@@ -12,6 +12,7 @@ from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from apps.discord_bot.embeds.squad_embeds import get_slot_position, roster_embed
 from apps.discord_bot.core.api_errors import api_error_message
 from apps.discord_bot.core.pitch_generator import generate_squad_pitch, generate_roster_grid
+from apps.discord_bot.core.swap_compare import generate_swap_compare_image
 from apps.discord_bot.core.view_helpers import disable_view_on_timeout
 from apps.discord_bot.core.select_helpers import rebuild_select_options
 from apps.discord_bot.core.squad_fetch import players_list_for_pitch
@@ -189,7 +190,11 @@ class SquadHubView(discord.ui.View):
             starters = [self.assignments[slot] for slot in range(1, 12) if slot in self.assignments]
             
             swap_view = SquadSwapView(self.user_id, self, starters, reserves)
-            await interaction.edit_original_response(embed=swap_view.get_embed(), view=swap_view, attachments=[])
+            compare = await swap_view.build_compare_file()
+            embed = swap_view.get_embed()
+            await interaction.edit_original_response(
+                embed=embed, view=swap_view, attachments=[compare]
+            )
         except Exception as e:
             logger.exception("Failed to prepare swap view.")
             await interaction.followup.send(embed=error_embed(f"An error occurred: {str(e)}"), ephemeral=True)
@@ -472,7 +477,25 @@ class SquadSwapView(discord.ui.View):
             reserve_card = next((c for c in self.reserves if c["id"] == self.selected_reserve_id), None)
             reserve_name = reserve_card["name"] if reserve_card else "Unknown"
             embed.add_field(name="In", value=f"⬆️ {reserve_name}", inline=True)
+        embed.set_image(url="attachment://swap_compare.png")
         return embed
+
+    def _selected_cards(self) -> tuple[dict | None, dict | None]:
+        out_card = (
+            next((c for c in self.starters if c["id"] == self.selected_starter_id), None)
+            if self.selected_starter_id
+            else None
+        )
+        in_card = (
+            next((c for c in self.reserves if c["id"] == self.selected_reserve_id), None)
+            if self.selected_reserve_id
+            else None
+        )
+        return out_card, in_card
+
+    async def build_compare_file(self) -> discord.File:
+        out_card, in_card = self._selected_cards()
+        return await generate_swap_compare_image(out_card, in_card)
 
     async def on_bench_select(self, interaction: discord.Interaction) -> None:
         self.selected_starter_id = interaction.data["values"][0]
@@ -481,14 +504,20 @@ class SquadSwapView(discord.ui.View):
         # Slot change may invalidate the previously picked reserve.
         self.selected_reserve_id = None
         self.setup_components()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        compare = await self.build_compare_file()
+        await interaction.response.edit_message(
+            embed=self.get_embed(), view=self, attachments=[compare]
+        )
 
     async def on_start_select(self, interaction: discord.Interaction) -> None:
         self.selected_reserve_id = interaction.data["values"][0]
         if self.selected_reserve_id == "none":
             self.selected_reserve_id = None
         self.setup_components()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        compare = await self.build_compare_file()
+        await interaction.response.edit_message(
+            embed=self.get_embed(), view=self, attachments=[compare]
+        )
 
     async def on_back(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
@@ -580,20 +609,29 @@ class SquadSwapView(discord.ui.View):
             # Expected validation (position mismatch, injured, missing card) — not a crash.
             err_embed = self.get_embed()
             err_embed.description = f"❌ {e}\n\nPick a compatible reserve or click Back."
-            await interaction.edit_original_response(embed=err_embed, view=self)
+            compare = await self.build_compare_file()
+            await interaction.edit_original_response(
+                embed=err_embed, view=self, attachments=[compare]
+            )
         except APIError as e:
             err_embed = self.get_embed()
             err_embed.description = (
                 f"❌ {api_error_message(e)}\n\nPick a compatible reserve or click Back."
             )
-            await interaction.edit_original_response(embed=err_embed, view=self)
+            compare = await self.build_compare_file()
+            await interaction.edit_original_response(
+                embed=err_embed, view=self, attachments=[compare]
+            )
         except Exception:
             logger.exception("Failed to swap players.")
             err_embed = self.get_embed()
             err_embed.description = (
                 "❌ **Error swapping players.** Try again or click Back."
             )
-            await interaction.edit_original_response(embed=err_embed, view=self)
+            compare = await self.build_compare_file()
+            await interaction.edit_original_response(
+                embed=err_embed, view=self, attachments=[compare]
+            )
 
 
 class SquadRosterView(discord.ui.View):

@@ -21,7 +21,7 @@ from gacha.pack_configs import PACKS
 def test_standard_pack_config() -> None:
     cfg = get_pack_config("standard")
     assert cfg.rarities == ("Common", "Rare", "Epic")
-    assert cfg.rarity_weights == (60, 30, 10)
+    assert cfg.rarity_weights == (60, 35, 5)
     assert "Legendary" not in cfg.rarities
     assert cfg.position_weights == (10, 30, 30, 30)
     assert cfg.card_count == 5
@@ -51,7 +51,7 @@ def test_resolve_invalid_falls_back_to_epic_cap() -> None:
         rarity_weights=(100,),
     )
     assert cfg.rarities == ("Common", "Rare", "Epic")
-    assert cfg.rarity_weights == (60, 30, 10)
+    assert cfg.rarity_weights == (60, 35, 5)
 
 
 def test_resolve_overlay_then_sanitize() -> None:
@@ -65,7 +65,7 @@ def test_resolve_overlay_then_sanitize() -> None:
 
 
 def test_standard_rarity_sampling_no_legendary() -> None:
-    """SC-001/SC-002: N≥10_000 draws; zero Legendary; Epic within ±2 pp of 10%."""
+    """SC-001/SC-002: N≥10_000 draws; zero Legendary; Epic within ±2 pp of 5%."""
     cfg = PACKS["standard"]
     r = random.Random(123)
     n = 10_000

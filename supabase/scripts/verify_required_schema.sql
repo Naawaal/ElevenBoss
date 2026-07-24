@@ -85,6 +85,21 @@ BEGIN
       ('table:public.energy_refill_daily_log'),
       ('table:public.transfer_listings'),
       ('table:public.transfer_sales_log'),
+      ('column:public.transfer_sales_log.fair_value_coins'),
+      ('column:public.transfer_sales_log.rarity'),
+      ('column:public.transfer_sales_log.role'),
+      ('column:public.transfer_sales_log.overall'),
+      ('column:public.transfer_sales_log.potential'),
+      ('column:public.transfer_sales_log.age_at_sale'),
+      ('column:public.transfer_sales_log.player_name'),
+      ('table:public.card_ownership_history'),
+      ('policy:public.card_ownership_history.card_ownership_history_select'),
+      ('policy:public.card_ownership_history.card_ownership_history_insert'),
+      ('policy:public.card_ownership_history.card_ownership_history_update'),
+      ('function:ensure_card_ownership_open'),
+      ('function:get_card_ownership_history'),
+      ('function:get_price_discovery'),
+      ('function:get_market_analytics'),
       ('table:public.payroll_runs'),
       ('column:public.players.payroll_debt'),
       ('column:public.players.payroll_strikes'),
@@ -335,6 +350,10 @@ BEGIN
         WHEN 'create_transfer_listing' THEN to_regprocedure('public.create_transfer_listing(bigint,uuid,bigint)')
         WHEN 'cancel_transfer_listing' THEN to_regprocedure('public.cancel_transfer_listing(bigint,uuid)')
         WHEN 'purchase_transfer_listing' THEN to_regprocedure('public.purchase_transfer_listing(bigint,uuid,bigint)')
+        WHEN 'ensure_card_ownership_open' THEN to_regprocedure('public.ensure_card_ownership_open(uuid,bigint,text)')
+        WHEN 'get_card_ownership_history' THEN to_regprocedure('public.get_card_ownership_history(uuid)')
+        WHEN 'get_price_discovery' THEN to_regprocedure('public.get_price_discovery(text,text,integer)')
+        WHEN 'get_market_analytics' THEN to_regprocedure('public.get_market_analytics(timestamptz,timestamptz)')
         WHEN 'expire_stale_transfer_listings' THEN to_regprocedure('public.expire_stale_transfer_listings()')
         WHEN 'wages_payroll_enabled' THEN to_regprocedure('public.wages_payroll_enabled()')
         WHEN 'payroll_utc_week_key' THEN to_regprocedure('public.payroll_utc_week_key(timestamptz)')
@@ -404,7 +423,7 @@ BEGIN
         'pending_level_rewards', 'fusion_daily_log', 'player_drill_daily_log',
         'game_config', 'agent_sale_daily_log', 'energy_refill_daily_log',
         'hospital_patients', 'mentor_transfer_log',
-        'transfer_listings', 'transfer_sales_log',
+        'transfer_listings', 'transfer_sales_log', 'card_ownership_history',
         'league_matchday_manager_awards',
         'league_registrations', 'league_divisions', 'league_matchdays',
         'league_final_standings', 'league_transition_journal',

@@ -91,7 +91,7 @@ def generate_pack(
     rarities: Sequence[str] | None = None,
     rarity_weights: Sequence[int] | None = None,
 ) -> GachaPack:
-    """Generate a pack using named PackConfig (default: Epic-capped 60/30/10)."""
+    """Generate a pack using named PackConfig (default: Epic-capped 60/35/5)."""
     cfg = resolve_pack_config(pack_id, rarities=rarities, rarity_weights=rarity_weights)
     count = cfg.card_count if n is None else n
     names = _load_names()

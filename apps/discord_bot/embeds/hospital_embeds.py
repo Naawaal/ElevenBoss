@@ -69,6 +69,7 @@ def hospital_panel_embed(
     *,
     patients: list[dict],
     waiting: list[dict],
+    attach_board_image: bool = False,
 ) -> discord.Embed:
     level = int(player.get("hospital_level", 0))
     beds = hospital_bed_capacity(level)
@@ -146,6 +147,9 @@ def hospital_panel_embed(
         embed.set_footer(text=f"Next upgrade: {cost:,} coins · Moderate base @ intensity: {MODERATE_BASE_DAYS.get(intensity, 3)}d")
     else:
         embed.set_footer(text="Hospital max level")
+
+    if attach_board_image:
+        embed.set_image(url="attachment://hospital_board.png")
 
     return embed
 
