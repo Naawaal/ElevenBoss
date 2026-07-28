@@ -322,7 +322,7 @@ BEGIN
         WHEN 'train_with_fodder' THEN to_regprocedure('public.train_with_fodder(bigint,uuid,uuid)')
         WHEN 'process_agent_sale' THEN to_regprocedure('public.process_agent_sale(bigint,uuid)')
         WHEN 'allocate_skill_point' THEN to_regprocedure('public.allocate_skill_point(bigint,uuid,text)')
-        WHEN 'renew_contract' THEN to_regprocedure('public.renew_contract(bigint,uuid,bigint,integer)')
+        WHEN 'renew_contract' THEN to_regprocedure('public.renew_contract(bigint,uuid,bigint,integer,text)')
         WHEN 'cancel_player_evolution' THEN to_regprocedure('public.cancel_player_evolution(bigint,uuid)')
         WHEN 'process_stat_drill' THEN to_regprocedure('public.process_stat_drill(bigint,uuid,text)')
         WHEN 'claim_daily_pack' THEN to_regprocedure('public.claim_daily_pack(bigint,jsonb,timestamptz,text)')

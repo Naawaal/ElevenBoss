@@ -18,6 +18,7 @@ from player_engine import (
     xp_progress,
 )
 from apps.discord_bot.core.card_payload import effective_card_age
+from apps.discord_bot.core.contract_renew import make_renew_idempotency_key
 from apps.discord_bot.cogs.development_cog import (
     make_match_progress_bar,
     _evo_played,
@@ -66,11 +67,11 @@ class PlayerProfileView(discord.ui.View):
         self.owner_id = owner_id
         self.card_name = card_name
 
-        # Renew Contract Button
+        # Renew Contract Button — unique custom_id per card (avoid cross-profile collisions)
         self.renew_btn = discord.ui.Button(
             style=discord.ButtonStyle.primary,
             label=f"Renew Contract (🪙 {renewal_cost})",
-            custom_id="renew_contract_profile",
+            custom_id=f"renew_contract_profile:{card_id}",
             disabled=not renew_allowed,
         )
         self.renew_btn.callback = self.renew_callback
@@ -113,29 +114,62 @@ class PlayerProfileView(discord.ui.View):
         try:
             db = await get_client()
 
-            card_res = await db.table("player_cards").select("overall").eq("id", self.card_id).maybe_single().execute()
+            card_res = (
+                await db.table("player_cards")
+                .select("overall, contract_expires_at")
+                .eq("id", self.card_id)
+                .maybe_single()
+                .execute()
+            )
             ovr = card_res.data["overall"] if (card_res and card_res.data) else 50
             cost = calculate_contract_renewal_cost(ovr, GameConfig())
             extension_days = await get_game_config_int(db, "contract_renewal_days", 7)
+            grace_days = await get_game_config_int(db, "contract_grace_days", 7)
+            attempt_key = make_renew_idempotency_key(self.card_id)
 
             res = await db.rpc("renew_contract", {
                 "p_club_id": self.owner_id,
                 "p_card_id": self.card_id,
                 "p_cost": cost,
-                "p_extension_days": extension_days
+                "p_extension_days": extension_days,
+                "p_idempotency_key": attempt_key,
             }).execute()
 
-            if res.data:
-                await interaction.followup.send(
-                    embed=success_embed(
-                        f"📝 **Contract Renewed!**\n\n"
-                        f"Extended **{self.card_name}'s** contract by **{extension_days} days**.\n"
-                        f"• Cost: `🪙 {cost} coins`"
-                    ),
-                    ephemeral=True
-                )
-            else:
+            if not res.data:
                 await interaction.followup.send(embed=error_embed("Contract renewal failed."), ephemeral=True)
+                return
+
+            after = (
+                await db.table("player_cards")
+                .select("contract_expires_at")
+                .eq("id", self.card_id)
+                .maybe_single()
+                .execute()
+            )
+            expiry_raw = (after.data or {}).get("contract_expires_at") if after else None
+            expiry_dt = None
+            if expiry_raw:
+                expiry_dt = datetime.datetime.fromisoformat(str(expiry_raw).replace("Z", "+00:00"))
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if expiry_dt is None or contract_blocks_xi(expiry_dt, now, grace_days=grace_days):
+                await interaction.followup.send(
+                    embed=error_embed(
+                        f"Renewal did not clear past grace for **{self.card_name}**. "
+                        "Try again in a moment, or replace them via `/squad`."
+                    ),
+                    ephemeral=True,
+                )
+                return
+
+            await interaction.followup.send(
+                embed=success_embed(
+                    f"📝 **Contract Renewed!**\n\n"
+                    f"Extended **{self.card_name}'s** contract by **{extension_days} days**.\n"
+                    f"• Cost: `🪙 {cost} coins`\n"
+                    f"• New expiry: <t:{int(expiry_dt.timestamp())}:D>"
+                ),
+                ephemeral=True,
+            )
 
         except Exception as e:
             logger.exception("Failed to renew contract.")

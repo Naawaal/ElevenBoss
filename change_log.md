@@ -2,6 +2,11 @@
 
 Hey Managers!
 
+## Contract renew fix
+
+If Renew on `/player-profile` looked like it worked but your player stayed **past grace** (match blocked), that bug is fixed. Open the player again and **Renew** — you can renew the same card more than once. Stuck stars (e.g. after an earlier renew) should clear after one successful payment.
+
+---
 ## In-Discord Help
 
 New **`/help`** guide — systems, hubs, and a live commands list without leaving Discord:
