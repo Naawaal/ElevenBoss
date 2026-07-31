@@ -55,6 +55,16 @@ async def fetch_xi_state(db: Any, discord_id: int) -> tuple[int, bool]:
     return count, invalid
 
 
+def opponent_xi_block_message(club_name: str | None) -> str:
+    """Copy shown to the manager whose *opponent* fails the XI gate."""
+    club = club_name or "Your opponent"
+    return (
+        f"**{club}** cannot play right now — their Starting XI is incomplete, has a retirement "
+        "hole, or holds past-grace contracts. The fixture resolves automatically once its play "
+        "window ends."
+    )
+
+
 def xi_block_message(count: int, squad_invalid: bool) -> str | None:
     """Manager-facing block copy, or None if XI is match-ready (ignores contracts)."""
     if count == 11 and not squad_invalid:

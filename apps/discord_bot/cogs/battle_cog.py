@@ -35,6 +35,7 @@ from apps.discord_bot.core.squad_validity import (
     club_xi_block_reason,
     fetch_xi_state,
     human_club_xi_ok,
+    opponent_xi_block_message,
     xi_block_message,
 )
 from apps.discord_bot.core.match_rewards import apply_bot_match_rewards
@@ -930,6 +931,27 @@ class LeagueMatchHandler(IMatchOutputHandler):
             except Exception as se:
                 logger.error(f"Failed to update player season stats: {se}", exc_info=True)
 
+async def _dm_xi_block(
+    bot: commands.Bot,
+    db,
+    active_player_id: int | None,
+    blocked_id: int,
+    blocked_club: str | None,
+) -> None:
+    """Tell the manager who triggered the match why it never started (either side)."""
+    if not active_player_id:
+        return
+    try:
+        if int(active_player_id) == int(blocked_id):
+            msg = await club_xi_block_reason(db, int(blocked_id)) or RETIREMENT_XI_MSG
+        else:
+            msg = opponent_xi_block_message(blocked_club)
+        user = await bot.fetch_user(int(active_player_id))
+        await user.send(embed=error_embed(msg))
+    except Exception:
+        pass
+
+
 async def run_league_match_simulation(
     bot: commands.Bot,
     db,
@@ -1048,13 +1070,10 @@ async def run_league_match_simulation(
                 fixture_id,
                 fixture["home_team_id"],
             )
-            if not silent and active_player_id and active_player_id == int(fixture["home_team_id"]):
-                try:
-                    msg = await club_xi_block_reason(db, active_player_id) or RETIREMENT_XI_MSG
-                    user = await bot.fetch_user(active_player_id)
-                    await user.send(embed=error_embed(msg))
-                except Exception:
-                    pass
+            if not silent:
+                await _dm_xi_block(
+                    bot, db, active_player_id, int(fixture["home_team_id"]), home_p.get("club_name")
+                )
             return
         if (
             not skip_xi_gate
@@ -1068,13 +1087,10 @@ async def run_league_match_simulation(
                 fixture_id,
                 fixture["away_team_id"],
             )
-            if not silent and active_player_id and active_player_id == int(fixture["away_team_id"]):
-                try:
-                    msg = await club_xi_block_reason(db, active_player_id) or RETIREMENT_XI_MSG
-                    user = await bot.fetch_user(active_player_id)
-                    await user.send(embed=error_embed(msg))
-                except Exception:
-                    pass
+            if not silent:
+                await _dm_xi_block(
+                    bot, db, active_player_id, int(fixture["away_team_id"]), away_p.get("club_name")
+                )
             return
 
         # Lineup familiarity bonus (US-26)
@@ -2083,6 +2099,19 @@ class BattleCog(commands.Cog):
             block = await club_xi_block_reason(db, user_id, card_count=xi_count)
             if block:
                 await interaction.followup.send(embed=error_embed(block), ephemeral=True)
+                return
+
+            # Same gate for the opponent: the simulation fails closed on it and would otherwise
+            # return silently after we already told the manager the match kicked off.
+            opp_side = "away" if user_id == f["home_team_id"] else "home"
+            opponent = f.get(opp_side) or {}
+            if not opponent.get("is_ai") and await club_xi_block_reason(
+                db, int(f[f"{opp_side}_team_id"])
+            ):
+                await interaction.followup.send(
+                    embed=error_embed(opponent_xi_block_message(opponent.get("club_name"))),
+                    ephemeral=True,
+                )
                 return
 
             v2 = await economy_v2_enabled(db)

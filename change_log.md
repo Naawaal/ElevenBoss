@@ -28,6 +28,11 @@ Player **potential** is capped by rarity for good — forever:
 Youth academy prospects stay **Common**, so their potential cannot exceed **75** even at a high academy level. If you had a card showing an impossible potential (or overall above that rarity’s max), it will be corrected; any paid upgrades that had to be reversed come back as skill points / coins / energy where we can prove them. Fair play across rarities.
 
 ---
+## League "kicked off" but nothing happened
+
+Pressing **Play Match** on a League fixture could reply “Match has kicked off!” and then… nothing — no commentary, no result. That happened when your **opponent's** squad was not match-ready (incomplete XI, retirement hole, or past-grace contracts): the match was blocked, but only your opponent's side of the check was silent. Now you get told up front which club is blocked, and the fixture stays unplayed until they fix it or the window closes and it settles as a forfeit.
+
+---
 ## League expired fixtures
 
 If Matchday fixtures stayed **Expired (Pending Auto-Sim)** after the window closed (often because a club’s XI had **past-grace contracts** or an incomplete squad), that is fixed. After the window ends the bot settles the match: normal auto-sim when both sides are legal, or a **forfeit** (3–0 / double forfeit 0–0) when a human side cannot field a legal XI. Renew or replace blocked starters on `/player-profile` / `/squad` before the window ends to avoid the forfeit.
