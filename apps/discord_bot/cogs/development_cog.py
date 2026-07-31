@@ -59,6 +59,10 @@ from apps.discord_bot.views.support_legendary_claim import (
     claim_support_legendary,
     support_legendary_pending,
 )
+from apps.discord_bot.views.manager_card_gift_claim import (
+    claim_manager_card_gifts,
+    manager_card_gifts_pending_count,
+)
 from apps.discord_bot.core.economy_rpc import (
     format_action_energy_status,
     format_action_energy_status_async,
@@ -185,6 +189,16 @@ async def show_hub(interaction: discord.Interaction, owner_id: int):
         if not isinstance(legendary_card, dict):
             legendary_card = None
 
+        manager_gift_pending = int(hub.get("manager_gift_pending") or 0)
+        manager_gift_cards = hub.get("manager_gift_cards") or []
+        if isinstance(manager_gift_cards, str):
+            try:
+                manager_gift_cards = json.loads(manager_gift_cards)
+            except Exception:
+                manager_gift_cards = []
+        if not isinstance(manager_gift_cards, list):
+            manager_gift_cards = []
+
         club_name = hub.get("club_name") or "your"
         embed = discord.Embed(
             title="🏋️‍♂️ Development Center",
@@ -217,10 +231,31 @@ async def show_hub(interaction: discord.Interaction, owner_id: int):
                     "Use **Claim Legendary Gift** below (card is prepared on claim)."
                 )
             embed.add_field(name="🎁 Legendary Thank-You Gift", value=gift_body, inline=False)
+        if manager_gift_pending > 0:
+            gift_lines = []
+            for item in manager_gift_cards:
+                card = (item or {}).get("pending_card") if isinstance(item, dict) else None
+                if isinstance(card, dict) and card.get("name"):
+                    gift_lines.append(
+                        f"• **{card.get('name')}** · `{card.get('position')}` · "
+                        f"**{card.get('overall')} OVR** / POT **{card.get('potential')}**"
+                    )
+            if gift_lines:
+                gift_body = (
+                    "\n".join(gift_lines)
+                    + "\nUse **Claim Card Gift(s)** below (also sent via DM when possible)."
+                )
+            else:
+                gift_body = (
+                    f"You have **{manager_gift_pending}** free player card gift(s) waiting. "
+                    "Use **Claim Card Gift(s)** below (cards are prepared on claim)."
+                )
+            embed.add_field(name="🎁 Manager Card Gift", value=gift_body, inline=False)
         view = DevelopmentHubView(
             owner_id,
             show_claim_rewards=pending_count > 0,
             show_legendary_gift=legendary_pending,
+            show_manager_gift=manager_gift_pending > 0,
         )
         await edit_ephemeral_hub_message(interaction, embed, view)
 
@@ -233,6 +268,7 @@ class DevelopmentHubView(discord.ui.View):
         *,
         show_claim_rewards: bool = False,
         show_legendary_gift: bool = False,
+        show_manager_gift: bool = False,
     ) -> None:
         super().__init__(timeout=900)
         self.owner_id = owner_id
@@ -254,6 +290,15 @@ class DevelopmentHubView(discord.ui.View):
             )
             gift_btn.callback = self._claim_legendary_btn
             self.add_item(gift_btn)
+        if show_manager_gift:
+            mgr_btn = discord.ui.Button(
+                style=discord.ButtonStyle.success,
+                label="🎁 Claim Card Gift(s)",
+                custom_id="hub_claim_manager_card_gifts",
+                row=3,
+            )
+            mgr_btn.callback = self._claim_manager_gift_btn
+            self.add_item(mgr_btn)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -324,6 +369,43 @@ class DevelopmentHubView(discord.ui.View):
             await show_hub(interaction, self.owner_id)
         except Exception as exc:
             logger.exception("Failed claiming support legendary from development hub.")
+            set_view_controls_disabled(self, disabled=False)
+            await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
+
+    async def _claim_manager_gift_btn(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        set_view_controls_disabled(self, disabled=True)
+        try:
+            if await manager_card_gifts_pending_count(self.owner_id) <= 0:
+                set_view_controls_disabled(self, disabled=False)
+                await interaction.followup.send(
+                    embed=error_embed("No card gift waiting (already claimed or not eligible)."),
+                    ephemeral=True,
+                )
+                return
+            result = await claim_manager_card_gifts(self.owner_id)
+            cards = result.get("cards") or []
+            lines = []
+            for c in cards:
+                lines.append(
+                    f"**{c.get('name', 'Player')}** (`{c.get('position', '?')}`) — "
+                    f"**{c.get('overall', '?')} OVR** / POT **{c.get('potential', '?')}**"
+                )
+            body = "\n".join(lines) or "Your gift cards are on your club."
+            logger.info(
+                "Manager card gifts claimed via hub by %s → %s card(s)",
+                self.owner_id,
+                len(cards),
+            )
+            await interaction.followup.send(
+                embed=success_embed(
+                    f"Claimed:\n{body}\n\nAssign them in `/squad` (not auto-added to XI)."
+                ),
+                ephemeral=True,
+            )
+            await show_hub(interaction, self.owner_id)
+        except Exception as exc:
+            logger.exception("Failed claiming manager card gifts from development hub.")
             set_view_controls_disabled(self, disabled=False)
             await interaction.followup.send(embed=error_embed(_api_message(exc)), ephemeral=True)
 

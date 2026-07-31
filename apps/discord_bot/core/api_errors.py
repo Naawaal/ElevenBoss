@@ -50,11 +50,14 @@ _FRIENDLY: dict[str, str] = {
     "Not eligible for this reward": "You're not on the thank-you gift list for this update.",
     "Legendary reward already claimed": "You already claimed your **Legendary** thank-you gift.",
     "Club not found — register before claiming": (
-        "Register a club first, then claim your Legendary gift from `/development`."
+        "Register a club first, then claim your gift from `/development`."
     ),
     "Reward not prepared yet — open /development and try again": (
-        "Open `/development` once, then claim your Legendary gift."
+        "Open `/development` once, then claim your gift."
     ),
+    "Manager card gifts are disabled": "This manager card gift campaign is not available right now.",
+    "Invalid gift payload": "Gift prepare failed — try again from `/development`.",
+    "Invalid gift DM status": "Could not update gift DM status.",
     "Not an academy player": "That player is not in your **academy**. Open Manage Academy from `/profile`.",
     "Senior roster is full": (
         "Your **senior roster is full** (soft cap). Sell or release a senior player before promoting."

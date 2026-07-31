@@ -1964,3 +1964,21 @@ Daily cap: 3 transfers/club/UTC day. No coins/energy. No new slash command.
 | `scheduler_jobs.py` | Existing `daily_recovery_job` (unchanged caller) |
 
 Recovery is **instant** (no async drill jobs). +40 fatigue, 0 XP, 0 coins, Basic-drill energy, shares drill caps. Passive = `15 + TG×5`. Bench +15 unchanged. No Store physio SKU. No new slash command.
+
+---
+
+## 36. One-Time Manager Card Gifts (AC-39n / migration 094)
+
+**US-42 citation:** US-42.1 (ownership), US-42.2 (free roster state — not auto-XI), US-42.9 (potential integrity on INSERT).
+
+| Piece | Role |
+|-------|------|
+| packages/gacha/gacha/generator.py | generate_manager_gift_epic, generate_manager_gift_legendary_mid (deterministic seed from campaign+owner+slot) |
+| supabase/migrations/094_manager_card_gifts.sql | manager_card_gifts table + prepare/claim/pending/dm-status RPCs; snapshot existing non-AI managers + special Legendary MID row; forward-replace get_development_hub_state |
+| pps/discord_bot/views/manager_card_gift_claim.py | Persistent DM Claim view + prepare/claim helpers |
+| pps/discord_bot/tasks/manager_card_gift_notifier.py | Startup DMs; dm_status=blocked on Forbidden |
+| development_cog.py | Hub **Claim Card Gift(s)** fallback |
+| main.py | dd_view + on_ready notifier |
+
+Campaign id: manager_card_gifts_20260731. Flag: manager_card_gifts_enabled. One Claim claims all outstanding slots for the manager. Cards land as free roster; manager assigns via /squad.
+

@@ -37,6 +37,7 @@ def test_development_hub_uses_hub_state_rpc_not_scatter_reads() -> None:
     )
     assert "get_development_hub_state" in src
     assert "ensure_pending_legendary" not in src
+    assert "ensure_pending_manager_gifts" not in src
     assert "unclaimed_reward_count" not in src
     assert "support_legendary_pending" not in src
     assert MAX_RT["development_hub"] <= 2

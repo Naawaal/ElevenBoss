@@ -2,6 +2,13 @@
 
 Hey Managers!
 
+## Free manager card gifts
+
+Every currently registered human manager gets a **one-time free Epic player card**. Claim it from the DM **Claim** button after the next bot restart, or from `/development` → **Claim Card Gift(s)** if DMs are blocked.
+
+One manager also receives an extra **Legendary MID (92 OVR)** in the same claim. Cards land on your club as free roster — assign them in `/squad` (they are **not** auto-added to your Starting XI).
+
+---
 ## Snappier hubs & rankings
 
 Under-the-hood speed work so everyday screens hitch less:

@@ -217,6 +217,13 @@ BEGIN
       ('function:support_legendary_reward_pending'),
       ('policy:public.support_legendary_rewards.support_legendary_rewards_select'),
       ('policy:public.support_legendary_rewards.support_legendary_rewards_update'),
+      ('table:public.manager_card_gifts'),
+      ('function:prepare_manager_card_gifts'),
+      ('function:claim_manager_card_gifts'),
+      ('function:manager_card_gifts_pending'),
+      ('function:set_manager_card_gift_dm_status'),
+      ('policy:public.manager_card_gifts.manager_card_gifts_select'),
+      ('policy:public.manager_card_gifts.manager_card_gifts_update'),
       ('function:backfill_injury_eta_fairness'),
       ('column:public.players.intensity_tier'),
       ('function:backfill_tier_fatigue_rebalance'),
@@ -387,6 +394,10 @@ BEGIN
         WHEN 'prepare_support_legendary_reward' THEN to_regprocedure('public.prepare_support_legendary_reward(bigint,jsonb)')
         WHEN 'claim_support_legendary_reward' THEN to_regprocedure('public.claim_support_legendary_reward(bigint)')
         WHEN 'support_legendary_reward_pending' THEN to_regprocedure('public.support_legendary_reward_pending(bigint)')
+        WHEN 'prepare_manager_card_gifts' THEN to_regprocedure('public.prepare_manager_card_gifts(bigint,jsonb)')
+        WHEN 'claim_manager_card_gifts' THEN to_regprocedure('public.claim_manager_card_gifts(bigint)')
+        WHEN 'manager_card_gifts_pending' THEN to_regprocedure('public.manager_card_gifts_pending(bigint)')
+        WHEN 'set_manager_card_gift_dm_status' THEN to_regprocedure('public.set_manager_card_gift_dm_status(bigint,text)')
         WHEN 'backfill_injury_eta_fairness' THEN to_regprocedure('public.backfill_injury_eta_fairness()')
         WHEN 'backfill_tier_fatigue_rebalance' THEN to_regprocedure('public.backfill_tier_fatigue_rebalance()')
         WHEN 'intensity_recovery_days' THEN to_regprocedure('public.intensity_recovery_days(integer,integer,integer)')

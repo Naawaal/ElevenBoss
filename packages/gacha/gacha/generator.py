@@ -1,6 +1,7 @@
 # packages/gacha/gacha/generator.py
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
@@ -80,6 +81,72 @@ def generate_support_legendary(*, rng: random.Random | None = None) -> GachaPlay
     if pot < card.overall:
         pot = card.overall
     # Legendary cap 99 — rebuild so CreatedPlayerCard integrity always runs
+    data = card.model_dump(by_alias=True)
+    data["potential"] = pot
+    data["base_potential"] = pot
+    return _from_created(CreatedPlayerCard.model_validate(data))
+
+
+MANAGER_CARD_GIFTS_CAMPAIGN = "manager_card_gifts_20260731"
+_SPECIAL_LEGENDARY_MID_OWNER = 976054227459776582
+
+
+def manager_gift_rng(campaign_id: str, owner_id: int, gift_slot: str) -> random.Random:
+    """Stable RNG so prepare/restart cannot reroll a manager's gift."""
+    digest = hashlib.sha256(
+        f"{campaign_id}:{int(owner_id)}:{gift_slot}".encode("utf-8")
+    ).hexdigest()
+    return random.Random(int(digest[:16], 16))
+
+
+def generate_manager_gift_epic(
+    *,
+    owner_id: int,
+    campaign_id: str = MANAGER_CARD_GIFTS_CAMPAIGN,
+    rng: random.Random | None = None,
+) -> GachaPlayer:
+    """One-time Epic gift for snapshotted managers (OVR 75–84)."""
+    r = rng or manager_gift_rng(campaign_id, owner_id, "epic")
+    names = _load_names()
+    position = r.choice(["GK", "DEF", "MID", "FWD"])
+    lo, hi = RARITY_RATING_RANGES["Epic"]
+    target = r.randint(lo, hi)
+    first_name = r.choice(names["first"])
+    last_name = r.choice(names["last"])
+    card = create_player_card(
+        position=position,
+        rarity="Epic",
+        target_ovr=target,
+        first_name=first_name,
+        last_name=last_name,
+        rng=r,
+    )
+    return _from_created(card)
+
+
+def generate_manager_gift_legendary_mid(
+    *,
+    owner_id: int = _SPECIAL_LEGENDARY_MID_OWNER,
+    campaign_id: str = MANAGER_CARD_GIFTS_CAMPAIGN,
+    rng: random.Random | None = None,
+) -> GachaPlayer:
+    """Special Legendary MID fixed at exactly 92 OVR (POT 92–99)."""
+    r = rng or manager_gift_rng(campaign_id, owner_id, "legendary_mid")
+    names = _load_names()
+    first_name = r.choice(names["first"])
+    last_name = r.choice(names["last"])
+    age = r.randint(18, 26)
+    card = create_player_card(
+        position="MID",
+        rarity="Legendary",
+        target_ovr=92,
+        first_name=first_name,
+        last_name=last_name,
+        age=age,
+        rng=r,
+    )
+    pot = max(92, int(card.potential), int(card.overall))
+    pot = min(99, pot)
     data = card.model_dump(by_alias=True)
     data["potential"] = pot
     data["base_potential"] = pot

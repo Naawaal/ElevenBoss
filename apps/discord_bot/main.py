@@ -190,8 +190,10 @@ class ElevenBossBot(commands.Bot):
 
         from apps.discord_bot.views.level_reward_claim import ClaimAllLevelRewardsView
         from apps.discord_bot.views.support_legendary_claim import ClaimSupportLegendaryView
+        from apps.discord_bot.views.manager_card_gift_claim import ClaimManagerCardGiftView
         self.add_view(ClaimAllLevelRewardsView())
         self.add_view(ClaimSupportLegendaryView())
+        self.add_view(ClaimManagerCardGiftView())
 
         @self.tree.error
         async def on_app_command_error(
@@ -361,6 +363,14 @@ class ElevenBossBot(commands.Bot):
             await notify_support_legendary_rewards(self)
         except Exception as e:
             logger.error(f"Support legendary notification failed on startup: {e}", exc_info=True)
+
+        try:
+            from apps.discord_bot.tasks.manager_card_gift_notifier import (
+                notify_manager_card_gifts,
+            )
+            await notify_manager_card_gifts(self)
+        except Exception as e:
+            logger.error(f"Manager card gift notification failed on startup: {e}", exc_info=True)
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
         # US-42.1: pause seasons only — never delete players/clubs on bot remove
