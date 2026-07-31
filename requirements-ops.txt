@@ -1,5 +1,4 @@
-"""Ops / migration tooling — not required for the Discord bot runtime."""
-
+# Ops / migration tooling — not required for the Discord bot runtime.
 psycopg[binary]>=3.1
 asyncpg>=0.29
 python-dotenv>=1.0

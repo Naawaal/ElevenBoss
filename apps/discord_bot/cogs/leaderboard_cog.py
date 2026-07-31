@@ -75,7 +75,7 @@ class LeaderboardCog(commands.Cog):
                 page=0,
                 guild_id=interaction.guild_id,
             )
-            embed, unclaimed = await asyncio.gather(
+            embed_pack, unclaimed = await asyncio.gather(
                 self.build_embed(
                     db,
                     tab=TAB_DIVISION,
@@ -86,9 +86,9 @@ class LeaderboardCog(commands.Cog):
                 ),
                 self.unclaimed_tier_for(db, player),
             )
-            resolved = getattr(embed, "_eb_page", 0)
-            view.page = int(resolved)
-            view._total_pages = int(getattr(embed, "_eb_total_pages", 1))
+            embed, resolved_page, total_pages = embed_pack
+            view.page = int(resolved_page)
+            view._total_pages = int(total_pages)
             view._sync_pagination()
             view.set_claim_state(unclaimed)
             msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
@@ -103,16 +103,19 @@ class LeaderboardCog(commands.Cog):
         division: str,
         page: int | None,
         guild_id: int | None,
-    ) -> discord.Embed:
+    ) -> tuple[discord.Embed, int, int]:
+        """Return (embed, resolved_page, total_pages). Page meta is not stored on Embed
+        (discord.py Embed uses slots — arbitrary attrs raise AttributeError)."""
         if tab == TAB_DIVISION:
             return await self._division_embed(db, viewer, division, page)
         if tab == TAB_GLOBAL:
             return await self._global_embed(db, viewer, page)
-        return await self._season_embed(db, viewer, guild_id)
+        embed = await self._season_embed(db, viewer, guild_id)
+        return embed, 0, 1
 
     async def _division_embed(
         self, db, viewer: dict, division: str, page: int | None
-    ) -> discord.Embed:
+    ) -> tuple[discord.Embed, int, int]:
         from apps.discord_bot.core import perf_signals
         from apps.discord_bot.core.display_cache import get_or_set_leaderboard_first
 
@@ -196,12 +199,9 @@ class LeaderboardCog(commands.Cog):
         if total_pages > 1:
             footer = f"Page {page + 1}/{total_pages} · {footer}"
         embed.set_footer(text=footer)
-        # Stash resolved page for the view (auto-seek may change page 0).
-        embed._eb_page = page  # type: ignore[attr-defined]
-        embed._eb_total_pages = total_pages  # type: ignore[attr-defined]
-        return embed
+        return embed, page, total_pages
 
-    async def _global_embed(self, db, viewer: dict, page: int | None) -> discord.Embed:
+    async def _global_embed(self, db, viewer: dict, page: int | None) -> tuple[discord.Embed, int, int]:
         from apps.discord_bot.core import perf_signals
 
         async def _rpc():
@@ -223,7 +223,7 @@ class LeaderboardCog(commands.Cog):
         viewer_id = viewer["discord_id"]
         user_lp = int(viewer.get("global_lp", 0))
         viewer_rank = int(payload.get("viewer_rank") or 0)
-        page = int(payload.get("page") or page)
+        page = int(payload.get("page") or page or 0)
         total_pages = int(payload.get("total_pages") or 1)
 
         lines: list[str] = []
@@ -256,9 +256,7 @@ class LeaderboardCog(commands.Cog):
         )
         footer = f"Page {page + 1}/{total_pages}" if total_pages > 1 else "Cross-server ranking"
         embed.set_footer(text=footer)
-        embed._eb_page = page  # type: ignore[attr-defined]
-        embed._eb_total_pages = total_pages  # type: ignore[attr-defined]
-        return embed
+        return embed, page, total_pages
 
     async def _season_embed(self, db, viewer: dict, guild_id: int | None) -> discord.Embed:
         embed = discord.Embed(
@@ -495,7 +493,7 @@ class LeaderboardView(discord.ui.View):
             page=0,
             guild_id=guild_id,
         )
-        embed = await self.cog.build_embed(
+        embed, resolved_page, total_pages = await self.cog.build_embed(
             db,
             tab=tab,
             viewer=viewer,
@@ -503,8 +501,8 @@ class LeaderboardView(discord.ui.View):
             page=None if tab in (TAB_DIVISION, TAB_GLOBAL) else 0,
             guild_id=guild_id,
         )
-        new_view.page = int(getattr(embed, "_eb_page", 0))
-        new_view._total_pages = int(getattr(embed, "_eb_total_pages", 1))
+        new_view.page = int(resolved_page)
+        new_view._total_pages = int(total_pages)
         new_view._sync_pagination()
         unclaimed = await self.cog.unclaimed_tier_for(db, viewer)
         new_view.set_claim_state(unclaimed)
@@ -520,7 +518,7 @@ class LeaderboardView(discord.ui.View):
             "discord_id", self.owner_id
         ).maybe_single().execute()
         viewer = player_res.data if player_res else {}
-        embed = await self.cog.build_embed(
+        embed, resolved_page, total_pages = await self.cog.build_embed(
             db,
             tab=self.tab,
             viewer=viewer,
@@ -528,8 +526,8 @@ class LeaderboardView(discord.ui.View):
             page=self.page,
             guild_id=guild_id,
         )
-        self.page = int(getattr(embed, "_eb_page", self.page))
-        self._total_pages = int(getattr(embed, "_eb_total_pages", 1))
+        self.page = int(resolved_page)
+        self._total_pages = int(total_pages)
         self._sync_pagination()
         unclaimed = await self.cog.unclaimed_tier_for(db, viewer)
         set_view_controls_disabled(self, disabled=False)

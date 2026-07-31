@@ -1,5 +1,4 @@
-"""Developer / CI test dependencies (optional install: pip install -r requirements-dev.txt)."""
-
+# Developer / CI test dependencies (optional: pip install -r requirements-dev.txt).
 -r requirements.txt
 pytest>=8.0
 pytest-asyncio>=0.23
