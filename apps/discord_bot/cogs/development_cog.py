@@ -1,6 +1,7 @@
 # apps/discord_bot/cogs/development_cog.py
 from __future__ import annotations
 import asyncio
+import json
 import logging
 import os
 from datetime import date, datetime, timezone
@@ -39,7 +40,6 @@ from player_engine import (
     evolution_unlocked,
     format_cooldown_remaining,
     fusion_xp_reward,
-    is_mentor_target,
     level_from_xp,
     mentor_max_units,
     passive_recovery_amount,
@@ -57,7 +57,6 @@ from apps.discord_bot.middleware.match_lock import assert_not_in_match
 from apps.discord_bot.views.level_reward_claim import claim_level_rewards, unclaimed_reward_count
 from apps.discord_bot.views.support_legendary_claim import (
     claim_support_legendary,
-    ensure_pending_legendary,
     support_legendary_pending,
 )
 from apps.discord_bot.core.economy_rpc import (
@@ -147,32 +146,50 @@ async def show_hub(interaction: discord.Interaction, owner_id: int):
         return
     with perf_signals.hub_timer("development_hub") as _perf:
         db = await get_client()
-        player_res = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
-        player = player_res.data if player_res else None
-
+        # Energy sync stays an explicit mutation; hub-state RPC is read-only (no legendary ensure).
+        perf_signals.inc_round_trip()
         energy_row = await sync_action_energy(db, owner_id)
         ae = energy_row.get("action_energy", 0)
         max_e = energy_row.get("max_energy", 120)
         regen = float(energy_row.get("regen_per_min") or 0) or None
+
+        perf_signals.inc_round_trip()
+        hub_res = await db.rpc(
+            "get_development_hub_state", {"p_owner_id": owner_id}
+        ).execute()
+        hub = hub_res.data
+        if isinstance(hub, list) and hub:
+            hub = hub[0]
+        hub = hub or {}
+        if not hub.get("ok", True) and hub.get("reason") == "player_not_found":
+            await interaction.followup.send(embed=error_embed("Player not found."), ephemeral=True)
+            return
+
+        # Prefer post-sync energy; fall back to hub snapshot if sync payload thin.
+        ae = int(energy_row.get("action_energy", hub.get("action_energy", ae)) or ae)
+        max_e = int(energy_row.get("max_energy", hub.get("max_energy", max_e)) or max_e)
         energy_line = (
             format_action_energy_status(ae, max_e, regen_per_min=regen)
             if regen
             else await format_action_energy_status_async(db, ae, max_e)
         )
 
-        pending_count = await unclaimed_reward_count(owner_id)
-        legendary_pending = await support_legendary_pending(owner_id)
-        legendary_card = None
-        if legendary_pending:
+        pending_count = int(hub.get("pending_reward_count") or 0)
+        legendary_pending = bool(hub.get("legendary_pending"))
+        legendary_card = hub.get("legendary_pending_card")
+        if isinstance(legendary_card, str):
             try:
-                legendary_card = await ensure_pending_legendary(owner_id)
+                legendary_card = json.loads(legendary_card)
             except Exception:
-                logger.exception("Failed preparing support legendary for hub %s", owner_id)
+                legendary_card = None
+        if not isinstance(legendary_card, dict):
+            legendary_card = None
 
+        club_name = hub.get("club_name") or "your"
         embed = discord.Embed(
             title="🏋️‍♂️ Development Center",
             description=(
-                f"Welcome to **{player['club_name']}** development center. "
+                f"Welcome to **{club_name}** development center. "
                 f"Train stats, **Recover** fitness, fuse cards, run evolutions, or allocate skill points.\n\n"
                 f"{energy_line}"
             ),
@@ -187,20 +204,23 @@ async def show_hub(interaction: discord.Interaction, owner_id: int):
                 ),
                 inline=False,
             )
-        if legendary_card:
-            embed.add_field(
-                name="🎁 Legendary Thank-You Gift",
-                value=(
+        if legendary_pending:
+            if legendary_card:
+                gift_body = (
                     f"**{legendary_card.get('name')}** · `{legendary_card.get('position')}` · "
                     f"**{legendary_card.get('overall')} OVR** / POT **{legendary_card.get('potential')}**\n"
                     "Use **Claim Legendary Gift** below (also sent via DM when possible)."
-                ),
-                inline=False,
-            )
+                )
+            else:
+                gift_body = (
+                    "A Legendary thank-you gift is ready. "
+                    "Use **Claim Legendary Gift** below (card is prepared on claim)."
+                )
+            embed.add_field(name="🎁 Legendary Thank-You Gift", value=gift_body, inline=False)
         view = DevelopmentHubView(
             owner_id,
             show_claim_rewards=pending_count > 0,
-            show_legendary_gift=legendary_card is not None,
+            show_legendary_gift=legendary_pending,
         )
         await edit_ephemeral_hub_message(interaction, embed, view)
 
@@ -1677,22 +1697,24 @@ async def show_skills_menu(interaction: discord.Interaction, owner_id: int, pres
     if not await safe_defer(interaction, ephemeral=True):
         return
     db = await get_client()
-    roster_res = await db.table("player_cards").select("id, name, overall, in_academy").eq("owner_id", owner_id).order("overall", desc=True).execute()
-    roster = [c for c in (roster_res.data or []) if not c.get("in_academy")]
+    payload: dict = {"p_owner_id": owner_id}
+    if preselected_card_id:
+        payload["p_card_id"] = preselected_card_id
+    hub_res = await db.rpc("get_skill_allocation_hub", payload).execute()
+    hub = hub_res.data
+    if isinstance(hub, list) and hub:
+        hub = hub[0]
+    hub = hub or {}
+    roster = list(hub.get("roster") or [])
+    card = hub.get("card")
+    if not isinstance(card, dict):
+        card = None
 
     if not roster:
         embed = discord.Embed(title="⭐ Skill Allocation", description="No senior roster players found.", color=0x00FF87)
         view = SkillsSubView(owner_id, None, roster)
         await edit_ephemeral_hub_message(interaction, embed, view)
         return
-
-    target_card_id = preselected_card_id or roster[0]["id"]
-    card_res = await db.table("player_cards").select("*").eq("id", target_card_id).maybe_single().execute()
-    card = card_res.data if card_res else None
-    if card and card.get("in_academy"):
-        target_card_id = roster[0]["id"]
-        card_res = await db.table("player_cards").select("*").eq("id", target_card_id).maybe_single().execute()
-        card = card_res.data if card_res else None
 
     skill_pts = int((card or {}).get("skill_points", 0) or 0)
     overall = int((card or {}).get("overall", 0) or 0)
@@ -1848,23 +1870,15 @@ class SkillPointButton(discord.ui.Button):
 # --- 3b. MENTOR TRANSFUSION ---
 
 async def _load_mentor_targets(db, owner_id: int, source_id: str) -> list[dict]:
-    res = await db.table("player_cards").select(
-        "id, name, overall, potential, level, xp, skill_points, in_academy"
-    ).eq("owner_id", owner_id).order("level").execute()
-    rows = res.data or []
-    listed_ids = await listed_card_ids(db)
-    return [
-        r for r in rows
-        if not r.get("in_academy")
-        and str(r["id"]) not in listed_ids
-        and is_mentor_target(
-            overall=int(r.get("overall") or 0),
-            potential=int(r.get("potential") or 0),
-            level=int(r.get("level") or 1),
-            source_id=source_id,
-            target_id=str(r["id"]),
-        )
-    ]
+    res = await db.rpc(
+        "get_mentor_targets",
+        {"p_owner_id": owner_id, "p_source_id": source_id},
+    ).execute()
+    data = res.data
+    if isinstance(data, list) and data:
+        data = data[0]
+    data = data or {}
+    return list(data.get("targets") or [])
 
 
 async def show_mentor_target_menu(

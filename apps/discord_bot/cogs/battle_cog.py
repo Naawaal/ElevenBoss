@@ -1412,6 +1412,16 @@ async def run_league_match_simulation(
             from apps.discord_bot.cogs.league_cog import fetch_standings
             fixtures_res = await db.table("league_fixtures").select("*").eq("season_id", handler.season_id).execute()
             all_fixtures = fixtures_res.data or []
+            try:
+                from apps.discord_bot.core.display_cache import (
+                    invalidate_leaderboard_first,
+                    invalidate_standings,
+                )
+
+                invalidate_standings(handler.season_id)
+                invalidate_leaderboard_first()
+            except Exception:
+                pass
             standings = await fetch_standings(db, handler.season_id)
             table_text = format_standings_table(standings, all_fixtures, limit=10)
             existing_id = getattr(handler, "journal_standings_msg_id", None) or getattr(handler, "live_table_msg_id", None)

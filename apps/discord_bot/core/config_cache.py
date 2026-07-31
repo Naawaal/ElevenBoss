@@ -1,23 +1,18 @@
 # apps/discord_bot/core/config_cache.py
-"""Process-local TTL cache for game_config keys (US-43 Phase 1).
+"""Process-local TTL cache for game_config keys (US-43 Phase 1 / 050 US6).
 
-ponytail: single-process dict — multi-instance must use shared/active invalidation
-for economy-priced keys (FR-012). Upgrade path: shared backend behind same API
-(``get``/``set``/``invalidate``) without changing call sites — e.g. Redis adapter
-selected at bot startup when multi-instance is enabled.
+Thin adapter over ``CacheBackend`` (default: memory). Multi-instance needs
+shared/active invalidation for economy-priced keys (FR-012).
 """
 from __future__ import annotations
 
-import time
-from threading import Lock
 from typing import Any
+
+from apps.discord_bot.core.cache import default_cache
 
 DEFAULT_TTL_SECONDS = 300.0
 
-_lock = Lock()
-_store: dict[str, tuple[Any, float]] = {}
-_hits = 0
-_misses = 0
+_backend = default_cache()
 
 
 def cache_key(config_key: str) -> str:
@@ -26,51 +21,33 @@ def cache_key(config_key: str) -> str:
 
 def get(key: str) -> Any | None:
     """Return cached value or None on miss/expiry. Key should already be namespaced."""
-    global _hits, _misses
-    now = time.monotonic()
-    with _lock:
-        entry = _store.get(key)
-        if entry is None:
-            _misses += 1
-            return None
-        value, expires_at = entry
-        if expires_at <= now:
-            del _store[key]
-            _misses += 1
-            return None
-        _hits += 1
-        return value
+    return _backend.get(key)
 
 
 def set(key: str, value: Any, ttl_seconds: float = DEFAULT_TTL_SECONDS) -> None:
-    with _lock:
-        _store[key] = (value, time.monotonic() + max(0.0, float(ttl_seconds)))
+    _backend.set(key, value, ttl_seconds)
 
 
 def invalidate(key: str) -> None:
-    with _lock:
-        _store.pop(key, None)
+    _backend.delete(key)
 
 
 def invalidate_prefix(prefix: str) -> None:
-    with _lock:
-        doomed = [k for k in _store if k.startswith(prefix)]
-        for k in doomed:
-            del _store[k]
+    _backend.delete_prefix(prefix)
 
 
 def clear() -> None:
-    with _lock:
-        _store.clear()
+    _backend.clear()
 
 
 def stats() -> dict[str, int]:
-    with _lock:
-        return {"hits": _hits, "misses": _misses, "size": len(_store)}
+    raw = _backend.stats()
+    return {
+        "hits": int(raw["hits"]),
+        "misses": int(raw["misses"]),
+        "size": int(raw.get("size", raw.get("entries", 0))),
+    }
 
 
 def reset_stats() -> None:
-    global _hits, _misses
-    with _lock:
-        _hits = 0
-        _misses = 0
+    _backend.reset_stats()

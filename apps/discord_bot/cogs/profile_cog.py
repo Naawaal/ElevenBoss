@@ -10,6 +10,7 @@ from discord.ext import commands
 from leagues import tier_progress_label
 
 from apps.discord_bot.core.competitive_display import profile_leaderboard_hint
+from apps.discord_bot.core.display_cache import get_or_set_profile_display
 from apps.discord_bot.core.division_cache import load_global_divisions
 from apps.discord_bot.core.economy_rpc import format_action_energy_status_async, sync_action_energy
 from apps.discord_bot.core import perf_signals
@@ -50,6 +51,7 @@ async def show_profile(interaction: discord.Interaction, owner_id: int) -> None:
     """Single refresh entry for `/profile` and Back-to-Profile paths (US-44 HP-4)."""
     with perf_signals.hub_timer("profile"):
         db = await get_client()
+        # Live player row for balances — never authorize spends from display cache.
         result = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
         player = result.data if result else None
         if not player:
@@ -59,7 +61,6 @@ async def show_profile(interaction: discord.Interaction, owner_id: int) -> None:
             )
             return
 
-        # Energy sync first (mutates); then parallel live reads + cached divisions
         energy_row = await sync_action_energy(db, owner_id)
         curr_energy = energy_row.get(
             "action_energy", player.get("action_energy", player.get("energy", 0))
@@ -84,12 +85,24 @@ async def show_profile(interaction: discord.Interaction, owner_id: int) -> None:
             ).order("created_at", desc=True).limit(5).execute()
             return hist_res.data or []
 
-        (patients, hospital_unavailable), divisions, history, energy_status = await asyncio.gather(
-            _hospital(),
+        async def _side_bundle() -> dict:
+            (patients, hospital_unavailable), history = await asyncio.gather(
+                _hospital(), _history()
+            )
+            return {
+                "patients": patients,
+                "hospital_unavailable": hospital_unavailable,
+                "history": history,
+            }
+
+        side, divisions, energy_status = await asyncio.gather(
+            get_or_set_profile_display(owner_id, _side_bundle),
             load_global_divisions(db),
-            _history(),
             format_action_energy_status_async(db, curr_energy, max_energy),
         )
+        patients = side.get("patients") or []
+        hospital_unavailable = bool(side.get("hospital_unavailable"))
+        history = side.get("history") or []
 
         gems = int(player.get("tokens", 0))
         user_lp = player.get("global_lp", 0)

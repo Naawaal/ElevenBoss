@@ -504,34 +504,40 @@ async def show_search_market(interaction: discord.Interaction, owner_id: int) ->
 async def _board_listings(
     position: str, ovr: str, age: str, pot: str, *, sort_mode: str = DEFAULT_SORT
 ) -> list[dict]:
-    from datetime import datetime, timezone
+    from apps.discord_bot.core import perf_signals
 
+    def _band(key: str, label: str) -> tuple[int | None, int | None]:
+        bounds = BANDS[key].get(label)
+        if not bounds:
+            return None, None
+        return int(bounds[0]), int(bounds[1])
+
+    min_ovr, max_ovr = _band("ovr", ovr)
+    min_age, max_age = _band("age", age)
+    min_pot, max_pot = _band("pot", pot)
     db = await get_client()
-    # ponytail: PostgREST has no reliable "now()" literal — filter expiry in app; upgrade path: RPC browse.
-    now_iso = datetime.now(timezone.utc).isoformat()
-    result = await db.table("transfer_listings").select(
-        "id, seller_id, price_coins, created_at, expires_at, "
-        "player_cards(id, name, position, overall, potential, rarity, date_of_birth, owner_id)"
-    ).eq("status", "active").gt("expires_at", now_iso).order("created_at", desc=True).limit(50).execute()
-    rows: list[dict] = []
-    for listing in result.data or []:
-        card = listing.get("player_cards") or {}
-        card_age = effective_card_age(card)
-        if position != "Any" and card.get("position") != position:
-            continue
-        if any(
-            bounds and not (bounds[0] <= int(value or 0) <= bounds[1])
-            for bounds, value in (
-                (BANDS["ovr"][ovr], card.get("overall")),
-                (BANDS["age"][age], card_age),
-                (BANDS["pot"][pot], card.get("potential")),
-            )
-        ):
-            continue
-        listing["_age"] = card_age
-        rows.append(listing)
-    sorted_rows = sort_transfer_listings(rows, sort_mode, fair_value_for_row=_fair_for_listing_row)
-    return sorted_rows
+    perf_signals.inc_round_trip()
+    result = await db.rpc(
+        "browse_transfer_market",
+        {
+            "p_position": position,
+            "p_min_ovr": min_ovr,
+            "p_max_ovr": max_ovr,
+            "p_min_age": min_age,
+            "p_max_age": max_age,
+            "p_min_pot": min_pot,
+            "p_max_pot": max_pot,
+            "p_sort_mode": sort_mode if sort_mode in SORT_MODES else DEFAULT_SORT,
+            "p_limit": 25,
+        },
+    ).execute()
+    payload = result.data
+    if isinstance(payload, list) and payload:
+        payload = payload[0]
+    payload = payload or {}
+    rows = payload.get("listings") or []
+    # Server already filtered/sorted; keep fair-value helper metadata only.
+    return list(rows)
 
 
 async def show_transfer_board(

@@ -61,6 +61,11 @@ async def with_db_retry(
             delay = base_delay_s * (2 ** (attempt - 1))
             delay *= 0.5 + random.random()  # jitter
             perf_signals.inc_retry()
+            text = str(exc)
+            if "429" in text:
+                perf_signals.inc_status(429)
+            elif any(c in text for c in ("502", "503", "504")):
+                perf_signals.inc_status(503)
             logger.warning(
                 "perf.retry label=%s attempt=%s/%s delay=%.2fs err=%s",
                 label,

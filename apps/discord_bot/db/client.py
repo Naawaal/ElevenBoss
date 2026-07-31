@@ -31,11 +31,18 @@ async def get_client() -> AsyncClient:
         # `RemoteProtocolError: ConnectionTerminated` under asyncio.gather / startup
         # recovery storms. HTTP/1.1 + transport retries is the stable path until
         # httpcore auto-retries ConnectionTerminated (encode/httpcore#683).
+        # Defaults 20/5 — do not raise before 050 Phase 2 round-trip cuts (load-test first).
+        max_conn = int(os.environ.get("SUPABASE_HTTP_MAX_CONNECTIONS", "20"))
+        keepalive = int(os.environ.get("SUPABASE_HTTP_KEEPALIVE_CONNECTIONS", "5"))
+        timeout_s = float(os.environ.get("SUPABASE_HTTP_TIMEOUT_SECONDS", "60"))
         _http_client = httpx.AsyncClient(
             http2=False,
-            timeout=60.0,
+            timeout=timeout_s,
             transport=httpx.AsyncHTTPTransport(retries=3),
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=5),
+            limits=httpx.Limits(
+                max_connections=max_conn,
+                max_keepalive_connections=keepalive,
+            ),
         )
         _supabase_client = await acreate_client(
             url,

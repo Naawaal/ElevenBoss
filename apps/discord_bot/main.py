@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import os
 import logging
-import uuid
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -143,6 +142,10 @@ async def _run_bot_with_login_retry(token: str) -> None:
 # Load env variables
 load_dotenv()
 
+from apps.discord_bot.core.sentry_setup import init_sentry
+
+init_sentry()
+
 # Set up bot intents (no Message Content Intent required)
 intents = discord.Intents.default()
 intents.members = True  # Required to resolve user metadata / DM
@@ -150,7 +153,9 @@ intents.members = True  # Required to resolve user metadata / DM
 class ElevenBossBot(commands.Bot):
     def __init__(self) -> None:
         super().__init__(command_prefix="!", intents=intents)
-        self._instance_id = uuid.uuid4().hex[:8]
+        from apps.discord_bot.core.instance_id import get_instance_id
+
+        self._instance_id = get_instance_id()
         self._setup_hook_count = 0
         self._ready_count = 0
         self._commands_synced = False

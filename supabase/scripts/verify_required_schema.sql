@@ -260,6 +260,14 @@ BEGIN
       ('function:effective_card_potential'),
       ('function:assert_card_potential_integrity'),
       ('function:count_potential_integrity_anomalies'),
+      ('function:get_division_leaderboard_page'),
+      ('function:get_global_leaderboard_page'),
+      ('function:browse_transfer_market'),
+      ('function:get_market_sell_eligible_cards'),
+      ('function:get_marketplace_hub_state'),
+      ('function:get_development_hub_state'),
+      ('function:get_skill_allocation_hub'),
+      ('function:get_mentor_targets'),
       ('table:public.potential_cap_repair_audit'),
       ('policy:public.potential_cap_repair_audit.potential_cap_repair_audit_select'),
       ('policy:public.potential_cap_repair_audit.potential_cap_repair_audit_insert'),
@@ -396,6 +404,14 @@ BEGIN
         WHEN 'effective_card_potential' THEN to_regprocedure('public.effective_card_potential(text,integer)')
         WHEN 'assert_card_potential_integrity' THEN to_regprocedure('public.assert_card_potential_integrity(text,integer,integer,integer)')
         WHEN 'count_potential_integrity_anomalies' THEN to_regprocedure('public.count_potential_integrity_anomalies()')
+        WHEN 'get_division_leaderboard_page' THEN to_regprocedure('public.get_division_leaderboard_page(text,bigint,integer,integer)')
+        WHEN 'get_global_leaderboard_page' THEN to_regprocedure('public.get_global_leaderboard_page(bigint,integer,integer)')
+        WHEN 'browse_transfer_market' THEN to_regprocedure('public.browse_transfer_market(text,integer,integer,integer,integer,integer,integer,text,integer)')
+        WHEN 'get_market_sell_eligible_cards' THEN to_regprocedure('public.get_market_sell_eligible_cards(bigint)')
+        WHEN 'get_marketplace_hub_state' THEN to_regprocedure('public.get_marketplace_hub_state(bigint)')
+        WHEN 'get_development_hub_state' THEN to_regprocedure('public.get_development_hub_state(bigint)')
+        WHEN 'get_skill_allocation_hub' THEN to_regprocedure('public.get_skill_allocation_hub(bigint,uuid)')
+        WHEN 'get_mentor_targets' THEN to_regprocedure('public.get_mentor_targets(bigint,uuid)')
         ELSE NULL
       END IS NOT NULL
     )

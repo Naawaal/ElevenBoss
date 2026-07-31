@@ -19,6 +19,10 @@ BASELINE_EST = {
     "HP-4": ("profile", "apps/discord_bot/cogs/profile_cog.py", "show_profile", 5),
     "HP-5": ("squad", "apps/discord_bot/cogs/squad_cog.py", "fetch_squad_data", 5),
     "HP-6": ("league_hub", "apps/discord_bot/cogs/league_cog.py", "league_hub", 8),
+    "HP-7": ("marketplace_hub", "apps/discord_bot/cogs/marketplace_cog.py", "show_marketplace_hub", 3),
+    "HP-8": ("sell_menu", "apps/discord_bot/cogs/marketplace_cog.py", "show_sell_menu", 5),
+    "HP-9": ("leaderboard_div", "apps/discord_bot/cogs/leaderboard_cog.py", "_division_embed", 1),
+    "HP-10": ("transfer_board", "apps/discord_bot/views/marketplace_transfer.py", "_board_listings", 1),
 }
 
 

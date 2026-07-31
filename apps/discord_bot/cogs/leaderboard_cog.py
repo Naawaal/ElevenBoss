@@ -21,19 +21,15 @@ from apps.discord_bot.embeds.common_embeds import error_embed
 from apps.discord_bot.middleware.guard import ensure_registered
 from apps.discord_bot.core.scheduler_jobs import DIVISIONS
 from leagues import (
-    LeagueEntry,
-    compute_promotions_relegations,
     format_rank_line,
-    format_standings_table,
     highest_unclaimed_tier,
     iso_week_utc,
-    paginate_rows,
     promotion_zone_labels,
     tier_progress_label,
     tie_breaker_footer,
-    viewer_page_index,
     weekly_reset_countdown,
     zone_suffix,
+    format_standings_table,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,13 +66,13 @@ class LeaderboardCog(commands.Cog):
                 return
 
             division = player.get("division", "Grassroots")
-            page = 0
+            page = None  # NULL → RPC seeks to viewer page
             view = LeaderboardView(
                 self,
                 owner_id=interaction.user.id,
                 tab=TAB_DIVISION,
                 division=division,
-                page=page,
+                page=0,
                 guild_id=interaction.guild_id,
             )
             embed, unclaimed = await asyncio.gather(
@@ -90,6 +86,10 @@ class LeaderboardCog(commands.Cog):
                 ),
                 self.unclaimed_tier_for(db, player),
             )
+            resolved = getattr(embed, "_eb_page", 0)
+            view.page = int(resolved)
+            view._total_pages = int(getattr(embed, "_eb_total_pages", 1))
+            view._sync_pagination()
             view.set_claim_state(unclaimed)
             msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
             view.message = msg
@@ -101,7 +101,7 @@ class LeaderboardCog(commands.Cog):
         tab: str,
         viewer: dict,
         division: str,
-        page: int,
+        page: int | None,
         guild_id: int | None,
     ) -> discord.Embed:
         if tab == TAB_DIVISION:
@@ -110,41 +110,50 @@ class LeaderboardCog(commands.Cog):
             return await self._global_embed(db, viewer, page)
         return await self._season_embed(db, viewer, guild_id)
 
-    async def _division_embed(self, db, viewer: dict, division: str, page: int) -> discord.Embed:
-        res = await db.table("players").select(
-            "discord_id, club_name, league_points, goal_difference"
-        ).eq("division", division).eq("is_ai", False).order(
-            "league_points", desc=True
-        ).order("goal_difference", desc=True).execute()
-        rows = res.data or []
-        viewer_id = viewer["discord_id"]
-        viewer_rank = 0
-        for idx, row in enumerate(rows, 1):
-            if row["discord_id"] == viewer_id:
-                viewer_rank = idx
-                break
+    async def _division_embed(
+        self, db, viewer: dict, division: str, page: int | None
+    ) -> discord.Embed:
+        from apps.discord_bot.core import perf_signals
+        from apps.discord_bot.core.display_cache import get_or_set_leaderboard_first
 
-        if viewer_rank and page == 0:
-            page = viewer_page_index(viewer_rank)
+        async def _fetch() -> dict:
+            perf_signals.inc_round_trip()
+            params: dict = {
+                "p_division": division,
+                "p_viewer_id": viewer["discord_id"],
+                "p_page_size": 10,
+            }
+            if page is not None:
+                params["p_page"] = int(page)
+            res = await db.rpc("get_division_leaderboard_page", params).execute()
+            payload = res.data
+            if isinstance(payload, list) and payload:
+                payload = payload[0]
+            return payload or {}
 
-        entries = [
-            LeagueEntry(
-                discord_id=r["discord_id"],
-                league_points=r["league_points"],
-                goal_difference=r["goal_difference"],
+        # First/seek page only — deeper pages stay live
+        if page is None or int(page) == 0:
+            payload = await get_or_set_leaderboard_first(
+                "division",
+                _fetch,
+                division=division,
+                viewer_id=int(viewer["discord_id"]),
             )
-            for r in rows
-        ]
-        promo_res = compute_promotions_relegations(entries) if entries else None
-        n_promo = len(promo_res.promoted_ids) if promo_res else 0
-        n_releg = len(promo_res.relegated_ids) if promo_res else 0
+        else:
+            payload = await _fetch()
+        rows = payload.get("rows") or []
+        viewer_id = viewer["discord_id"]
+        viewer_rank = int(payload.get("viewer_rank") or 0)
+        total = int(payload.get("total_count") or 0)
+        n_promo = int(payload.get("promotion_count") or 0)
+        n_releg = int(payload.get("relegation_count") or 0)
+        page = int(payload.get("page") or page or 0)
+        total_pages = int(payload.get("total_pages") or 1)
 
-        page_rows, total_pages, page = paginate_rows(rows, page)
         lines: list[str] = []
-        base_pos = page * 10
-        for i, row in enumerate(page_rows):
-            pos = base_pos + i + 1
-            zone = zone_suffix(pos, len(rows), n_promo, n_releg)
+        for row in rows:
+            pos = int(row.get("rank_pos") or 0)
+            zone = zone_suffix(pos, total, n_promo, n_releg)
             lines.append(
                 format_rank_line(
                     pos,
@@ -157,7 +166,7 @@ class LeaderboardCog(commands.Cog):
                 )
             )
 
-        promo_rng, releg_rng = promotion_zone_labels(len(rows))
+        promo_rng, releg_rng = promotion_zone_labels(total)
         weekly_pts = int(viewer.get("league_points", 0))
         claimed = await self._claimed_tiers(db, viewer_id)
         unclaimed = highest_unclaimed_tier(weekly_pts, claimed)
@@ -176,7 +185,7 @@ class LeaderboardCog(commands.Cog):
             embed.add_field(
                 name="Your standing",
                 value=(
-                    f"Rank **#{viewer_rank}** of **{len(rows)}** in **{division}** · "
+                    f"Rank **#{viewer_rank}** of **{total}** in **{division}** · "
                     f"**{weekly_pts}** pts (GD {viewer.get('goal_difference', 0):+d})\n"
                     f"Weekly tiers: {tier_progress_label(weekly_pts)}\n"
                     f"Promotion zone: {promo_rng} · Relegation zone: {releg_rng}"
@@ -187,35 +196,39 @@ class LeaderboardCog(commands.Cog):
         if total_pages > 1:
             footer = f"Page {page + 1}/{total_pages} · {footer}"
         embed.set_footer(text=footer)
+        # Stash resolved page for the view (auto-seek may change page 0).
+        embed._eb_page = page  # type: ignore[attr-defined]
+        embed._eb_total_pages = total_pages  # type: ignore[attr-defined]
         return embed
 
-    async def _global_embed(self, db, viewer: dict, page: int) -> discord.Embed:
-        divisions, res = await asyncio.gather(
-            load_global_divisions(db),
-            db.table("players")
-            .select("discord_id, club_name, global_lp")
-            .eq("is_ai", False)
-            .order("global_lp", desc=True)
-            .limit(100)
-            .execute(),
-        )
-        rows = res.data or []
+    async def _global_embed(self, db, viewer: dict, page: int | None) -> discord.Embed:
+        from apps.discord_bot.core import perf_signals
+
+        async def _rpc():
+            perf_signals.inc_round_trip()
+            params: dict = {
+                "p_viewer_id": viewer["discord_id"],
+                "p_page_size": 10,
+            }
+            if page is not None:
+                params["p_page"] = int(page)
+            return await db.rpc("get_global_leaderboard_page", params).execute()
+
+        divisions, res = await asyncio.gather(load_global_divisions(db), _rpc())
+        payload = res.data
+        if isinstance(payload, list) and payload:
+            payload = payload[0]
+        payload = payload or {}
+        rows = payload.get("rows") or []
         viewer_id = viewer["discord_id"]
         user_lp = int(viewer.get("global_lp", 0))
-        viewer_rank = next((i + 1 for i, r in enumerate(rows) if r["discord_id"] == viewer_id), 0)
-        if not viewer_rank:
-            higher_res = await db.table("players").select(
-                "discord_id", count="exact"
-            ).eq("is_ai", False).gt("global_lp", user_lp).execute()
-            viewer_rank = (higher_res.count or 0) + 1
-        if viewer_rank and page == 0 and any(r["discord_id"] == viewer_id for r in rows):
-            page = viewer_page_index(viewer_rank)
+        viewer_rank = int(payload.get("viewer_rank") or 0)
+        page = int(payload.get("page") or page)
+        total_pages = int(payload.get("total_pages") or 1)
 
-        page_rows, total_pages, page = paginate_rows(rows, page)
         lines: list[str] = []
-        base_pos = page * 10
-        for i, row in enumerate(page_rows):
-            pos = base_pos + i + 1
+        for row in rows:
+            pos = int(row.get("rank_pos") or 0)
             tier_name, _, _ = resolve_global_tier(int(row.get("global_lp", 0)), divisions)
             marker = "▶ " if row["discord_id"] == viewer_id else "  "
             name = (row.get("club_name") or "?")[:18]
@@ -243,6 +256,8 @@ class LeaderboardCog(commands.Cog):
         )
         footer = f"Page {page + 1}/{total_pages}" if total_pages > 1 else "Cross-server ranking"
         embed.set_footer(text=footer)
+        embed._eb_page = page  # type: ignore[attr-defined]
+        embed._eb_total_pages = total_pages  # type: ignore[attr-defined]
         return embed
 
     async def _season_embed(self, db, viewer: dict, guild_id: int | None) -> discord.Embed:
@@ -383,6 +398,7 @@ class LeaderboardView(discord.ui.View):
         self.division = division
         self.page = page
         self.guild_id = guild_id
+        self._total_pages = 1
         self.message: discord.Message | None = None
         self._sync_tab_styles()
         self._sync_pagination()
@@ -420,8 +436,7 @@ class LeaderboardView(discord.ui.View):
                         child.disabled = True
                 elif child.custom_id == "lb_next":
                     child.row = 2
-                    if not show_page:
-                        child.disabled = True
+                    child.disabled = (not show_page) or self.page >= max(0, self._total_pages - 1)
                 elif child.custom_id == "lb_claim":
                     child.row = 2
                     child.disabled = not show_div
@@ -485,9 +500,12 @@ class LeaderboardView(discord.ui.View):
             tab=tab,
             viewer=viewer,
             division=self.division,
-            page=0,
+            page=None if tab in (TAB_DIVISION, TAB_GLOBAL) else 0,
             guild_id=guild_id,
         )
+        new_view.page = int(getattr(embed, "_eb_page", 0))
+        new_view._total_pages = int(getattr(embed, "_eb_total_pages", 1))
+        new_view._sync_pagination()
         unclaimed = await self.cog.unclaimed_tier_for(db, viewer)
         new_view.set_claim_state(unclaimed)
         new_view.message = self.message
@@ -510,6 +528,9 @@ class LeaderboardView(discord.ui.View):
             page=self.page,
             guild_id=guild_id,
         )
+        self.page = int(getattr(embed, "_eb_page", self.page))
+        self._total_pages = int(getattr(embed, "_eb_total_pages", 1))
+        self._sync_pagination()
         unclaimed = await self.cog.unclaimed_tier_for(db, viewer)
         set_view_controls_disabled(self, disabled=False)
         self.set_claim_state(unclaimed)
@@ -519,7 +540,7 @@ class LeaderboardView(discord.ui.View):
         select = interaction.data.get("values", [])
         if select:
             self.division = select[0]
-            self.page = 0
+            self.page = None  # type: ignore[assignment]  # seek on division change
         await self._refresh(interaction)
 
     @discord.ui.button(label="⚔️ Division Rank", custom_id="lb_tab_division", row=0)

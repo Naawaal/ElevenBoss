@@ -141,57 +141,62 @@ async def fetch_standings(
     Sort order: Points DESC, Goal Difference DESC, Goals For DESC, Username ASC.
     When ``division_tier`` is set, only participants in that seasonal tier are included.
     """
-    parts_res = await db.table("league_participants").select("*, players(*)").eq("season_id", season_id).execute()
-    participants = parts_res.data or []
-    if division_tier is not None:
-        participants = [
-            p for p in participants
-            if int(p.get("division_tier") or 1) == int(division_tier)
-        ]
+    from apps.discord_bot.core.display_cache import get_or_set_standings
 
-    fixtures_res = await db.table("league_fixtures").select("*").eq("season_id", season_id).eq("is_played", True).execute()
-    fixtures = fixtures_res.data or []
+    async def _load() -> list[dict]:
+        parts_res = await db.table("league_participants").select("*, players(*)").eq("season_id", season_id).execute()
+        participants = parts_res.data or []
+        if division_tier is not None:
+            participants = [
+                p for p in participants
+                if int(p.get("division_tier") or 1) == int(division_tier)
+            ]
 
-    standings = []
-    for part in participants:
-        player = part["players"]
-        pid = player["discord_id"]
+        fixtures_res = await db.table("league_fixtures").select("*").eq("season_id", season_id).eq("is_played", True).execute()
+        fixtures = fixtures_res.data or []
 
-        row = {
-            "matches_played": 0,
-            "won": 0,
-            "drawn": 0,
-            "lost": 0,
-            "goals_for": 0,
-            "goals_against": 0,
-            "goal_difference": 0,
-            "points": 0,
-        }
-        for f in fixtures:
-            if pid in (f["home_team_id"], f["away_team_id"]):
-                apply_fixture_to_row(row, f, pid)
+        standings = []
+        for part in participants:
+            player = part["players"]
+            pid = player["discord_id"]
 
-        standings.append({
-            "discord_id": pid,
-            "username": player["username"],
-            "club_name": player["club_name"] or f"Club {pid}",
-            "manager_name": player["manager_name"] or "Unknown",
-            "is_ai": player.get("is_ai", False),
-            "ai_rating": player.get("ai_rating"),
-            "is_active": part.get("is_active", True),
-            "division_tier": int(part.get("division_tier") or 1),
-            "wins": row["won"],
-            "draws": row["drawn"],
-            "losses": row["lost"],
-            "goals_for": row["goals_for"],
-            "goals_against": row["goals_against"],
-            "matches_played": row["matches_played"],
-            "points": row["points"],
-            "goal_difference": row["goal_difference"],
-            "form": compute_form(pid, fixtures),
-        })
+            row = {
+                "matches_played": 0,
+                "won": 0,
+                "drawn": 0,
+                "lost": 0,
+                "goals_for": 0,
+                "goals_against": 0,
+                "goal_difference": 0,
+                "points": 0,
+            }
+            for f in fixtures:
+                if pid in (f["home_team_id"], f["away_team_id"]):
+                    apply_fixture_to_row(row, f, pid)
 
-    return sort_standings(standings, fixtures)
+            standings.append({
+                "discord_id": pid,
+                "username": player["username"],
+                "club_name": player["club_name"] or f"Club {pid}",
+                "manager_name": player["manager_name"] or "Unknown",
+                "is_ai": player.get("is_ai", False),
+                "ai_rating": player.get("ai_rating"),
+                "is_active": part.get("is_active", True),
+                "division_tier": int(part.get("division_tier") or 1),
+                "wins": row["won"],
+                "draws": row["drawn"],
+                "losses": row["lost"],
+                "goals_for": row["goals_for"],
+                "goals_against": row["goals_against"],
+                "matches_played": row["matches_played"],
+                "points": row["points"],
+                "goal_difference": row["goal_difference"],
+                "form": compute_form(pid, fixtures),
+            })
+
+        return sort_standings(standings, fixtures)
+
+    return await get_or_set_standings(season_id, _load, division_tier=division_tier)
 
 
 async def _award_and_post_momd(

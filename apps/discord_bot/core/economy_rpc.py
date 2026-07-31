@@ -159,10 +159,20 @@ async def get_game_config_many(
 async def get_pack_rarity_override(db: Any) -> tuple[list[str], list[int]] | None:
     """Load standard pack rarity mix from game_config; None → use package defaults."""
     try:
-        rarities_res = await db.rpc("get_game_config", {"p_key": "pack_standard_rarities"}).execute()
-        weights_res = await db.rpc("get_game_config", {"p_key": "pack_standard_rarity_weights"}).execute()
-        rarities_raw = rarities_res.data
-        weights_raw = weights_res.data
+        perf_signals.inc_round_trip()
+        res = await db.rpc(
+            "get_game_config_many",
+            {"p_keys": ["pack_standard_rarities", "pack_standard_rarity_weights"]},
+        ).execute()
+        raw = res.data
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        if isinstance(raw, list) and raw:
+            raw = raw[0]
+        if not isinstance(raw, dict):
+            return None
+        rarities_raw = raw.get("pack_standard_rarities")
+        weights_raw = raw.get("pack_standard_rarity_weights")
         if isinstance(rarities_raw, str):
             rarities_raw = json.loads(rarities_raw)
         if isinstance(weights_raw, str):
@@ -495,6 +505,12 @@ async def apply_club_economy(
     from apps.discord_bot.core.identity_rpc import touch_club_activity_best_effort
 
     await touch_club_activity_best_effort(db, club_id)
+    try:
+        from apps.discord_bot.core.display_cache import invalidate_profile_display
+
+        invalidate_profile_display(club_id)
+    except Exception:
+        pass
     return data
 
 

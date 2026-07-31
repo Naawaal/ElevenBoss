@@ -5,6 +5,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from apps.discord_bot.core.guild_cache import (
+    invalidate_guild_config,
+    load_guild_config,
+)
 from apps.discord_bot.db.client import get_client
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from leagues.league_time import (
@@ -59,12 +63,15 @@ async def show_admin_hub(interaction: discord.Interaction, guild_id: int, owner_
         return
 
     db = await get_client()
-    res = await db.table("guild_config").select("*").eq("guild_id", guild_id).maybe_single().execute()
-    config = res.data if res else None
+    config = await load_guild_config(db, guild_id)
     if not config:
         await db.table("guild_config").insert({"guild_id": guild_id}).execute()
-        res = await db.table("guild_config").select("*").eq("guild_id", guild_id).maybe_single().execute()
-        config = res.data if res else None
+        invalidate_guild_config(guild_id)
+        config = await load_guild_config(db, guild_id)
+
+    if not config:
+        logger.error("guild_config missing after insert guild_id=%s", guild_id)
+        return
 
     channel_id = config.get("league_channel_id")
     role_id = config.get("announcement_role_id")
@@ -136,6 +143,27 @@ async def show_announcements_menu(interaction: discord.Interaction, guild_id: in
 
 
 
+async def show_performance_panel(
+    interaction: discord.Interaction, guild_id: int, owner_id: int
+) -> None:
+    """Owner-only process-local performance snapshot (050)."""
+    from apps.discord_bot.core import perf_signals
+
+    embed = discord.Embed(
+        title="📊 Performance",
+        description=(
+            "Process-local counters for this bot instance. "
+            "Values reset on restart; use for before/after hub comparisons."
+        ),
+        color=0x00FF87,
+    )
+    for name, value in perf_signals.format_admin_embed_fields():
+        embed.add_field(name=name, value=value[:1024], inline=False)
+    view = PerformanceBackView(owner_id, guild_id)
+    msg = await interaction.edit_original_response(embed=embed, view=view)
+    view.message = msg
+
+
 async def show_server_settings(interaction: discord.Interaction, guild_id: int, owner_id: int) -> None:
     """Server Settings — League Time only (027 autonomous admin policy)."""
     guild = interaction.client.get_guild(guild_id)
@@ -201,6 +229,22 @@ class BaseAdminView(discord.ui.View):
             except Exception:
                 pass
 
+
+class PerformanceBackView(BaseAdminView):
+    def __init__(self, owner_id: int, guild_id: int) -> None:
+        super().__init__(owner_id)
+        self.guild_id = guild_id
+
+    @discord.ui.button(
+        style=discord.ButtonStyle.secondary,
+        label="⬅️ Back to Admin Hub",
+        custom_id="admin_perf_back",
+    )
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await show_admin_hub(interaction, self.guild_id, self.owner_id)
+
+
 class GuildSelectView(BaseAdminView):
     def __init__(self, owner_id: int, guilds: list[discord.Guild]) -> None:
         super().__init__(owner_id)
@@ -238,6 +282,11 @@ class AdminHubView(BaseAdminView):
     async def server_settings_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         await show_server_settings(interaction, self.guild_id, self.owner_id)
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, label="📊 Performance", custom_id="admin_hub_performance", row=1)
+    async def performance_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await show_performance_panel(interaction, self.guild_id, self.owner_id)
 
     @discord.ui.button(style=discord.ButtonStyle.secondary, label="🔄 Switch Server", custom_id="admin_hub_switch", row=1)
     async def switch_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -319,6 +368,7 @@ class ChannelSearchModal(discord.ui.Modal, title="Configure Channel"):
 
         db = await get_client()
         await db.table("guild_config").update({"league_channel_id": channel.id}).eq("guild_id", self.guild_id).execute()
+        invalidate_guild_config(self.guild_id)
 
         await interaction.followup.send(f"✅ Announcement channel updated to {channel.mention}.", ephemeral=True)
         await show_announcements_menu(interaction, self.guild_id, self.owner_id)
@@ -357,6 +407,7 @@ class RoleSearchModal(discord.ui.Modal, title="Configure Role"):
 
         db = await get_client()
         await db.table("guild_config").update({"announcement_role_id": role.id}).eq("guild_id", self.guild_id).execute()
+        invalidate_guild_config(self.guild_id)
 
         await interaction.followup.send(f"✅ Announcement role updated to **{role.name}**.", ephemeral=True)
         await show_announcements_menu(interaction, self.guild_id, self.owner_id)
@@ -469,6 +520,7 @@ class ChannelSelectView(BaseAdminView):
 
         db = await get_client()
         await db.table("guild_config").update({"league_channel_id": channel_id}).eq("guild_id", self.guild_id).execute()
+        invalidate_guild_config(self.guild_id)
 
         await interaction.followup.send(f"✅ Announcement channel updated to {channel.mention}.", ephemeral=True)
         await show_announcements_menu(interaction, self.guild_id, self.owner_id)
@@ -579,6 +631,7 @@ class RoleSelectView(BaseAdminView):
 
         db = await get_client()
         await db.table("guild_config").update({"announcement_role_id": role_id}).eq("guild_id", self.guild_id).execute()
+        invalidate_guild_config(self.guild_id)
 
         await interaction.followup.send(f"✅ Announcement role updated to **{role.name}**.", ephemeral=True)
         await show_announcements_menu(interaction, self.guild_id, self.owner_id)
@@ -654,6 +707,7 @@ class LeagueTimeModal(discord.ui.Modal, title="League Time"):
             "league_timezone": tz_name,
             "league_resolution_hour_local": hour_val,
         }, on_conflict="guild_id").execute()
+        invalidate_guild_config(self.guild_id)
 
         preview = league_time_preview(tz_name, hour_val, used_defaults=False)
         await interaction.followup.send(

@@ -39,26 +39,30 @@ async def show_marketplace_hub(interaction: discord.Interaction, owner_id: int):
 
     with perf_signals.hub_timer("marketplace"):
         db = await get_client()
-        player_res, enabled = await asyncio.gather(
-            db.table("players")
-            .select("discord_id, manager_name, coins, tokens")
-            .eq("discord_id", owner_id)
-            .maybe_single()
-            .execute(),
-            transfer_market_enabled(db),
-        )
-        player = player_res.data
-        active_count, slot_cap = (
-            await active_listing_count(db, owner_id) if enabled else (0, 5)
-        )
-        tokens = player.get("tokens", 0)
+        perf_signals.inc_round_trip()
+        hub_res = await db.rpc(
+            "get_marketplace_hub_state", {"p_owner_id": owner_id}
+        ).execute()
+        hub = hub_res.data
+        if isinstance(hub, list) and hub:
+            hub = hub[0]
+        hub = hub or {}
+        if not hub.get("ok", True) and hub.get("reason") == "player_not_found":
+            await interaction.followup.send(embed=error_embed("Player not found."), ephemeral=True)
+            return
+        enabled = bool(hub.get("transfer_enabled"))
+        active_count = int(hub.get("active_listing_count") or 0)
+        slot_cap = int(hub.get("listing_cap") or 5)
+        tokens = int(hub.get("tokens") or 0)
+        coins = int(hub.get("coins") or 0)
+        manager_name = hub.get("manager_name") or "Manager"
         listing_status = f"`{active_count} / {slot_cap}` slots filled" if enabled else "unavailable"
         embed = discord.Embed(
             title=f"🏪 {PRODUCT_NAME}",
             description=(
                 f"**{hub_subtitle(transfer_enabled=enabled)}**\n\n"
-                f"Welcome, Manager **{player['manager_name']}**!\n"
-                f"💰 **Balance**: `🪙 {player['coins']:,} coins` | `🎟️ {tokens:,} tokens`\n"
+                f"Welcome, Manager **{manager_name}**!\n"
+                f"💰 **Balance**: `🪙 {coins:,} coins` | `🎟️ {tokens:,} tokens`\n"
                 f"📋 **Active Listings**: {listing_status}"
             ),
             color=0x00FF87
@@ -105,57 +109,35 @@ class MarketplaceHubView(discord.ui.View):
 async def show_sell_menu(interaction: discord.Interaction, owner_id: int):
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True)
+    from apps.discord_bot.core import perf_signals
+
     db = await get_client()
+    perf_signals.inc_round_trip()
+    res = await db.rpc(
+        "get_market_sell_eligible_cards", {"p_owner_id": owner_id}
+    ).execute()
+    payload = res.data
+    if isinstance(payload, list) and payload:
+        payload = payload[0]
+    payload = payload or {}
+    eligible_players = payload.get("cards") or []
 
-    roster_res, assignments_res, evo_res, training_res, listing_card_ids = await asyncio.gather(
-        db.table("player_cards")
-        .select(
-            "id, name, position, overall, potential, rarity, date_of_birth, "
-            "is_retired, in_academy, injury_tier, in_hospital"
-        )
-        .eq("owner_id", owner_id)
-        .order("overall", desc=True)
-        .execute(),
-        db.table("squad_assignments")
-        .select("player_card_id")
-        .eq("discord_id", owner_id)
-        .execute(),
-        db.table("active_evolutions")
-        .select("card_id")
-        .eq("owner_id", owner_id)
-        .eq("status", "active")
-        .execute(),
-        db.table("active_training").select("card_id").eq("club_id", owner_id).execute(),
-        listed_card_ids(db, owner_id),
-    )
-    roster = roster_res.data or []
-
-    if not roster:
-        embed = discord.Embed(title="🤝 Sell Roster Player", description="You have no players in your roster.", color=0x00FF87)
-        view = SellPlayerSubView(owner_id, [], None, 0)
-        if interaction.response.is_done():
-            await interaction.edit_original_response(embed=embed, view=view)
-        else:
-            await interaction.response.edit_message(embed=embed, view=view)
-        return
-
-    starting_card_ids = {a["player_card_id"] for a in (assignments_res.data or [])}
-    evo_card_ids = {e["card_id"] for e in (evo_res.data or [])}
-    training_card_ids = {
-        t["card_id"] for t in (training_res.data or [])
-        if t.get("card_id")
-    }
-
-    # 4. Filter eligible players (exclude starting 11, evolutions, active training)
-    eligible_players = [
-        p for p in roster
-        if not p.get("is_retired")
-        and not p.get("in_academy")
-        and p["id"] not in starting_card_ids
-        and p["id"] not in evo_card_ids
-        and p["id"] not in training_card_ids
-        and str(p["id"]) not in listing_card_ids
-    ]
+    if not eligible_players:
+        roster_res = await db.table("player_cards").select("id").eq(
+            "owner_id", owner_id
+        ).limit(1).execute()
+        if not (roster_res.data or []):
+            embed = discord.Embed(
+                title="🤝 Sell Roster Player",
+                description="You have no players in your roster.",
+                color=0x00FF87,
+            )
+            view = SellPlayerSubView(owner_id, [], None, 0)
+            if interaction.response.is_done():
+                await interaction.edit_original_response(embed=embed, view=view)
+            else:
+                await interaction.response.edit_message(embed=embed, view=view)
+            return
 
     embed = discord.Embed(
         title="🤝 Sell Player to Agent",
