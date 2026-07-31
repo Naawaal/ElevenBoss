@@ -78,6 +78,7 @@ from .operation_keys import (
 )
 from .schedule import MatchdayUtcWindow, assign_lifecycle_windows, local_resolution_instant, rebase_windows
 from .forfeit_rules import ClubStatDelta, ForfeitOutcome, double_forfeit, single_forfeit
+from .expired_settle import ExpiredSettleMode, decide_expired_settle, played_fixture_status_label
 from .assistant_lineup import LineupPlan, repair_lineup, select_lineup_plan
 from .cutover import (
     can_start_v1_season,
@@ -180,6 +181,9 @@ __all__ = [
     "ForfeitOutcome",
     "double_forfeit",
     "single_forfeit",
+    "ExpiredSettleMode",
+    "decide_expired_settle",
+    "played_fixture_status_label",
     "LineupPlan",
     "repair_lineup",
     "select_lineup_plan",

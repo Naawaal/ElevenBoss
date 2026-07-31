@@ -2,6 +2,11 @@
 
 Hey Managers!
 
+## League expired fixtures
+
+If Matchday fixtures stayed **Expired (Pending Auto-Sim)** after the window closed (often because a club’s XI had **past-grace contracts** or an incomplete squad), that is fixed. After the window ends the bot settles the match: normal auto-sim when both sides are legal, or a **forfeit** (3–0 / double forfeit 0–0) when a human side cannot field a legal XI. Renew or replace blocked starters on `/player-profile` / `/squad` before the window ends to avoid the forfeit.
+
+---
 ## Contract renew fix
 
 If Renew on `/player-profile` looked like it worked but your player stayed **past grace** (match blocked), that bug is fixed. Open the player again and **Renew** — you can renew the same card more than once. Stuck stars (e.g. after an earlier renew) should clear after one successful payment.

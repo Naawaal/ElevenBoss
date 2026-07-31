@@ -23,7 +23,14 @@ from apps.discord_bot.core.club_rpc import (
     register_league_membership,
     register_league_season,
 )
-from leagues import apply_fixture_to_row, compute_form, format_standings_table, sort_standings, tie_breaker_footer
+from leagues import (
+    apply_fixture_to_row,
+    compute_form,
+    format_standings_table,
+    played_fixture_status_label,
+    sort_standings,
+    tie_breaker_footer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -260,22 +267,29 @@ async def _award_and_post_momd(
 # --- AUTO SIMULATION OF EXPIRED MATCHDAY WINDOWS ---
 async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> int:
     """
-    Scans for unplayed fixtures of the season where window_end has passed,
-    and runs simulation sequentially via run_league_match_simulation.
+    Settle unplayed fixtures whose window_end has passed (auto-sim or 026 forfeit).
+
+    Guild unreachable → pause/skip, no sporting forfeit (US-42.5).
+    Threads missing → silent settle still runs (forfeit or silent sim).
     """
     now = datetime.now(timezone.utc)
-    # Query fixtures
-    fixtures_res = await db.table("league_fixtures").select("*, home:players!league_fixtures_home_team_id_fkey(*), away:players!league_fixtures_away_team_id_fkey(*)").eq("season_id", season_id).eq("is_played", False).execute()
+    fixtures_res = await db.table("league_fixtures").select(
+        "*, home:players!league_fixtures_home_team_id_fkey(*), "
+        "away:players!league_fixtures_away_team_id_fkey(*)"
+    ).eq("season_id", season_id).eq("is_played", False).execute()
     fixtures = fixtures_res.data or []
-    
-    # Get guild_id
-    season_res = await db.table("league_seasons").select("league_id").eq("id", season_id).maybe_single().execute()
+
+    season_res = await db.table("league_seasons").select("league_id").eq(
+        "id", season_id
+    ).maybe_single().execute()
     season_data = season_res.data if season_res else None
     if not season_data:
         return 0
     league_id = season_data["league_id"]
-    
-    league_res = await db.table("leagues").select("guild_id").eq("id", league_id).maybe_single().execute()
+
+    league_res = await db.table("leagues").select("guild_id").eq(
+        "id", league_id
+    ).maybe_single().execute()
     league_data = league_res.data if league_res else None
     if not league_data:
         return 0
@@ -285,6 +299,7 @@ async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> in
         pause_season_if_guild_unreachable,
         resolve_bot_guild,
     )
+    from apps.discord_bot.core.league_expired_settle import settle_expired_fixture
 
     guild, unreachable = await resolve_bot_guild(bot, guild_id)
     if not guild:
@@ -313,15 +328,13 @@ async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> in
                     guild_id,
                 )
         return 0
-        
-    # Resolve threads (dual_v2 or legacy)
+
     season_threads = await resolve_season_threads(bot, db, guild, season_id)
     if not season_threads:
-        logger.warning("Could not resolve league threads for guild %s", guild_id)
-        return 0
-
-    from apps.discord_bot.cogs.battle_cog import run_league_match_simulation, LeagueMatchHandler
-    from apps.discord_bot.core.match_runs import get_active_fixture_run
+        logger.warning(
+            "Could not resolve league threads for guild %s — settling silently",
+            guild_id,
+        )
 
     simulated_count = 0
     for f in fixtures:
@@ -329,46 +342,39 @@ async def auto_sim_expired_fixtures(db, season_id: str, bot: commands.Bot) -> in
         if not window_end_val:
             continue
         window_end = datetime.fromisoformat(window_end_val.replace("Z", "+00:00"))
-        if now > window_end:
-            if await get_active_fixture_run(db, f["id"]):
-                logger.info("Skipping auto-sim for fixture %s — active match run", f["id"])
-                continue
-            try:
-                handler = LeagueMatchHandler(
-                    commentary_thread=season_threads.commentary_thread,
-                    fixture_id=f["id"],
-                    season_id=f["season_id"],
-                    journal_thread=season_threads.journal_thread,
-                    journal_standings_msg_id=season_threads.journal_standings_message_id,
-                )
-                await run_league_match_simulation(
-                    bot=bot,
-                    db=db,
-                    guild=guild,
-                    fixture=f,
-                    active_player_id=None,
-                    handler=handler
-                )
+        if now <= window_end:
+            continue
+        try:
+            settled = await settle_expired_fixture(
+                bot,
+                db,
+                guild,
+                f,
+                season_threads=season_threads,
+                silent=season_threads is None,
+            )
+            if settled:
                 simulated_count += 1
                 await asyncio.sleep(2.0)
-            except Exception as e:
-                logger.exception(f"Failed to auto-simulate fixture {f['id']}: {e}")
-                active = await get_active_fixture_run(db, f["id"])
-                if active:
-                    from apps.discord_bot.core.match_runs import abandon_run
+        except Exception as e:
+            logger.exception("Failed to settle expired fixture %s: %s", f["id"], e)
+            from apps.discord_bot.core.match_runs import abandon_run, get_active_fixture_run
 
-                    try:
-                        await abandon_run(db, active["id"], reason="auto_sim_failed")
-                    except Exception:
-                        logger.exception(
-                            "abandon_match_run failed for fixture %s", f["id"]
-                        )
+            active = await get_active_fixture_run(db, f["id"])
+            if active:
+                try:
+                    await abandon_run(db, active["id"], reason="auto_sim_failed")
+                except Exception:
+                    logger.exception(
+                        "abandon_match_run failed for fixture %s", f["id"]
+                    )
+
     if simulated_count > 0:
         completed_md = await update_current_matchday(db, season_id, bot=bot)
         if completed_md:
             from apps.discord_bot.core.league_journal import notify_matchday_complete
             await notify_matchday_complete(bot, guild, db, season_id, completed_md)
-        
+
     return simulated_count
 
 async def update_current_matchday(
@@ -818,21 +824,42 @@ class LeagueCog(commands.Cog):
         now = datetime.now(timezone.utc)
         dynamics = (season.get("pacing_mode") or "") == "dynamics"
 
+        from apps.discord_bot.core.squad_validity import club_xi_block_reason
+
         fixture_lines = []
         for f in fixtures:
             home_name = f["home"]["club_name"] + (" (AI)" if f["home"].get("is_ai") else "")
             away_name = f["away"]["club_name"] + (" (AI)" if f["away"].get("is_ai") else "")
-            
+
             if f["is_played"]:
-                status_str = f"**{f['home_score']} - {f['away_score']}** (Full Time)"
+                label = played_fixture_status_label(f.get("result_type"))
+                status_str = f"**{f['home_score']} - {f['away_score']}** ({label})"
             else:
                 window_start = datetime.fromisoformat(f["window_start"].replace("Z", "+00:00"))
                 window_end = datetime.fromisoformat(f["window_end"].replace("Z", "+00:00"))
-                
+
                 if now < window_start:
                     status_str = f"Locked (Starts <t:{int(window_start.timestamp())}:R>)"
                 elif now > window_end:
                     status_str = "Expired (Pending Auto-Sim)"
+                    # Best-effort: name club that still blocks legal XI (until settle runs)
+                    for side_key, team_id in (
+                        ("home", f["home_team_id"]),
+                        ("away", f["away_team_id"]),
+                    ):
+                        side = f.get(side_key) or {}
+                        if side.get("is_ai"):
+                            continue
+                        try:
+                            block = await club_xi_block_reason(db, int(team_id))
+                        except Exception:
+                            block = None
+                        if block:
+                            club = side.get("club_name") or str(team_id)
+                            status_str = (
+                                f"Expired (Pending Auto-Sim) — {club}: renew/replace XI"
+                            )
+                            break
                 else:
                     if dynamics:
                         status_str = f"⏰ Play before 00:00 UTC (Ends <t:{int(window_end.timestamp())}:R>)"
@@ -840,7 +867,7 @@ class LeagueCog(commands.Cog):
                         status_str = f"⏰ Active (Ends <t:{int(window_end.timestamp())}:R>)"
                     if interaction.user.id in [f["home_team_id"], f["away_team_id"]]:
                         playable_fixture = f
-            
+
             fixture_lines.append(f"🏟️ **{home_name}** vs **{away_name}**\n↳ {status_str}")
             
         embed.description = "\n\n".join(fixture_lines)
