@@ -30,6 +30,12 @@ async def run_daily_academy_growth(bot: commands.Bot) -> dict:
 
     # Optional scout-ready finalize + DM (hub remains source of truth if DMs off)
     summary["scout_reports_finalized"] = await _finalize_due_scouts(bot)
+    try:
+        from apps.discord_bot.core.potential_integrity import check_potential_integrity
+
+        await check_potential_integrity(db, context="academy_growth")
+    except Exception:
+        logger.exception("potential integrity check after academy growth failed")
     return summary
 
 

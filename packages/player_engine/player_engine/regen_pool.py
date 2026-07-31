@@ -7,6 +7,8 @@ from typing import Literal
 
 from .created_card import CreatedPlayerCard
 from .player_factory import create_player_card
+from .potential import clamp_potential, rarity_potential_cap
+
 
 RegenRarity = Literal["Common", "Rare", "Epic"]
 
@@ -42,8 +44,10 @@ def generate_regen_from_retired(
     age = r.randint(16, 19)
 
     rarity = regen_rarity_for_ovr(retired_ovr, r)
-
-    pot = max(target_ovr, min(94, base_pot + r.randint(-3, 5)))
+    cap = rarity_potential_cap(rarity)
+    pot = clamp_potential(max(target_ovr, base_pot + r.randint(-3, 5)), rarity)
+    # Ensure factory target cannot exceed rarity (retired inspiration may be high OVR)
+    target_ovr = min(target_ovr, cap, pot)
 
     card = create_player_card(
         position=position,
@@ -54,10 +58,9 @@ def generate_regen_from_retired(
         age=age,
         rng=r,
     )
-    return card.model_copy(
-        update={
-            "potential": pot,
-            "base_potential": pot,
-            "source_card_id": str(retired["id"]),
-        }
-    )
+    # model_copy may skip validators — rebuild so integrity always runs
+    data = card.model_dump(by_alias=True)
+    data["potential"] = pot
+    data["base_potential"] = pot
+    data["source_card_id"] = str(retired["id"])
+    return CreatedPlayerCard.model_validate(data)

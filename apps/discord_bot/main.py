@@ -337,6 +337,13 @@ class ElevenBossBot(commands.Bot):
             logger.error("League lifecycle recovery failed on startup: %s", e, exc_info=True)
 
         try:
+            from apps.discord_bot.core.potential_integrity import check_potential_integrity
+            from apps.discord_bot.db.client import get_client
+            await check_potential_integrity(await get_client(), context="startup")
+        except Exception as e:
+            logger.error("Potential integrity check failed on startup: %s", e, exc_info=True)
+
+        try:
             from apps.discord_bot.tasks.level_reward_notifier import notify_pending_level_rewards
             await notify_pending_level_rewards(self)
         except Exception as e:

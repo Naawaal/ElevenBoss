@@ -41,3 +41,6 @@ desktop.ini
 .coverage
 htmlcov/
 .pytest_cache/
+
+# === Ops dry-run reports ===
+reports/

@@ -79,9 +79,11 @@ def generate_support_legendary(*, rng: random.Random | None = None) -> GachaPlay
     pot = r.randint(90, 95)
     if pot < card.overall:
         pot = card.overall
-    return _from_created(
-        card.model_copy(update={"potential": pot, "base_potential": pot})
-    )
+    # Legendary cap 99 — rebuild so CreatedPlayerCard integrity always runs
+    data = card.model_dump(by_alias=True)
+    data["potential"] = pot
+    data["base_potential"] = pot
+    return _from_created(CreatedPlayerCard.model_validate(data))
 
 
 def generate_pack(

@@ -7,6 +7,7 @@ from typing import Any
 
 from .engine import POSITION_WEIGHTS, calculate_true_ovr
 from .evolution_tracks import EVOLUTION_TRACKS
+from .potential import effective_potential
 
 STAT_KEYS = ("pac", "sho", "pas", "dri", "def", "phy")
 
@@ -15,16 +16,24 @@ def stats_from_card(card: dict[str, Any]) -> dict[str, int]:
     return {k: int(card.get(k, 50)) for k in STAT_KEYS}
 
 
+def _legal_potential(potential: int, rarity: str | None) -> int:
+    if rarity is None:
+        return int(potential)
+    return effective_potential(rarity=rarity, potential=potential)
+
+
 def can_gain_stat_progression(
     *,
     overall: int,
     potential: int,
     stat_value: int,
+    rarity: str | None = None,
 ) -> tuple[bool, str]:
     """Return whether a +1 stat drill or similar gain is allowed."""
+    pot = _legal_potential(potential, rarity)
     if stat_value >= 99:
         return False, "Stat is already at maximum"
-    if overall >= potential:
+    if overall >= pot:
         return False, "Player is already at maximum overall for their potential"
     return True, ""
 
@@ -37,22 +46,24 @@ def can_allocate_skill_point(
     potential: int,
     stat_key: str,
     overall: int | None = None,
+    rarity: str | None = None,
 ) -> tuple[bool, str]:
     """Return whether spending 1 skill point on stat_key is allowed (mirrors allocate_skill_point RPC)."""
     if stat_key not in STAT_KEYS:
         return False, "Invalid stat"
+    pot = _legal_potential(potential, rarity)
     current = int(stats.get(stat_key, 50))
     ok, reason = can_gain_stat_progression(
-        overall=overall if overall is not None else calculate_true_ovr(position, stats, playstyles, potential),
-        potential=potential,
+        overall=overall if overall is not None else calculate_true_ovr(position, stats, playstyles, pot),
+        potential=pot,
         stat_value=current,
     )
     if not ok:
         return ok, reason
     trial = dict(stats)
     trial[stat_key] = min(99, current + 1)
-    projected = calculate_true_ovr(position, trial, playstyles, potential)
-    if projected > potential:
+    projected = calculate_true_ovr(position, trial, playstyles, pot)
+    if projected > pot:
         return False, "Would exceed maximum overall for their potential"
     return True, ""
 
@@ -70,9 +81,11 @@ def evolution_reward_steps(
     stat_key: str,
     overall: int,
     max_steps: int = 5,
+    rarity: str | None = None,
 ) -> int:
     """Count +1 stat steps allowed before POT ceiling (mirrors evolution_stat_reward_steps RPC)."""
-    if overall >= potential:
+    pot = _legal_potential(potential, rarity)
+    if overall >= pot:
         return 0
     current = int(stats.get(stat_key, 50))
     if current >= 99:
@@ -84,8 +97,8 @@ def evolution_reward_steps(
         if current + steps >= 99:
             break
         trial[stat_key] = current + steps + 1
-        projected = calculate_true_ovr(position, trial, playstyles, potential)
-        if projected > potential:
+        projected = calculate_true_ovr(position, trial, playstyles, pot)
+        if projected > pot:
             break
         steps += 1
     return steps
@@ -99,16 +112,18 @@ def can_start_evolution_track(
     potential: int,
     overall: int,
     track_id: str,
+    rarity: str | None = None,
 ) -> tuple[bool, str]:
     """Return whether starting an evolution track is allowed (mirrors start_player_evolution POT gate)."""
-    if overall >= potential:
+    pot = _legal_potential(potential, rarity)
+    if overall >= pot:
         return False, "Player is already at maximum overall for their potential"
     stat_key = evolution_track_stat_col(track_id)
     steps = evolution_reward_steps(
         position=position,
         stats=stats,
         playstyles=playstyles,
-        potential=potential,
+        potential=pot,
         stat_key=stat_key,
         overall=overall,
     )

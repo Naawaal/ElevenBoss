@@ -38,8 +38,21 @@ def mentor_units_to_xp(units: int) -> int:
     return max(0, int(units)) * XP_PER_MENTOR_UNIT
 
 
-def is_mentor_source(*, overall: int, potential: int, skill_points: int) -> bool:
-    return int(overall) >= int(potential) and int(skill_points) >= SP_PER_MENTOR_UNIT
+def is_mentor_source(
+    *,
+    overall: int,
+    potential: int,
+    skill_points: int,
+    rarity: str | None = None,
+) -> bool:
+    from .potential import effective_potential
+
+    pot = (
+        effective_potential(rarity=rarity, potential=potential)
+        if rarity is not None
+        else int(potential)
+    )
+    return int(overall) >= pot and int(skill_points) >= SP_PER_MENTOR_UNIT
 
 
 def is_mentor_target(
@@ -49,10 +62,18 @@ def is_mentor_target(
     level: int,
     source_id: str,
     target_id: str,
+    rarity: str | None = None,
 ) -> bool:
+    from .potential import effective_potential
+
     if str(target_id) == str(source_id):
         return False
-    return int(overall) < int(potential) and int(level) < L_MAX
+    pot = (
+        effective_potential(rarity=rarity, potential=potential)
+        if rarity is not None
+        else int(potential)
+    )
+    return int(overall) < pot and int(level) < L_MAX
 
 
 def xp_headroom_to_max(current_xp: int) -> int:

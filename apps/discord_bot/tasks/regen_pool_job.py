@@ -85,4 +85,10 @@ async def spawn_regens_from_recent_retirements(bot: commands.Bot | None = None) 
         summary["failed"],
         threshold,
     )
+    try:
+        from apps.discord_bot.core.potential_integrity import check_potential_integrity
+
+        await check_potential_integrity(db, context="regen_pool")
+    except Exception:
+        logger.exception("potential integrity check after regen failed")
     return summary

@@ -27,6 +27,12 @@ async def season_aging_job(bot: commands.Bot) -> None:
                 summary.get("retired_cards", 0),
                 summary.get("warned_cards", 0),
             )
+            try:
+                from apps.discord_bot.core.potential_integrity import check_potential_integrity
+
+                await check_potential_integrity(db, context="season_aging")
+            except Exception:
+                logger.exception("potential integrity check after season aging failed")
 
         await run_claimed_job(db, "season_aging", utc_week_window(), _work)
     except Exception:

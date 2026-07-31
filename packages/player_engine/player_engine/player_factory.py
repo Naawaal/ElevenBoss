@@ -10,7 +10,7 @@ from .age_manager import dob_from_age
 from .archetypes import ArchetypeDef, roll_archetype
 from .created_card import CreatedPlayerCard
 from .engine import calculate_true_ovr
-from .potential import generate_potential
+from .potential import generate_potential, rarity_potential_cap
 
 _ATTRS = ("pac", "sho", "pas", "dri", "def", "phy")
 _STAT_MIN = 10
@@ -124,6 +124,12 @@ def create_player_card(
     age_val = age if age is not None else roll_creation_age(r)
     jitter = r.randint(-120, 120)
     dob = dob_from_age(age_val, reference=reference_date, day_jitter=jitter)
+
+    cap = rarity_potential_cap(rarity)
+    if int(target_ovr) > cap:
+        raise ValueError(
+            f"{rarity} card cannot be generated at {target_ovr} OVR; maximum is {cap}"
+        )
 
     potential = generate_potential(target_ovr, age_val, rarity, position, rng=r)
     arch = archetype or roll_archetype(position, rng=r)

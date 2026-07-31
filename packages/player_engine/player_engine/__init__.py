@@ -36,9 +36,13 @@ from .generated_player import GeneratedPlayer
 from .potential import (
     RARITY_POT_CAPS,
     apply_dynamic_potential_boost,
+    clamp_potential,
+    effective_potential,
     format_potential_display,
     generate_potential,
     potential_tier_label,
+    rarity_potential_cap,
+    validate_potential_integrity,
 )
 from .engine import (
     calculate_level,
@@ -244,9 +248,13 @@ __all__ = [
     "RARITY_POT_CAPS",
     "GeneratedPlayer",
     "apply_dynamic_potential_boost",
+    "clamp_potential",
+    "effective_potential",
     "format_potential_display",
     "generate_potential",
     "potential_tier_label",
+    "rarity_potential_cap",
+    "validate_potential_integrity",
     "calculate_level",
     "roll_dynamic_potential",
     "calculate_contract_renewal_cost",

@@ -1,48 +1,25 @@
 #!/usr/bin/env python3
-"""One-time backfill: recalculate potential/base_potential for all player_cards."""
+"""UNSAFE for 049 — do not use to "fix" POT after rarity caps.
+
+This script called generate_potential and wrote potential/base_potential.
+Illegal overall above rarity cap now raises; re-running against corrupted OVR
+rows would fail or recreate bad states if the escape returned.
+
+Use scripts/potential_cap_audit.py + scripts/potential_cap_repair.py instead.
+"""
 from __future__ import annotations
 
-import os
 import sys
-
-from player_engine import generate_potential
-
-# ponytail: requires SUPABASE_URL + SUPABASE_SERVICE_KEY in env; run manually post-migration
 
 
 def main() -> int:
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY")
-    if not url or not key:
-        print("Set SUPABASE_URL and SUPABASE_SERVICE_KEY", file=sys.stderr)
-        return 1
-
-    from supabase import create_client
-
-    db = create_client(url, key)
-    res = db.table("player_cards").select("id,name,overall,age,rarity,position,potential,base_potential").execute()
-    cards = res.data or []
-    updated = 0
-
-    for card in cards:
-        pot = generate_potential(
-            card["overall"],
-            card.get("age") or 25,
-            card.get("rarity") or "Common",
-            card.get("position") or "MID",
-            rng=__import__("random").Random(hash(card["id"]) % (2**32)),
-        )
-        if pot == card.get("potential") and pot == card.get("base_potential"):
-            continue
-        db.table("player_cards").update({
-            "potential": pot,
-            "base_potential": pot,
-        }).eq("id", card["id"]).execute()
-        updated += 1
-        print(f"  {card['name']}: {card.get('potential')} -> {pot}")
-
-    print(f"Updated {updated}/{len(cards)} cards.")
-    return 0
+    print(
+        "scripts/recalculate_potentials.py is retired for rarity-cap integrity (049).\n"
+        "Use: python scripts/potential_cap_audit.py\n"
+        "Then: python scripts/potential_cap_repair.py --batch BATCH --apply",
+        file=sys.stderr,
+    )
+    return 2
 
 
 if __name__ == "__main__":

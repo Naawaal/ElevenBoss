@@ -24,6 +24,39 @@ MAX_POTENTIAL: Final[int] = 99
 MAX_DYNAMIC_BOOST: Final[int] = 10
 
 
+def rarity_potential_cap(rarity: str) -> int:
+    """Absolute POT ceiling for a rarity. Unknown rarity fails closed."""
+    try:
+        return RARITY_POT_CAPS[rarity]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported rarity: {rarity!r}") from exc
+
+
+def clamp_potential(potential: int, rarity: str) -> int:
+    return min(int(potential), rarity_potential_cap(rarity), MAX_POTENTIAL)
+
+
+def validate_potential_integrity(
+    *,
+    rarity: str,
+    overall: int,
+    potential: int,
+    base_potential: int | None,
+) -> None:
+    cap = rarity_potential_cap(rarity)
+    if int(potential) > cap:
+        raise ValueError(f"{rarity} POT {potential} exceeds rarity cap {cap}")
+    if base_potential is not None and int(base_potential) > cap:
+        raise ValueError(f"{rarity} base POT {base_potential} exceeds rarity cap {cap}")
+    if int(overall) > int(potential):
+        raise ValueError(f"OVR {overall} exceeds POT {potential}")
+
+
+def effective_potential(*, rarity: str, potential: int) -> int:
+    """Progression ceiling while stored POT may still be dirty."""
+    return min(int(potential), rarity_potential_cap(rarity))
+
+
 def generate_potential(
     overall: int,
     age: int,
@@ -35,11 +68,17 @@ def generate_potential(
     """Assign a realistic potential ceiling from age, rarity, OVR, and position.
 
     Younger and rarer players trend higher; veterans peak near current OVR.
+    Illegal overall above the rarity cap is rejected — never manufacture POT > cap.
     """
     r = rng or random
     overall = max(1, min(99, overall))
     age = max(15, min(45, age))
-    rarity_cap = RARITY_POT_CAPS.get(rarity, RARITY_POT_CAPS["Common"])
+    cap = rarity_potential_cap(rarity)
+
+    if overall > cap:
+        raise ValueError(
+            f"{rarity} card cannot be generated at {overall} OVR; maximum is {cap}"
+        )
 
     # Normal-ish base (mean 70, σ 10) — ponytail: gauss is stdlib, good enough for POT rolls
     base = int(round(r.gauss(70, 10)))
@@ -67,8 +106,8 @@ def generate_potential(
         floor = overall + r.randint(0, 2)
 
     pot = max(raw, floor, overall)
-    pot = min(pot, rarity_cap, MAX_POTENTIAL)
-    # Never below current OVR (legacy cards may already exceed rarity cap)
+    pot = min(pot, cap, MAX_POTENTIAL)
+    # overall <= cap already established — cannot break rarity ceiling
     return max(MIN_POTENTIAL, overall, int(pot))
 
 
@@ -76,12 +115,14 @@ def apply_dynamic_potential_boost(
     current_potential: int,
     base_potential: int,
     boost: int,
+    rarity: str,
 ) -> int:
-    """Raise current potential after exceptional youth performance (capped at base + 10)."""
+    """Raise current potential after exceptional youth performance (inside rarity)."""
     if boost <= 0:
         return current_potential
-    ceiling = min(MAX_POTENTIAL, base_potential + MAX_DYNAMIC_BOOST)
-    return min(ceiling, current_potential + boost)
+    cap = rarity_potential_cap(rarity)
+    ceiling = min(cap, int(base_potential) + MAX_DYNAMIC_BOOST)
+    return min(int(current_potential) + max(int(boost), 0), ceiling)
 
 
 def potential_tier_label(potential: int) -> str:

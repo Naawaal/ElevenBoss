@@ -255,7 +255,15 @@ BEGIN
       ('policy:public.league_operation_runs.league_operation_runs_select'),
       ('policy:public.league_operation_runs.league_operation_runs_insert'),
       ('policy:public.league_outbox.league_outbox_select'),
-      ('policy:public.league_outbox.league_outbox_insert')
+      ('policy:public.league_outbox.league_outbox_insert'),
+      ('function:rarity_potential_cap'),
+      ('function:effective_card_potential'),
+      ('function:assert_card_potential_integrity'),
+      ('function:count_potential_integrity_anomalies'),
+      ('table:public.potential_cap_repair_audit'),
+      ('policy:public.potential_cap_repair_audit.potential_cap_repair_audit_select'),
+      ('policy:public.potential_cap_repair_audit.potential_cap_repair_audit_insert'),
+      ('policy:public.potential_cap_repair_audit.potential_cap_repair_audit_update')
   ) AS req(obj)
   WHERE NOT (
     (req.obj LIKE 'table:%' AND to_regclass(split_part(req.obj, ':', 2)) IS NOT NULL)
@@ -384,6 +392,10 @@ BEGIN
         WHEN 'dispatch_youth_scout' THEN to_regprocedure('public.dispatch_youth_scout(bigint,text)')
         WHEN 'finalize_youth_scout_report' THEN to_regprocedure('public.finalize_youth_scout_report(bigint,jsonb,text)')
         WHEN 'sign_youth_scout_prospect' THEN to_regprocedure('public.sign_youth_scout_prospect(bigint,uuid,integer)')
+        WHEN 'rarity_potential_cap' THEN to_regprocedure('public.rarity_potential_cap(text)')
+        WHEN 'effective_card_potential' THEN to_regprocedure('public.effective_card_potential(text,integer)')
+        WHEN 'assert_card_potential_integrity' THEN to_regprocedure('public.assert_card_potential_integrity(text,integer,integer,integer)')
+        WHEN 'count_potential_integrity_anomalies' THEN to_regprocedure('public.count_potential_integrity_anomalies()')
         ELSE NULL
       END IS NOT NULL
     )

@@ -2,13 +2,15 @@
 """Typed factory output for procedural player creation."""
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .potential import validate_potential_integrity
 
 
 class CreatedPlayerCard(BaseModel):
     """Validated card contract from create_player_card (package boundary)."""
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, validate_assignment=True)
 
     name: str
     position: str = Field(..., pattern="^(GK|DEF|MID|FWD)$")
@@ -27,3 +29,13 @@ class CreatedPlayerCard(BaseModel):
     age: int = Field(..., ge=15, le=45)
     date_of_birth: str
     source_card_id: str | None = None
+
+    @model_validator(mode="after")
+    def _potential_integrity(self) -> CreatedPlayerCard:
+        validate_potential_integrity(
+            rarity=self.rarity,
+            overall=self.overall,
+            potential=self.potential,
+            base_potential=self.base_potential,
+        )
+        return self

@@ -65,6 +65,12 @@ async def run_season_youth_intake(bot: commands.Bot) -> dict:
         summary["new_cards"],
         summary["intake_skipped_slots"],
     )
+    try:
+        from apps.discord_bot.core.potential_integrity import check_potential_integrity
+
+        await check_potential_integrity(db, context="youth_intake")
+    except Exception:
+        logger.exception("potential integrity check after youth intake failed")
     return summary
 
 
