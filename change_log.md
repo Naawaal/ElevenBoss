@@ -2,6 +2,18 @@
 
 Hey Managers!
 
+## Snappier hubs & rankings
+
+Under-the-hood speed work so everyday screens hitch less:
+
+- **`/leaderboard`** (Division & Global) loads one page at a time — no more dragging the whole division into Discord
+- **Marketplace** hub, Transfer Board filters/sorts, and Sell to Agent open from a single server load
+- **`/development`** opens faster; the Legendary thank-you gift is only prepared when you **claim**, not just by opening the hub
+- Skill allocation and Mentor target lists pull in fewer round-trips
+
+Same buttons and rules — they should just feel quicker. Match Engine V3 soak continues in the background (bot / friendly / league); no change to how you play unless we announce a cutover.
+
+---
 ## Player potential by rarity
 
 Player **potential** is capped by rarity for good — forever:

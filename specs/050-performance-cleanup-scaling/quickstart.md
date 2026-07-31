@@ -85,12 +85,17 @@ python -m pytest tests/test_config_cache.py tests/test_cache_backend.py -q  # as
 
 ---
 
-## Phase 5 — Flag maturity (separate release)
+## Phase 5 — Flag maturity / V3 soak (separate release)
 
-1. Inventory Mentor / V3 / league flags (from research).  
-2. Soak V3 all modes = 1; monitor failures/settlement.  
-3. Only then default V3, stop new V2, drain, delete V2 execution.  
-4. **Do not** combine with Phase 2 RPC deploy.
+**Do not** combine with Phase 2 RPC deploy. **Do not** run load scripts here.
+
+1. Confirm 090–093 (+091/092 indexes) on soak DB: `python scratch/check_050_us7_soak_ready.py`
+2. Discord smoke (hubs + `/admin` Performance) — see [ops-v3-soak-log.md](./ops-v3-soak-log.md)
+3. Staged flags (or continue if already Stage 3): see [contracts/flag-maturity-checklist.md](./contracts/flag-maturity-checklist.md)
+4. Track: `python scratch/ops_match_v3_rollout.py soak-report --days 14`
+5. Only after exit criteria: T052 V3 default → T053 stop new V2 → drain → T054 delete V2 execution
+
+Keep V2 code for rollback entire soak (`rollback-mode <type>`).
 
 ---
 

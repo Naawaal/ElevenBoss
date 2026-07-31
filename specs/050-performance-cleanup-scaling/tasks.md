@@ -201,7 +201,7 @@
 ### Implementation for User Story 7
 
 - [x] T050 [US7] Produce soak checklist in `specs/050-performance-cleanup-scaling/contracts/flag-maturity-checklist.md` (introduced_at, remove_after, owner, rollback) for Mentor + three V3 keys + league flags
-- [ ] T051 [US7] Ops: enable `match_engine_v3_bot/friendly/league = 1` for agreed soak; track completion/recovery/settlement metrics (link `044` notes)
+- [ ] T051 [US7] Ops: staged V3 soak + metrics — tooling live (`ops_match_v3_rollout.py soak-report` / stages); flags already Stage 3 on current DB; window started 2026-07-31 in `ops-v3-soak-log.md`. Complete human smoke + exit criteria before T052 (do **not** flip defaults / delete V2 yet)
 - [ ] T052 [US7] After soak: change `resolve_engine_version` defaults in `apps/discord_bot/core/match_runs.py` to prefer V3 when config row absent; keep emergency rollback keys temporarily
 - [ ] T053 [US7] Stop creating new V2 runs; retain V2 recovery readability until drain confirmed
 - [ ] T054 [US7] After no active/recoverable V2 runs: remove `packages/match_engine/match_engine/v2_simulator.py` and V2 branches in `battle_cog.py`, `league_cog.py`, `match_runs.py`, `match_recovery.py` — **not** shared models/formations
