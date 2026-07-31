@@ -83,19 +83,21 @@ All Technical Context unknowns resolved against the live repo (post-`038`/`039`/
 
 ## R8 — Indexes
 
-**Decision**: Candidate indexes only after EXPLAIN on production-like data:
+**Decision** (measured 2026-07-31 via `scratch/explain_050_hot_paths.py`):
 
-| Candidate | Purpose |
-|-----------|---------|
-| `players (division, league_points DESC, goal_difference DESC, discord_id) WHERE NOT is_ai` | Division page |
-| `players (global_lp DESC, discord_id) WHERE NOT is_ai` | Global page |
-| `player_cards (owner_id, overall DESC, id)` | Rosters / sell / skills |
-| `active_evolutions (owner_id, status, card_id)` | Eligibility |
-| Transfer listing composites matching final browse sorts | Market browse |
+| Index | Migration | Evidence | Outcome |
+|-------|-----------|----------|---------|
+| `idx_players_global_lp_human` | 091 | Seq Scan + Sort on global window | Index Only Scan when forced; planner may seqscan at ~30 humans |
+| `idx_players_division_lb_human` | 091 | Division Index + Sort | After 092: Index Only Scan, **no Sort** (0.088 ms) |
+| Drop `idx_players_division` | 092 | Bare index stole plans from composite | Required for ordered LB scan |
+| `idx_league_fixtures_season_played` | 091 | Bitmap season + Filter removed 56/56 | Index Scan 1.45→0.13 ms |
+| Market browse sorts | — | `transfer_listings_status_expires_idx` already; Sort of 6 actives | **Waived (T036)** |
+| `player_cards` owner composites | — | `idx_player_cards_owner` + anti-joins indexed | **Waived** |
+| skills/mentor/hub | — | PK / owner / seller_status already | **Waived** |
 
-Do not duplicate existing uniques from `080+`.
+Snapshots: `scratch/explain_snapshots/20260731T142205Z_050_*` (before), `…142345Z…` (after 091), `20260731_after092_*` (after 092).
 
-**Rationale**: Spec FR-036 / Supabase guidance — indexes cost writes.
+**Rationale**: Spec FR-036 — no index without EXPLAIN.
 
 ---
 
@@ -125,8 +127,9 @@ Do not duplicate existing uniques from `080+`.
 
 ## R12 — Migration numbering
 
-**Decision**: Next free migration prefix **090+** (latest applied in repo: `089_validate_potential_integrity.sql`). Suggested split: `090` read RPCs → `091`/`092` indexes after EXPLAIN → `093` measured leftovers → `094` outbox hardening.
+**Decision**: `090` read RPCs → `091` measured indexes → `092` drop bare division index → `093` hub-state RPCs (already shipped) → next free **`094+`** for outbox/jobs.
 
+---
 **Rationale**: Schema Rule / AGENTS §8.
 
 ---

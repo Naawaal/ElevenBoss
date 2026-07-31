@@ -1,0 +1,16 @@
+WindowAgg  (cost=0.86..6.50 rows=11 width=24) (actual time=0.037..0.055 rows=14 loops=1)
+  Buffers: shared hit=16
+  InitPlan 1
+    ->  Limit  (cost=0.00..0.16 rows=1 width=10) (actual time=0.015..0.015 rows=1 loops=1)
+          Buffers: shared hit=2
+          ->  Seq Scan on players  (cost=0.00..6.86 rows=43 width=10) (actual time=0.014..0.014 rows=1 loops=1)
+                Filter: (NOT COALESCE(is_ai, false))
+                Buffers: shared hit=2
+  ->  Index Only Scan using idx_players_division_lb_human on players p  (cost=0.14..6.12 rows=11 width=16) (actual time=0.032..0.043 rows=14 loops=1)
+        Index Cond: (division = (InitPlan 1).col1)
+        Heap Fetches: 14
+        Buffers: shared hit=16
+Planning:
+  Buffers: shared hit=17
+Planning Time: 0.216 ms
+Execution Time: 0.088 ms

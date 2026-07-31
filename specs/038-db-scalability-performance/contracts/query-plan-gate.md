@@ -20,6 +20,10 @@ Before merging a consolidated hot-path read (dashboard RPC or nested PostgREST s
 | Date | Hot path | Change | Before ms | After ms | Decision |
 |------|----------|--------|-----------|----------|----------|
 | 2026-07-22 | league_fixtures / economy_ledger | Add idx season+matchday, unplayed partial, ledger club+created | pattern-based | **0.081 ms** fixtures season+matchday after 080 (Bitmap Index Scan on `idx_league_fixtures_season_matchday`) | **Ship 080** — confirmed via `scratch/explain_snapshots/20260722T133827Z_*.txt` |
+| 2026-07-31 | standings played fixtures | `idx_league_fixtures_season_played` (091) | **1.452 ms** Bitmap season + Filter removed 56/56 | **0.126 ms** Index Scan played partial | **Ship 091** — `20260731T142205Z` → `142345Z` |
+| 2026-07-31 | division LB window | `idx_players_division_lb_human` + drop bare `idx_players_division` (091/092) | Index Scan bare division + **Sort** (~0.16 ms) | **Index Only Scan**, no Sort (**0.088 ms**) | **Ship 091+092** — `20260731_after092_div_after_092.txt` |
+| 2026-07-31 | global LB window | `idx_players_global_lp_human` (091) | Seq Scan + Sort (tiny N) | Index Only Scan when seqscan disabled (`forced_index_use.txt`); planner still seqscans at ~30 humans | **Ship 091** — growth path; revisit if seqscan persists at larger N |
+| 2026-07-31 | Transfer Board browse | none | Index Scan `transfer_listings_status_expires_idx` + tiny Sort (6 rows) | n/a | **Waive T036** — no new index |
 
 ## Indexes
 

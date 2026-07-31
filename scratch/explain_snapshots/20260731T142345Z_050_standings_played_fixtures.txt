@@ -1,0 +1,16 @@
+Index Scan using idx_league_fixtures_season_played on league_fixtures  (cost=1.32..3.54 rows=1 width=40) (actual time=0.095..0.096 rows=0 loops=1)
+  Index Cond: (season_id = (InitPlan 1).col1)
+  Buffers: shared hit=1 read=1
+  InitPlan 1
+    ->  Limit  (cost=1.18..1.18 rows=1 width=24) (actual time=0.060..0.060 rows=1 loops=1)
+          Buffers: shared hit=1
+          ->  Sort  (cost=1.18..1.21 rows=12 width=24) (actual time=0.059..0.059 rows=1 loops=1)
+                Sort Key: league_seasons.created_at DESC NULLS LAST
+                Sort Method: top-N heapsort  Memory: 25kB
+                Buffers: shared hit=1
+                ->  Seq Scan on league_seasons  (cost=0.00..1.12 rows=12 width=24) (actual time=0.047..0.050 rows=14 loops=1)
+                      Buffers: shared hit=1
+Planning:
+  Buffers: shared hit=12 read=1
+Planning Time: 0.352 ms
+Execution Time: 0.126 ms

@@ -112,7 +112,7 @@
 - [x] T026 [US3] Add `scratch/apply_migration_090.py`; apply on dev; run verify
 - [x] T027 [US3] Wire `apps/discord_bot/cogs/leaderboard_cog.py` `_division_embed` / global embed to page RPCs via `cursors.py`; remove unbounded `.select` without limit; keep page size 10
 - [x] T028 [P] [US3] Update `LeaderboardView` pagination custom_ids in `apps/discord_bot/cogs/leaderboard_cog.py` (or views module) to carry opaque cursors instead of offset page index if required
-- [ ] T029 [US3] After EXPLAIN evidence, add `supabase/migrations/091_leaderboard_cursor_indexes.sql` for proven division/global indexes only; apply + verify; do not ship speculative duplicates of `080+`
+- [x] T029 [US3] Measured leaderboard indexes in `091_measured_hot_path_indexes.sql` + `092_prefer_division_lb_index.sql` (EXPLAIN snapshots `scratch/explain_snapshots/20260731T142205Z_050_*` / `20260731_after092_*`); not speculative duplicates of `080+`
 
 **Checkpoint**: US3 — leaderboard scale path fixed (highest-value read)
 
@@ -137,7 +137,7 @@
 - [x] T033 [US4] Replace `_board_listings` in `apps/discord_bot/views/marketplace_transfer.py` with `browse_transfer_market` RPC; delete Python position/OVR/age/POT filter loop used for correctness
 - [x] T034 [US4] Replace 5-gather sell path in `apps/discord_bot/cogs/marketplace_cog.py` `show_sell_menu` with `get_market_sell_eligible_cards`
 - [x] T035 [US4] Replace hub gather+count in `apps/discord_bot/cogs/marketplace_cog.py` `show_marketplace_hub` with `get_marketplace_hub_state`
-- [ ] T036 [US4] After EXPLAIN, add `supabase/migrations/092_market_browse_rpc_indexes.sql` for proven listing indexes matching final sort modes; apply + verify
+- [x] T036 [US4] Waived after EXPLAIN — `transfer_listings_status_expires_idx` already used; Sort only ~6 active rows (`browse_active_*` snapshots). No market-index migration; `092` used for division index prefer instead
 
 **Checkpoint**: US4 — market browse correct at scale; sell/hub consolidated
 
@@ -238,7 +238,7 @@
 
 **Purpose**: Indexes from evidence, load suite, UI dead-code sweep, docs, regression budgets
 
-- [ ] T064 [P] Add remaining measured indexes via `supabase/migrations/093_measured_hot_indexes.sql` only with EXPLAIN before/after attached to PR notes; extend verify guards
+- [x] T064 [P] Remaining measured index (`idx_league_fixtures_season_played`) shipped in `091_measured_hot_path_indexes.sql` (`093` is hub-state RPCs). Before/after in query-plan-gate + research R8
 - [ ] T065 [P] Implement `scripts/load/leaderboard_read.py`, `marketplace_browse.py`, `development_hub.py`, `profile_read.py`, `mixed_workload.py` against staging RPCs (never production Discord)
 - [ ] T066 Run mixed load stages (10→…→stop at knee); record saturation notes in `specs/050-performance-cleanup-scaling/research.md`
 - [ ] T067 Using T022 catalog, delete confirmed-dead placeholder Views/modals/“Coming Soon” with no planned use under `apps/discord_bot/views/` / `cogs/` / `embeds/` — preserve persistent custom_ids still referenced by old messages

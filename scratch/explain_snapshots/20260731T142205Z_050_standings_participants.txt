@@ -1,0 +1,3 @@
+ERROR: column lp.id does not exist
+LINE 3: SELECT lp.id, lp.season_id, lp.division_tier
+               ^

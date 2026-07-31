@@ -1,0 +1,17 @@
+Aggregate  (cost=5.65..5.66 rows=1 width=4) (actual time=0.105..0.106 rows=1 loops=1)
+  Buffers: shared hit=9
+  InitPlan 1
+    ->  Limit  (cost=0.00..0.16 rows=1 width=10) (actual time=0.021..0.021 rows=1 loops=1)
+          Buffers: shared hit=2
+          ->  Seq Scan on players players_1  (cost=0.00..6.86 rows=43 width=10) (actual time=0.019..0.020 rows=1 loops=1)
+                Filter: (NOT COALESCE(is_ai, false))
+                Buffers: shared hit=2
+  ->  Index Scan using idx_players_division on players  (cost=0.14..5.46 rows=11 width=0) (actual time=0.067..0.100 rows=14 loops=1)
+        Index Cond: (division = (InitPlan 1).col1)
+        Filter: (NOT COALESCE(is_ai, false))
+        Rows Removed by Filter: 45
+        Buffers: shared hit=9
+Planning:
+  Buffers: shared hit=19 read=2
+Planning Time: 0.486 ms
+Execution Time: 0.143 ms

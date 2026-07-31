@@ -1,0 +1,29 @@
+## global
+WindowAgg  (cost=0.36..9.80 rows=43 width=20) (actual time=0.033..0.068 rows=30 loops=1)
+  Buffers: shared hit=23
+  ->  Index Only Scan using idx_players_global_lp_human on players p  (cost=0.14..9.04 rows=43 width=12) (actual time=0.027..0.050 rows=30 loops=1)
+        Heap Fetches: 30
+        Buffers: shared hit=23
+Planning Time: 0.101 ms
+Execution Time: 0.098 ms
+
+## division
+WindowAgg  (cost=6.00..6.23 rows=11 width=24) (actual time=0.080..0.086 rows=12 loops=1)
+  Buffers: shared hit=10
+  InitPlan 1
+    ->  Limit  (cost=0.14..0.33 rows=1 width=10) (actual time=0.018..0.019 rows=1 loops=1)
+          Buffers: shared hit=3
+          ->  Index Only Scan using idx_players_division_lb_human on players  (cost=0.14..8.31 rows=43 width=10) (actual time=0.018..0.018 rows=1 loops=1)
+                Heap Fetches: 1
+                Buffers: shared hit=3
+  ->  Sort  (cost=5.65..5.68 rows=11 width=16) (actual time=0.075..0.076 rows=12 loops=1)
+        Sort Key: p.league_points DESC, p.goal_difference DESC, p.discord_id
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=10
+        ->  Index Scan using idx_players_division on players p  (cost=0.14..5.46 rows=11 width=16) (actual time=0.044..0.062 rows=12 loops=1)
+              Index Cond: (division = (InitPlan 1).col1)
+              Filter: (NOT COALESCE(is_ai, false))
+              Rows Removed by Filter: 11
+              Buffers: shared hit=10
+Planning Time: 0.173 ms
+Execution Time: 0.137 ms

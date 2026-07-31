@@ -1,0 +1,14 @@
+Aggregate  (cost=2.53..2.54 rows=1 width=4) (actual time=0.064..0.065 rows=1 loops=1)
+  Buffers: shared hit=3
+  InitPlan 1
+    ->  Limit  (cost=0.00..0.16 rows=1 width=8) (actual time=0.025..0.025 rows=1 loops=1)
+          Buffers: shared hit=2
+          ->  Seq Scan on players  (cost=0.00..6.86 rows=43 width=8) (actual time=0.024..0.024 rows=1 loops=1)
+                Filter: (NOT COALESCE(is_ai, false))
+                Buffers: shared hit=2
+  ->  Index Only Scan using transfer_listings_seller_status_idx on transfer_listings  (cost=0.15..2.37 rows=1 width=0) (actual time=0.062..0.062 rows=0 loops=1)
+        Index Cond: ((seller_id = (InitPlan 1).col1) AND (status = 'active'::text))
+        Heap Fetches: 0
+        Buffers: shared hit=3
+Planning Time: 0.156 ms
+Execution Time: 0.099 ms

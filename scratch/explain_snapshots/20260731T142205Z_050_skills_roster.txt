@@ -1,0 +1,22 @@
+Sort  (cost=33.85..33.90 rows=18 width=34) (actual time=0.071..0.073 rows=11 loops=1)
+  Sort Key: c.overall DESC
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=13
+  InitPlan 1
+    ->  Limit  (cost=0.00..0.16 rows=1 width=8) (actual time=0.015..0.015 rows=1 loops=1)
+          Buffers: shared hit=2
+          ->  Seq Scan on players  (cost=0.00..6.86 rows=43 width=8) (actual time=0.014..0.014 rows=1 loops=1)
+                Filter: (NOT COALESCE(is_ai, false))
+                Buffers: shared hit=2
+  ->  Bitmap Heap Scan on player_cards c  (cost=1.65..33.32 rows=18 width=34) (actual time=0.035..0.054 rows=11 loops=1)
+        Recheck Cond: (owner_id = (InitPlan 1).col1)
+        Filter: (NOT COALESCE(in_academy, false))
+        Heap Blocks: exact=9
+        Buffers: shared hit=13
+        ->  Bitmap Index Scan on idx_player_cards_owner  (cost=0.00..1.65 rows=36 width=0) (actual time=0.028..0.028 rows=11 loops=1)
+              Index Cond: (owner_id = (InitPlan 1).col1)
+              Buffers: shared hit=4
+Planning:
+  Buffers: shared hit=32
+Planning Time: 0.320 ms
+Execution Time: 0.109 ms

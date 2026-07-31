@@ -1,0 +1,173 @@
+## div_lb_count_filter
+Aggregate  (cost=5.65..5.66 rows=1 width=4) (actual time=2.119..2.120 rows=1 loops=1)
+    ->  Limit  (cost=0.00..0.16 rows=1 width=10) (actual time=0.091..0.092 rows=1 loops=1)
+          ->  Seq Scan on players players_1  (cost=0.00..6.86 rows=43 width=10) (actual time=0.090..0.090 rows=1 loops=1)
+  ->  Index Scan using idx_players_division on players  (cost=0.14..5.46 rows=11 width=0) (actual time=0.722..2.111 rows=14 loops=1)
+        Index Cond: (division = (InitPlan 1).col1)
+Planning:
+Planning Time: 0.330 ms
+Execution Time: 2.174 ms
+
+## div_lb_rank_window
+WindowAgg  (cost=5.83..6.06 rows=11 width=37) (actual time=0.094..0.100 rows=14 loops=1)
+    ->  Limit  (cost=0.00..0.16 rows=1 width=10) (actual time=0.014..0.015 rows=1 loops=1)
+          ->  Seq Scan on players  (cost=0.00..6.86 rows=43 width=10) (actual time=0.013..0.014 rows=1 loops=1)
+  ->  Sort  (cost=5.65..5.68 rows=11 width=29) (actual time=0.087..0.088 rows=14 loops=1)
+        Sort Key: p.league_points DESC, p.goal_difference DESC, p.discord_id
+        Sort Method: quicksort  Memory: 25kB
+        ->  Index Scan using idx_players_division on players p  (cost=0.14..5.46 rows=11 width=29) (actual time=0.029..0.059 rows=14 loops=1)
+              Index Cond: (division = (InitPlan 1).col1)
+Planning:
+Planning Time: 0.220 ms
+Execution Time: 0.159 ms
+
+## div_lb_viewer_rank
+Aggregate  (cost=6.02..6.03 rows=1 width=4) (actual time=0.068..0.069 rows=1 loops=1)
+  ->  Nested Loop  (cost=0.14..6.00 rows=8 width=0) (actual time=0.056..0.065 rows=1 loops=1)
+        ->  Limit  (cost=0.00..0.16 rows=1 width=26) (actual time=0.016..0.017 rows=1 loops=1)
+              ->  Seq Scan on players  (cost=0.00..6.86 rows=43 width=26) (actual time=0.016..0.016 rows=1 loops=1)
+        ->  Index Scan using idx_players_division on players p  (cost=0.14..5.79 rows=4 width=26) (actual time=0.038..0.046 rows=1 loops=1)
+              Index Cond: (division = players.division)
+Planning:
+Planning Time: 0.339 ms
+Execution Time: 0.118 ms
+
+## global_lb_window
+WindowAgg  (cost=8.05..8.89 rows=43 width=33) (actual time=0.086..0.097 rows=30 loops=1)
+  ->  Sort  (cost=8.03..8.13 rows=43 width=25) (actual time=0.081..0.083 rows=30 loops=1)
+        Sort Key: global_lp DESC, discord_id
+        Sort Method: quicksort  Memory: 26kB
+        ->  Seq Scan on players p  (cost=0.00..6.86 rows=43 width=25) (actual time=0.015..0.066 rows=30 loops=1)
+Planning:
+Planning Time: 0.094 ms
+Execution Time: 0.128 ms
+
+## browse_active_newest
+Limit  (cost=4.88..4.89 rows=1 width=47) (actual time=1.379..1.382 rows=6 loops=1)
+  ->  Sort  (cost=4.88..4.89 rows=1 width=47) (actual time=1.378..1.379 rows=6 loops=1)
+        Sort Key: tl.created_at DESC, tl.id DESC
+        Sort Method: quicksort  Memory: 25kB
+        ->  Nested Loop  (cost=0.43..4.87 rows=1 width=47) (actual time=1.202..1.347 rows=6 loops=1)
+              ->  Index Scan using transfer_listings_status_expires_idx on transfer_listings tl  (cost=0.15..2.37 rows=1 width=56) (actual time=1.164..1.167 rows=6 loops=1)
+                    Index Cond: ((status = 'active'::text) AND (expires_at > now()))
+              ->  Index Scan using player_cards_pkey on player_cards pc  (cost=0.28..2.50 rows=1 width=23) (actual time=0.029..0.029 rows=1 loops=6)
+                    Index Cond: (id = tl.card_id)
+Planning:
+Planning Time: 1.332 ms
+Execution Time: 1.434 ms
+
+## browse_active_price
+Limit  (cost=4.88..4.89 rows=1 width=36) (actual time=0.058..0.060 rows=6 loops=1)
+  ->  Sort  (cost=4.88..4.89 rows=1 width=36) (actual time=0.057..0.058 rows=6 loops=1)
+        Sort Key: tl.price_coins, tl.created_at DESC, tl.id DESC
+        Sort Method: quicksort  Memory: 25kB
+        ->  Nested Loop  (cost=0.43..4.87 rows=1 width=36) (actual time=0.024..0.048 rows=6 loops=1)
+              ->  Index Scan using transfer_listings_status_expires_idx on transfer_listings tl  (cost=0.15..2.37 rows=1 width=48) (actual time=0.013..0.016 rows=6 loops=1)
+                    Index Cond: ((status = 'active'::text) AND (expires_at > now()))
+              ->  Index Scan using player_cards_pkey on player_cards pc  (cost=0.28..2.50 rows=1 width=20) (actual time=0.004..0.004 rows=1 loops=6)
+                    Index Cond: (id = tl.card_id)
+Planning Time: 0.224 ms
+Execution Time: 0.091 ms
+
+## browse_active_ovr
+Limit  (cost=4.88..4.89 rows=1 width=36) (actual time=0.058..0.060 rows=6 loops=1)
+  ->  Sort  (cost=4.88..4.89 rows=1 width=36) (actual time=0.057..0.058 rows=6 loops=1)
+        Sort Key: pc.overall DESC, tl.created_at DESC, tl.id DESC
+        Sort Method: quicksort  Memory: 25kB
+        ->  Nested Loop  (cost=0.43..4.87 rows=1 width=36) (actual time=0.023..0.048 rows=6 loops=1)
+              ->  Index Scan using transfer_listings_status_expires_idx on transfer_listings tl  (cost=0.15..2.37 rows=1 width=48) (actual time=0.014..0.017 rows=6 loops=1)
+                    Index Cond: ((status = 'active'::text) AND (expires_at > now()))
+              ->  Index Scan using player_cards_pkey on player_cards pc  (cost=0.28..2.50 rows=1 width=20) (actual time=0.004..0.004 rows=1 loops=6)
+                    Index Cond: (id = tl.card_id)
+Planning Time: 0.207 ms
+Execution Time: 0.094 ms
+
+## sell_eligible
+Sort  (cost=62.77..62.80 rows=9 width=20) (actual time=0.211..0.213 rows=0 loops=1)
+  Sort Key: pc.overall DESC
+  Sort Method: quicksort  Memory: 25kB
+    ->  Limit  (cost=0.00..0.16 rows=1 width=8) (actual time=0.018..0.018 rows=1 loops=1)
+          ->  Seq Scan on players  (cost=0.00..6.86 rows=43 width=8) (actual time=0.017..0.017 rows=1 loops=1)
+  ->  Nested Loop Anti Join  (cost=6.68..62.47 rows=9 width=20) (actual time=0.199..0.201 rows=0 loops=1)
+        ->  Nested Loop Anti Join  (cost=6.53..59.96 rows=9 width=28) (actual time=0.199..0.201 rows=0 loops=1)
+              ->  Nested Loop Anti Join  (cost=6.53..40.66 rows=9 width=28) (actual time=0.199..0.200 rows=0 loops=1)
+                    ->  Hash Anti Join  (cost=6.38..38.16 rows=9 width=28) (actual time=0.198..0.199 rows=0 loops=1)
+                                ->  Bitmap Index Scan on idx_player_cards_owner  (cost=0.00..1.65 rows=36 width=0) (actual time=0.064..0.064 rows=11 loops=1)
+                                      Index Cond: (owner_id = (InitPlan 1).col1)
+                          ->  Hash  (cost=4.60..4.60 rows=11 width=24) (actual time=0.074..0.074 rows=11 loops=1)
+                                      ->  Bitmap Index Scan on squad_assignments_discord_id_position_slot_key  (cost=0.00..1.46 rows=11 width=0) (actual time=0.046..0.046 rows=11 loops=1)
+                                            Index Cond: (discord_id = (InitPlan 1).col1)
+                    ->  Materialize  (cost=0.14..2.37 rows=1 width=24) (never executed)
+                          ->  Index Scan using idx_active_evolutions_owner_status on active_evolutions ae  (cost=0.14..2.36 rows=1 width=24) (never executed)
+                                Index Cond: ((owner_id = (InitPlan 1).col1) AND (status = 'active'::text))
+              ->  Materialize  (cost=0.00..18.77 rows=4 width=24) (never executed)
+                    ->  Seq Scan on active_training at  (cost=0.00..18.75 rows=4 width=24) (never executed)
+        ->  Materialize  (cost=0.15..2.37 rows=1 width=24) (never executed)
+
+## hub_listing_count
+Aggregate  (cost=2.53..2.54 rows=1 width=4) (actual time=0.034..0.034 rows=1 loops=1)
+    ->  Limit  (cost=0.00..0.16 rows=1 width=8) (actual time=0.016..0.016 rows=1 loops=1)
+          ->  Seq Scan on players  (cost=0.00..6.86 rows=43 width=8) (actual time=0.015..0.015 rows=1 loops=1)
+  ->  Index Only Scan using transfer_listings_seller_status_idx on transfer_listings  (cost=0.15..2.37 rows=1 width=0) (actual time=0.032..0.032 rows=0 loops=1)
+        Index Cond: ((seller_id = (InitPlan 1).col1) AND (status = 'active'::text))
+Planning Time: 0.135 ms
+Execution Time: 0.068 ms
+
+## skills_roster
+Sort  (cost=33.85..33.90 rows=18 width=34) (actual time=0.071..0.073 rows=11 loops=1)
+  Sort Key: c.overall DESC
+  Sort Method: quicksort  Memory: 25kB
+    ->  Limit  (cost=0.00..0.16 rows=1 width=8) (actual time=0.015..0.015 rows=1 loops=1)
+          ->  Seq Scan on players  (cost=0.00..6.86 rows=43 width=8) (actual time=0.014..0.014 rows=1 loops=1)
+  ->  Bitmap Heap Scan on player_cards c  (cost=1.65..33.32 rows=18 width=34) (actual time=0.035..0.054 rows=11 loops=1)
+        ->  Bitmap Index Scan on idx_player_cards_owner  (cost=0.00..1.65 rows=36 width=0) (actual time=0.028..0.028 rows=11 loops=1)
+              Index Cond: (owner_id = (InitPlan 1).col1)
+Planning:
+Planning Time: 0.320 ms
+Execution Time: 0.109 ms
+
+## mentor_targets
+Sort  (cost=38.20..38.20 rows=2 width=45) (actual time=0.126..0.128 rows=11 loops=1)
+  Sort Key: (COALESCE(c.level, 1))
+  Sort Method: quicksort  Memory: 25kB
+    ->  Limit  (cost=0.00..0.16 rows=1 width=8) (actual time=0.014..0.015 rows=1 loops=1)
+          ->  Seq Scan on players  (cost=0.00..6.86 rows=43 width=8) (actual time=0.013..0.014 rows=1 loops=1)
+  ->  Nested Loop Anti Join  (cost=2.91..38.03 rows=2 width=45) (actual time=0.086..0.118 rows=11 loops=1)
+        ->  Bitmap Heap Scan on player_cards c  (cost=1.65..33.50 rows=2 width=41) (actual time=0.032..0.051 rows=11 loops=1)
+              ->  Bitmap Index Scan on idx_player_cards_owner  (cost=0.00..1.65 rows=36 width=0) (actual time=0.024..0.024 rows=11 loops=1)
+                    Index Cond: (owner_id = (InitPlan 1).col1)
+        ->  Materialize  (cost=1.26..4.45 rows=3 width=16) (actual time=0.005..0.005 rows=6 loops=11)
+                    ->  Bitmap Index Scan on transfer_listings_one_active_card_uidx  (cost=0.00..1.26 rows=3 width=0) (actual time=0.041..0.041 rows=10 loops=1)
+Planning:
+Planning Time: 0.276 ms
+Execution Time: 0.175 ms
+
+## pending_rewards_count
+Aggregate  (cost=5.41..5.42 rows=1 width=4) (actual time=0.025..0.025 rows=1 loops=1)
+    ->  Limit  (cost=0.00..0.16 rows=1 width=8) (never executed)
+          ->  Seq Scan on players  (cost=0.00..6.86 rows=43 width=8) (never executed)
+  ->  Nested Loop  (cost=0.28..5.25 rows=1 width=0) (actual time=0.022..0.022 rows=0 loops=1)
+        ->  Seq Scan on pending_level_rewards pr  (cost=0.00..2.63 rows=1 width=16) (actual time=0.021..0.021 rows=0 loops=1)
+        ->  Index Scan using player_cards_pkey on player_cards c  (cost=0.28..2.50 rows=1 width=16) (never executed)
+              Index Cond: (id = pr.player_id)
+Planning:
+Planning Time: 2.465 ms
+Execution Time: 0.075 ms
+
+## standings_participants
+ERROR: column lp.id does not exist
+LINE 3: SELECT lp.id, lp.season_id, lp.division_tier
+               ^
+
+## standings_played_fixtures
+Bitmap Heap Scan on league_fixtures  (cost=2.98..17.68 rows=1 width=40) (actual time=1.415..1.417 rows=0 loops=1)
+    ->  Limit  (cost=1.18..1.18 rows=1 width=24) (actual time=0.048..0.049 rows=1 loops=1)
+          ->  Sort  (cost=1.18..1.21 rows=12 width=24) (actual time=0.047..0.048 rows=1 loops=1)
+                Sort Key: league_seasons.created_at DESC NULLS LAST
+                Sort Method: top-N heapsort  Memory: 25kB
+                ->  Seq Scan on league_seasons  (cost=0.00..1.12 rows=12 width=24) (actual time=0.015..0.020 rows=14 loops=1)
+  ->  Bitmap Index Scan on idx_league_fixtures_season_matchday  (cost=0.00..1.79 rows=56 width=0) (actual time=0.711..0.711 rows=56 loops=1)
+        Index Cond: (season_id = (InitPlan 1).col1)
+Planning:
+Planning Time: 1.061 ms
+Execution Time: 1.452 ms

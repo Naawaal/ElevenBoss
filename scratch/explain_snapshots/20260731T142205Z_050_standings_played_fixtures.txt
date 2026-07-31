@@ -1,0 +1,22 @@
+Bitmap Heap Scan on league_fixtures  (cost=2.98..17.68 rows=1 width=40) (actual time=1.415..1.417 rows=0 loops=1)
+  Recheck Cond: (season_id = (InitPlan 1).col1)
+  Filter: is_played
+  Rows Removed by Filter: 56
+  Heap Blocks: exact=2
+  Buffers: shared hit=5
+  InitPlan 1
+    ->  Limit  (cost=1.18..1.18 rows=1 width=24) (actual time=0.048..0.049 rows=1 loops=1)
+          Buffers: shared hit=1
+          ->  Sort  (cost=1.18..1.21 rows=12 width=24) (actual time=0.047..0.048 rows=1 loops=1)
+                Sort Key: league_seasons.created_at DESC NULLS LAST
+                Sort Method: top-N heapsort  Memory: 25kB
+                Buffers: shared hit=1
+                ->  Seq Scan on league_seasons  (cost=0.00..1.12 rows=12 width=24) (actual time=0.015..0.020 rows=14 loops=1)
+                      Buffers: shared hit=1
+  ->  Bitmap Index Scan on idx_league_fixtures_season_matchday  (cost=0.00..1.79 rows=56 width=0) (actual time=0.711..0.711 rows=56 loops=1)
+        Index Cond: (season_id = (InitPlan 1).col1)
+        Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=70
+Planning Time: 1.061 ms
+Execution Time: 1.452 ms

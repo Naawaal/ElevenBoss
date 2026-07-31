@@ -1,0 +1,18 @@
+Aggregate  (cost=6.02..6.03 rows=1 width=4) (actual time=0.068..0.069 rows=1 loops=1)
+  Buffers: shared hit=9
+  ->  Nested Loop  (cost=0.14..6.00 rows=8 width=0) (actual time=0.056..0.065 rows=1 loops=1)
+        Buffers: shared hit=9
+        ->  Limit  (cost=0.00..0.16 rows=1 width=26) (actual time=0.016..0.017 rows=1 loops=1)
+              Buffers: shared hit=2
+              ->  Seq Scan on players  (cost=0.00..6.86 rows=43 width=26) (actual time=0.016..0.016 rows=1 loops=1)
+                    Filter: (NOT COALESCE(is_ai, false))
+                    Buffers: shared hit=2
+        ->  Index Scan using idx_players_division on players p  (cost=0.14..5.79 rows=4 width=26) (actual time=0.038..0.046 rows=1 loops=1)
+              Index Cond: (division = players.division)
+              Filter: ((NOT COALESCE(is_ai, false)) AND ((league_points > COALESCE(players.league_points, '-1'::integer)) OR ((league_points = COALESCE(players.league_points, '-1'::integer)) AND (goal_difference > COALESCE(players.goal_difference, '-999999'::integer))) OR ((league_points = COALESCE(players.league_points, '-1'::integer)) AND (goal_difference = COALESCE(players.goal_difference, '-999999'::integer)) AND (discord_id < players.discord_id))))
+              Rows Removed by Filter: 58
+              Buffers: shared hit=7
+Planning:
+  Buffers: shared hit=69
+Planning Time: 0.339 ms
+Execution Time: 0.118 ms

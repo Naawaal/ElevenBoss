@@ -1,0 +1,21 @@
+WindowAgg  (cost=5.83..6.06 rows=11 width=37) (actual time=0.094..0.100 rows=14 loops=1)
+  Buffers: shared hit=15
+  InitPlan 1
+    ->  Limit  (cost=0.00..0.16 rows=1 width=10) (actual time=0.014..0.015 rows=1 loops=1)
+          Buffers: shared hit=2
+          ->  Seq Scan on players  (cost=0.00..6.86 rows=43 width=10) (actual time=0.013..0.014 rows=1 loops=1)
+                Filter: (NOT COALESCE(is_ai, false))
+                Buffers: shared hit=2
+  ->  Sort  (cost=5.65..5.68 rows=11 width=29) (actual time=0.087..0.088 rows=14 loops=1)
+        Sort Key: p.league_points DESC, p.goal_difference DESC, p.discord_id
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=15
+        ->  Index Scan using idx_players_division on players p  (cost=0.14..5.46 rows=11 width=29) (actual time=0.029..0.059 rows=14 loops=1)
+              Index Cond: (division = (InitPlan 1).col1)
+              Filter: (NOT COALESCE(is_ai, false))
+              Rows Removed by Filter: 45
+              Buffers: shared hit=9
+Planning:
+  Buffers: shared hit=35
+Planning Time: 0.220 ms
+Execution Time: 0.159 ms

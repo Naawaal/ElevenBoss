@@ -1,0 +1,16 @@
+Limit  (cost=4.88..4.89 rows=1 width=36) (actual time=0.058..0.060 rows=6 loops=1)
+  Buffers: shared hit=20
+  ->  Sort  (cost=4.88..4.89 rows=1 width=36) (actual time=0.057..0.058 rows=6 loops=1)
+        Sort Key: tl.price_coins, tl.created_at DESC, tl.id DESC
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=20
+        ->  Nested Loop  (cost=0.43..4.87 rows=1 width=36) (actual time=0.024..0.048 rows=6 loops=1)
+              Buffers: shared hit=20
+              ->  Index Scan using transfer_listings_status_expires_idx on transfer_listings tl  (cost=0.15..2.37 rows=1 width=48) (actual time=0.013..0.016 rows=6 loops=1)
+                    Index Cond: ((status = 'active'::text) AND (expires_at > now()))
+                    Buffers: shared hit=2
+              ->  Index Scan using player_cards_pkey on player_cards pc  (cost=0.28..2.50 rows=1 width=20) (actual time=0.004..0.004 rows=1 loops=6)
+                    Index Cond: (id = tl.card_id)
+                    Buffers: shared hit=18
+Planning Time: 0.224 ms
+Execution Time: 0.091 ms

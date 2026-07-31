@@ -1,0 +1,32 @@
+Sort  (cost=38.20..38.20 rows=2 width=45) (actual time=0.136..0.138 rows=11 loops=1)
+  Sort Key: (COALESCE(c.level, 1))
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=15
+  InitPlan 1
+    ->  Limit  (cost=0.00..0.16 rows=1 width=8) (actual time=0.017..0.017 rows=1 loops=1)
+          Buffers: shared hit=2
+          ->  Seq Scan on players  (cost=0.00..6.86 rows=43 width=8) (actual time=0.016..0.016 rows=1 loops=1)
+                Filter: (NOT COALESCE(is_ai, false))
+                Buffers: shared hit=2
+  ->  Nested Loop Anti Join  (cost=2.91..38.03 rows=2 width=45) (actual time=0.093..0.127 rows=11 loops=1)
+        Join Filter: (tl.card_id = c.id)
+        Rows Removed by Join Filter: 66
+        Buffers: shared hit=15
+        ->  Bitmap Heap Scan on player_cards c  (cost=1.65..33.50 rows=2 width=41) (actual time=0.038..0.059 rows=11 loops=1)
+              Recheck Cond: (owner_id = (InitPlan 1).col1)
+              Filter: ((NOT COALESCE(in_academy, false)) AND (overall < potential) AND (COALESCE(level, 1) < 100))
+              Heap Blocks: exact=9
+              Buffers: shared hit=13
+              ->  Bitmap Index Scan on idx_player_cards_owner  (cost=0.00..1.65 rows=36 width=0) (actual time=0.029..0.029 rows=11 loops=1)
+                    Index Cond: (owner_id = (InitPlan 1).col1)
+                    Buffers: shared hit=4
+        ->  Materialize  (cost=1.26..4.45 rows=3 width=16) (actual time=0.005..0.005 rows=6 loops=11)
+              Buffers: shared hit=2
+              ->  Bitmap Heap Scan on transfer_listings tl  (cost=1.26..4.43 rows=3 width=16) (actual time=0.047..0.049 rows=6 loops=1)
+                    Recheck Cond: (status = 'active'::text)
+                    Heap Blocks: exact=1
+                    Buffers: shared hit=2
+                    ->  Bitmap Index Scan on transfer_listings_one_active_card_uidx  (cost=0.00..1.26 rows=3 width=0) (actual time=0.043..0.043 rows=10 loops=1)
+                          Buffers: shared hit=1
+Planning Time: 0.258 ms
+Execution Time: 0.181 ms
