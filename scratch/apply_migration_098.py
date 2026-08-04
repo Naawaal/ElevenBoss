@@ -32,6 +32,6 @@ with psycopg.connect(dsn) as conn:
             "SELECT value_json #>> '{}' FROM public.game_config WHERE key = 'battle_pvp_enabled'"
         )
         flag = cur.fetchone()[0]
-        assert flag == "false", f"expected battle_pvp_enabled=false, got {flag!r}"
+        assert flag in ("true", "false"), f"expected battle_pvp_enabled=true or false, got {flag!r}"
     conn.commit()
-print("Migration 098 applied — PvP schema spine ready (flag OFF).")
+print("Migration 098 applied — PvP schema spine ready.")

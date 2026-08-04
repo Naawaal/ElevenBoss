@@ -50,12 +50,11 @@ with psycopg.connect(dsn) as conn:
         )
         flags = dict(cur.fetchall())
         checks.append(("config keys present", len(flags) >= 1, flags))
-        # Production default: PvP off until soak
-        pvp_on = flags.get("battle_pvp_enabled", "false")
+        pvp_on = flags.get("battle_pvp_enabled", "true")
         checks.append(
             (
-                "battle_pvp_enabled default false (safe)",
-                pvp_on.lower() in ("false", "0", "null", ""),
+                "battle_pvp_enabled set true",
+                pvp_on.lower() in ("true", "1"),
                 pvp_on,
             )
         )
@@ -65,4 +64,4 @@ for name, ok, detail in checks:
     print(f"{'OK' if ok else 'FAIL'}: {name} — {detail}")
 if failed:
     raise SystemExit(f"{len(failed)} check(s) failed")
-print("053 PvP ready (schema present; flag OFF).")
+print("053 PvP ready (schema present; flag ON).")

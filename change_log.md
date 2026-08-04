@@ -2,17 +2,19 @@
 
 Hey Managers!
 
-## Ranked PvP & Rivalries (rolling out)
+## Ranked PvP & Rivalries (Feature 053)
 
-Coming to `/battle hub` behind a server flag:
+Find human opponents in your guild and build competitive manager rivalries in the updated `/battle` hub:
 
-- **Find Opponent** — queue for Ranked PvP against managers in *this* Discord server (Global LP on the line)
-- **AI Practice** — train against AI with **no Global LP** and **no rivalry progress**
-- **Friendly** — still a free sandbox (no coins / XP / LP / rivalry)
-- **Rivalries** — after enough Ranked meetings, track H2H, streaks, and badges (story only — no sim buffs)
-- Block managers you don’t want to face; Rivalries prefs control DMs / callouts / leaderboard visibility
+- **Find Opponent (Ranked PvP)**: Queue for live guild-local matchmaking against other managers in your Discord server. Search range widens smoothly over 60 seconds (starting ±5 OVR up to ±20 OVR).
+- **Global LP & Integrity**: Only **Ranked PvP** moves Global LP and competitive records. Provisional LP loss protection applies during your first 10 ranked matches. Finalization is strictly server-verified and idempotent.
+- **Daily Caps & Cooldowns**: Maximum **5 ranked matches per day**, **30-minute same-pair cooldown**, and at most **2 ranked matches per day** against the exact same manager to preserve competitive integrity.
+- **AI Practice**: Train against AI with capped coin/XP rewards, **0 Global LP**, and **no rivalry progress**. If a PvP queue search times out after 60s, choose between *Continue Search*, *Cancel*, or switching to *AI Practice* — no silent bot backfilling.
+- **Friendly Matches**: Free sandbox play with custom teams or friends (0 coins / 0 XP / 0 LP / 0 rivalry). Includes a **Friendly Rematch** action directly from Rivalry detail views.
+- **Manager Rivalries**: Active rivalry story tracking triggers automatically after **3 ranked meetings within 30 days** (becomes dormant after 60 days without a match). Tracks Head-to-Head records, streaks, lead changes, and unlocks profile badge keys (`pvp_badge_keys`). Purely presentation-only — **zero simulation buffs or debuffs**.
+- **Privacy & Safety**: Block unwanted opponents to prevent both Ranked matchmaking pairing and Friendly challenges. Custom rivalry preferences let you toggle DM result notifications, match callouts, and server leaderboard visibility.
 
-Energy is charged when a Ranked or Practice match **finalizes**, not when you join the queue.
+*Energy is charged when a match is finalized, not when entering the queue. Pre-kickoff abandonments or stadium setup failures refund energy completely.*
 
 ---
 ## Youth Academy V2
