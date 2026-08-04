@@ -296,27 +296,18 @@ async def run_pvp_stadium(bot: Any, match_meta: dict[str, Any]) -> None:
         )
 
         result_embed = discord.Embed(
-            title="🏁 Full Time — Ranked PvP",
-            description=(
-                f"**{home_p['club_name']}** {state.home_score}–{state.away_score} "
-                f"**{away_p['club_name']}**"
-            ),
-            color=0x2ECC71,
-        )
-        result_embed.add_field(
-            name="📊 Stats",
-            value=f"Possession {poss_h}%–{poss_a}% · Shots {shots_h}–{shots_a}",
-            inline=False,
+            title=f"🏆 Final Score — {home_p['club_name']} {state.home_score} - {state.away_score} {away_p['club_name']}",
+            color=0x3498DB,
         )
         if finalize_payload:
             home_side = finalize_payload.get("home") or {}
             away_side = finalize_payload.get("away") or {}
             result_embed.add_field(
-                name="Rewards",
+                name=f"💰 Payouts & LP",
                 value=(
-                    f"**{home_p['club_name']}**: coins {int(home_side.get('coins') or 0):+d} · "
+                    f"**{home_p['club_name']}**: +{int(home_side.get('coins') or 0)} 🪙 | "
                     f"LP {int(home_side.get('lp_delta') or 0):+d}\n"
-                    f"**{away_p['club_name']}**: coins {int(away_side.get('coins') or 0):+d} · "
+                    f"**{away_p['club_name']}**: +{int(away_side.get('coins') or 0)} 🪙 | "
                     f"LP {int(away_side.get('lp_delta') or 0):+d}"
                 ),
                 inline=False,
@@ -360,7 +351,7 @@ async def run_pvp_stadium(bot: Any, match_meta: dict[str, Any]) -> None:
         # Apply XP/fatigue best-effort after SQL finalize (history rows exist)
         if finalize_payload and not finalize_payload.get("rewards_skipped"):
             await _apply_side_xp_fatigue(
-                db, bot, finalize_payload, home_active, away_active, home_p, away_p, state
+                db, bot, finalize_payload, home_cards, away_cards, home_p, away_p, state
             )
 
     except Exception:
@@ -414,16 +405,8 @@ async def _finalize_or_stub(
         data = res.data
         return data if isinstance(data, dict) else None
     except Exception as exc:
-        # RPC may not exist yet mid-rollout — complete run without economy
-        logger.warning("finalize_pvp_match unavailable (%s); completing run without rewards", exc)
-        await complete_run(db, run_id, home_score=home_score, away_score=away_score)
-        for uid in (home_id, away_id):
-            await release_match_lock(db, uid)
-        return {
-            "rewards_skipped": True,
-            "home": {"coins": 0, "lp_delta": 0},
-            "away": {"coins": 0, "lp_delta": 0},
-        }
+        logger.warning("finalize_pvp_match failed run=%s (%s); run remains completing for recovery", run_id, exc)
+        return None
 
 
 async def _apply_side_xp_fatigue(
@@ -482,12 +465,15 @@ async def _apply_side_xp_fatigue(
             logger.exception("pvp XP apply failed side=%s run=%s", side, run_id)
 
         try:
-            starter_ids = [str(c.get("id")) for c in cards if c.get("id")]
+            starter_ids = [str(getattr(c, "id", c.get("id") if isinstance(c, dict) else "")) for c in cards if getattr(c, "id", c.get("id") if isinstance(c, dict) else "")]
             bench_ids = await fetch_bench_ids(db, pid, starter_ids)
             tier = int(player.get("intensity_tier") or 1)
             drains = [
-                {"id": sid, "drain": match_fatigue_drain(tier, is_starter=True)}
-                for sid in starter_ids
+                {
+                    "id": str(getattr(c, "id", c.get("id") if isinstance(c, dict) else "")),
+                    "drain": match_fatigue_drain(int(getattr(c, "phy", 70) if not isinstance(c, dict) else c.get("phy", 70)), intensity_tier=tier),
+                }
+                for c in cards
             ]
             await db.rpc(
                 "apply_pvp_post_match_fitness_once",

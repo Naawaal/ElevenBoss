@@ -1,4 +1,4 @@
--- Feature 053 Integrity Remediation (T068–T074)
+-- Feature 053 Integrity Remediation (T068–T075)
 -- Forward fix migration adding candidate starvation filtering, full squad snapshotting,
 -- durable 2-phase completion, exact 30-day rivalry window, and guild-isolated leaderboards.
 
@@ -110,7 +110,10 @@ BEGIN
       AND pc.owner_id = p_owner_id
       AND COALESCE(pc.is_retired, FALSE) = FALSE;
 
-    IF jsonb_array_length(v_squad) <> 11 THEN
+    IF v_squad IS NULL
+       OR jsonb_array_length(v_squad) <> 11
+       OR cardinality(v_ids) <> 11
+    THEN
         RAISE EXCEPTION 'Player % starting XI does not contain 11 valid cards', p_owner_id;
     END IF;
 
@@ -159,7 +162,6 @@ DECLARE
     v_mgr_daily INTEGER;
     v_cost INTEGER;
     v_energy INTEGER;
-    v_xi INTEGER;
     v_snap_a JSONB;
     v_snap_b JSONB;
     v_full_snap JSONB;
@@ -372,7 +374,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_match_history_run_player
 ON public.match_history (run_id, player_id)
 WHERE run_id IS NOT NULL;
 
--- 7) Replace _upsert_rivalry_from_pvp with exact 30-day window count
+-- 7) Replace _upsert_rivalry_from_pvp with exact 30-day window count & correct PK update
 DROP FUNCTION IF EXISTS public._upsert_rivalry_from_pvp(BIGINT, BIGINT, INTEGER, INTEGER);
 CREATE OR REPLACE FUNCTION public._upsert_rivalry_from_pvp(
     p_home_id BIGINT,
@@ -390,6 +392,7 @@ DECLARE
     v_act_matches INTEGER;
     v_act_days INTEGER;
     v_row public.manager_rivalries%ROWTYPE;
+    v_rivalry_exists BOOLEAN;
     v_meetings INTEGER;
     v_meetings_30d INTEGER;
     v_a_wins INTEGER;
@@ -414,6 +417,8 @@ BEGIN
     SELECT * INTO v_row FROM public.manager_rivalries
     WHERE manager_a_id = v_a AND manager_b_id = v_b FOR UPDATE;
 
+    v_rivalry_exists := FOUND;
+
     SELECT COUNT(*) INTO v_meetings_30d
     FROM public.match_history
     WHERE player_id = v_a
@@ -421,7 +426,7 @@ BEGIN
       AND match_type = 'pvp'
       AND played_at >= NOW() - make_interval(days => v_act_days);
 
-    IF NOT FOUND THEN
+    IF NOT v_rivalry_exists THEN
         v_meetings := 1;
         v_a_wins := CASE WHEN v_winner = v_a THEN 1 ELSE 0 END;
         v_b_wins := CASE WHEN v_winner = v_b THEN 1 ELSE 0 END;
@@ -477,14 +482,14 @@ BEGIN
             last_winner_id = v_winner,
             last_result = CASE WHEN v_winner IS NULL THEN 'draw' WHEN v_winner = v_a THEN 'a_win' ELSE 'b_win' END,
             last_match_at = NOW(), status = v_status, activated_at = v_activated, updated_at = NOW()
-        WHERE id = v_row.id;
+        WHERE manager_a_id = v_a AND manager_b_id = v_b;
     END IF;
 
     RETURN jsonb_build_object('status', v_status, 'events', v_events);
 END;
 $$;
 
--- 8) Replace finalize_pvp_match (Phase 1 idempotency + status='completing')
+-- 8) Replace finalize_pvp_match (Phase 1 idempotency + snapshotted policy)
 DROP FUNCTION IF EXISTS public.finalize_pvp_match(UUID, INTEGER, INTEGER, NUMERIC, NUMERIC);
 CREATE OR REPLACE FUNCTION public.finalize_pvp_match(
     p_run_id UUID,
@@ -508,6 +513,7 @@ DECLARE
     v_away_lp INTEGER := 0;
     v_hist_home UUID;
     v_hist_away UUID;
+    v_policy JSONB;
     v_rewards BOOLEAN;
     v_rivalries BOOLEAN;
     v_cost INTEGER;
@@ -524,7 +530,6 @@ BEGIN
         RAISE EXCEPTION 'Match run % not found', p_run_id;
     END IF;
 
-    -- Return idempotent existing payload if run is already in completing or completed
     IF v_run.status IN ('completing', 'completed') THEN
         SELECT id INTO v_hist_home FROM public.match_history WHERE run_id = p_run_id AND player_id = v_run.home_discord_id;
         SELECT id INTO v_hist_away FROM public.match_history WHERE run_id = p_run_id AND player_id = v_run.away_discord_id;
@@ -541,8 +546,10 @@ BEGIN
     SELECT * INTO v_home FROM public.players WHERE discord_id = v_run.home_discord_id FOR UPDATE;
     SELECT * INTO v_away FROM public.players WHERE discord_id = v_run.away_discord_id FOR UPDATE;
 
-    v_rewards := COALESCE((public.get_game_config('pvp_rewards_enabled') #>> '{}')::BOOLEAN, FALSE);
-    v_rivalries := COALESCE((public.get_game_config('pvp_rivalries_enabled') #>> '{}')::BOOLEAN, FALSE);
+    v_policy := COALESCE(v_run.squad_snapshot -> 'finalization_policy', '{}'::jsonb);
+    v_rewards := COALESCE((v_policy #>> '{economy_enabled}')::BOOLEAN, FALSE);
+    v_rivalries := COALESCE((v_policy #>> '{rivalry_enabled}')::BOOLEAN, FALSE);
+
     v_cost := public.get_game_config_int('pvp_energy_cost', 20)::INTEGER;
     v_prov := public.get_game_config_int('pvp_provisional_matches', 5)::INTEGER;
 
@@ -624,7 +631,7 @@ BEGIN
 END;
 $$;
 
--- 9) Atomic exactly-once XP RPC
+-- 9) Atomic exactly-once XP RPC with strict relational validation
 CREATE OR REPLACE FUNCTION public.apply_pvp_match_xp_once(
     p_history_id UUID,
     p_run_id UUID,
@@ -637,26 +644,37 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
+    v_run public.match_runs%ROWTYPE;
     v_hist public.match_history%ROWTYPE;
     v_card JSONB;
     v_card_id UUID;
+    v_card_owner BIGINT;
     v_xp INTEGER;
 BEGIN
+    SELECT * INTO v_run FROM public.match_runs WHERE id = p_run_id;
+    IF NOT FOUND OR v_run.run_type <> 'pvp' OR v_run.status <> 'completing' THEN
+        RAISE EXCEPTION 'Invalid match run % for XP application', p_run_id;
+    END IF;
+
     SELECT * INTO v_hist FROM public.match_history WHERE id = p_history_id FOR UPDATE;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Match history % not found', p_history_id;
+    IF NOT FOUND OR v_hist.run_id <> p_run_id OR v_hist.player_id <> p_owner_id OR v_hist.match_type <> 'pvp' THEN
+        RAISE EXCEPTION 'Match history % does not match run % and player %', p_history_id, p_run_id, p_owner_id;
     END IF;
 
     IF v_hist.xp_applied_at IS NOT NULL THEN
         RETURN jsonb_build_object('ok', true, 'already_applied', true);
     END IF;
 
-    -- Apply XP per card via apply_card_xp
     FOR v_card IN SELECT * FROM jsonb_array_elements(p_cards) LOOP
         v_card_id := (v_card #>> '{id}')::UUID;
-        v_xp := public.match_xp_reward(p_result_str, (v_card #>> '{level}')::INTEGER, (v_card #>> '{date_of_birth}')::DATE, 'pvp');
-        IF v_card_id IS NOT NULL AND v_xp > 0 THEN
-            PERFORM public.apply_card_xp(v_card_id, v_xp, 'pvp_match');
+        IF v_card_id IS NOT NULL THEN
+            SELECT owner_id INTO v_card_owner FROM public.player_cards WHERE id = v_card_id;
+            IF v_card_owner = p_owner_id THEN
+                v_xp := public.match_xp_reward(p_result_str, (v_card #>> '{level}')::INTEGER, (v_card #>> '{date_of_birth}')::DATE, 'pvp');
+                IF v_xp > 0 THEN
+                    PERFORM public.apply_card_xp(v_card_id, v_xp, 'pvp_match');
+                END IF;
+            END IF;
         END IF;
     END LOOP;
 
@@ -665,7 +683,7 @@ BEGIN
 END;
 $$;
 
--- 10) Atomic exactly-once Fitness RPC
+-- 10) Atomic exactly-once Fitness RPC with injury persistence
 CREATE OR REPLACE FUNCTION public.apply_pvp_post_match_fitness_once(
     p_history_id UUID,
     p_run_id UUID,
@@ -678,14 +696,24 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
+    v_run public.match_runs%ROWTYPE;
     v_hist public.match_history%ROWTYPE;
     v_drain JSONB;
+    v_inj JSONB;
     v_card_id UUID;
     v_amt INTEGER;
+    v_tier TEXT;
+    v_days INTEGER;
+    v_until TIMESTAMPTZ;
 BEGIN
+    SELECT * INTO v_run FROM public.match_runs WHERE id = p_run_id;
+    IF NOT FOUND OR v_run.run_type <> 'pvp' OR v_run.status <> 'completing' THEN
+        RAISE EXCEPTION 'Invalid match run % for fitness application', p_run_id;
+    END IF;
+
     SELECT * INTO v_hist FROM public.match_history WHERE id = p_history_id FOR UPDATE;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Match history % not found', p_history_id;
+    IF NOT FOUND OR v_hist.run_id <> p_run_id OR v_hist.player_id <> p_owner_id OR v_hist.match_type <> 'pvp' THEN
+        RAISE EXCEPTION 'Match history % does not match run % and player %', p_history_id, p_run_id, p_owner_id;
     END IF;
 
     IF v_hist.fatigue_applied_at IS NOT NULL THEN
@@ -710,6 +738,19 @@ BEGIN
         WHERE id = ANY(p_bench_ids) AND owner_id = p_owner_id;
     END IF;
 
+    -- Process recorded injuries
+    FOR v_inj IN SELECT * FROM jsonb_array_elements(p_recorded_injuries) LOOP
+        v_card_id := (v_inj #>> '{id}')::UUID;
+        v_tier := v_inj #>> '{tier}';
+        v_days := (v_inj #>> '{days}')::INTEGER;
+        IF v_card_id IS NOT NULL AND v_tier IS NOT NULL AND v_days > 0 THEN
+            v_until := NOW() + make_interval(days => v_days);
+            UPDATE public.player_cards
+            SET injury_tier = v_tier, hospitalized_until = v_until
+            WHERE id = v_card_id AND owner_id = p_owner_id;
+        END IF;
+    END LOOP;
+
     UPDATE public.match_history SET fatigue_applied_at = NOW() WHERE id = p_history_id;
     RETURN jsonb_build_object('ok', true, 'applied', true);
 END;
@@ -731,16 +772,20 @@ DECLARE
     v_away_hist public.match_history%ROWTYPE;
 BEGIN
     SELECT * INTO v_run FROM public.match_runs WHERE id = p_run_id FOR UPDATE;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Match run % not found', p_run_id;
+    IF NOT FOUND OR v_run.run_type <> 'pvp' OR v_run.status <> 'completing' THEN
+        RAISE EXCEPTION 'Invalid match run % for completion', p_run_id;
     END IF;
 
     v_policy := COALESCE(v_run.squad_snapshot -> 'finalization_policy', '{}'::jsonb);
     v_xp_req := COALESCE((v_policy #>> '{xp_enabled}')::BOOLEAN, FALSE);
     v_fit_req := COALESCE((v_policy #>> '{fitness_enabled}')::BOOLEAN, FALSE);
 
-    SELECT * INTO v_home_hist FROM public.match_history WHERE run_id = p_run_id AND player_id = v_run.home_discord_id;
-    SELECT * INTO v_away_hist FROM public.match_history WHERE run_id = p_run_id AND player_id = v_run.away_discord_id;
+    SELECT * INTO v_home_hist FROM public.match_history WHERE run_id = p_run_id AND player_id = v_run.home_discord_id AND match_type = 'pvp';
+    SELECT * INTO v_away_hist FROM public.match_history WHERE run_id = p_run_id AND player_id = v_run.away_discord_id AND match_type = 'pvp';
+
+    IF v_home_hist.id IS NULL OR v_away_hist.id IS NULL THEN
+        RETURN jsonb_build_object('ok', false, 'reason', 'missing_history_rows');
+    END IF;
 
     IF v_xp_req AND (v_home_hist.xp_applied_at IS NULL OR v_away_hist.xp_applied_at IS NULL) THEN
         RETURN jsonb_build_object('ok', false, 'reason', 'missing_xp_stamps');
@@ -802,9 +847,15 @@ BEGIN
 END;
 $$;
 
--- Grant permissions on new functions
+-- Security & permissions: Restrict progression RPCs to service_role ONLY
+REVOKE ALL ON FUNCTION public.apply_pvp_match_xp_once(UUID, UUID, BIGINT, TEXT, JSONB, NUMERIC) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.apply_pvp_match_xp_once(UUID, UUID, BIGINT, TEXT, JSONB, NUMERIC) TO service_role;
+
+REVOKE ALL ON FUNCTION public.apply_pvp_post_match_fitness_once(UUID, UUID, BIGINT, JSONB, UUID[], JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.apply_pvp_post_match_fitness_once(UUID, UUID, BIGINT, JSONB, UUID[], JSONB) TO service_role;
+
+REVOKE ALL ON FUNCTION public.complete_pvp_run(UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.complete_pvp_run(UUID) TO service_role;
+
 GRANT EXECUTE ON FUNCTION public.pvp_division_rank(INTEGER) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.build_pvp_squad_snapshot(BIGINT) TO anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.apply_pvp_match_xp_once(UUID, UUID, BIGINT, TEXT, JSONB, NUMERIC) TO anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.apply_pvp_post_match_fitness_once(UUID, UUID, BIGINT, JSONB, UUID[], JSONB) TO anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.complete_pvp_run(UUID) TO anon, authenticated, service_role;
