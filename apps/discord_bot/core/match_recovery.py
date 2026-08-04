@@ -276,7 +276,11 @@ async def recover_interrupted_matches(bot: commands.Bot) -> None:
     logger.info("Recovering %d interrupted match run(s)...", len(runs))
     for run in runs:
         try:
-            if run.get("run_type") == "league":
+            rt = run.get("run_type")
+            if rt in ("pvp", "practice"):
+                # Owned by pvp_matchmaker_job / recover_active_pvp_runs (US7)
+                continue
+            if rt == "league":
                 await _recover_league_run(bot, db, run)
             else:
                 await _recover_ephemeral_run(bot, db, run)
@@ -298,6 +302,16 @@ async def recover_interrupted_matches(bot: commands.Bot) -> None:
                     await abandon_run(db, run["id"], reason="recovery_exception")
             except Exception:
                 logger.exception("Fallback terminalization failed for %s", run.get("id"))
+
+    try:
+        from apps.discord_bot.core.pvp_match import recover_active_pvp_runs, retry_completing_pvp_runs
+
+        pvp_n = await recover_active_pvp_runs(bot, db)
+        comp_n = await retry_completing_pvp_runs(db)
+        if pvp_n or comp_n:
+            logger.info("PvP boot recovery redispatched=%s completing_retry=%s", pvp_n, comp_n)
+    except Exception:
+        logger.exception("PvP boot recovery failed")
 
     deleted = await reconcile_orphaned_match_locks(db)
     logger.info("Match recovery complete; reconciled %s orphaned lock(s).", deleted)

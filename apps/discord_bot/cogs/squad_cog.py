@@ -148,10 +148,24 @@ class SquadHubView(discord.ui.View):
         swap_players_btn.callback = self.on_swap_players
         full_roster_btn.callback = self.on_full_roster
 
+        youth_btn = discord.ui.Button(
+            label="Youth Academy",
+            style=discord.ButtonStyle.success,
+            custom_id="squad_youth_academy",
+            emoji="🌱",
+        )
+        youth_btn.callback = self.on_youth_academy
         self.add_item(change_formation_btn)
         self.add_item(swap_players_btn)
         self.add_item(full_roster_btn)
+        self.add_item(youth_btn)
         self.add_item(tactics_btn)
+
+    async def on_youth_academy(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        from apps.discord_bot.views.academy_hub import show_academy_hub
+
+        await show_academy_hub(interaction, self.user_id, origin="squad")
 
     async def on_timeout(self) -> None:
         await disable_view_on_timeout(self)

@@ -25,6 +25,8 @@ async def resolve_engine_version(db: Any, run_type: str) -> tuple[str, int]:
         "bot": "match_engine_v3_bot",
         "league": "match_engine_v3_league",
         "friendly": "match_engine_v3_friendly",
+        "pvp": "match_engine_v3_pvp",
+        "practice": "match_engine_v3_practice",
     }.get(run_type, "match_engine_v3_bot")
     enabled = await get_game_config_int(db, key, 0)
     if int(enabled) == 1:

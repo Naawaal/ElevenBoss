@@ -73,6 +73,20 @@ _FRIENDLY: dict[str, str] = {
         "That reserve's **position** does not match the formation slot. "
         "Pick a compatible reserve (e.g. MID for wingbacks in 3-5-2)."
     ),
+    "PvP matchmaking is disabled": (
+        "Ranked PvP is **not available** right now. Try **AI Practice** or a Friendly."
+    ),
+    "Already searching for an opponent": "You're already in the **Find Opponent** queue.",
+    "Already in an active match": "You're locked in another match — finish it first.",
+    "Requeue delay active — wait a few seconds": (
+        "Short **requeue delay** after cancel — wait a few seconds and try again."
+    ),
+    "Daily ranked PvP limit reached": (
+        "You've hit today's **ranked PvP limit**. Resets at UTC midnight."
+    ),
+    "Starting XI is invalid — need 11 eligible players": (
+        "Fix your **starting XI** in `/squad` (need 11 eligible players) before Ranked PvP."
+    ),
 }
 
 

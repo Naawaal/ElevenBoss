@@ -639,13 +639,15 @@ CREATE TABLE public.player_xp_log (
 ## 13. ElevenBoss v1.7 Architecture (Battle Arena Hub)
 
 ### A. Battle Dashboard views (`battle_cog.py`)
-* **`ArenaHubView`**: The central navigation panel presenting buttons for Bot Battle, Friendly Match, and Ranked Match.
+* **`ArenaHubView`**: Central navigation. Flag-off: Bot Battle + Friendly tip. Flag-on (Feature 053): Find Opponent (Ranked PvP), Friendly tip, AI Practice, Rivalries.
+* **Pure package**: `packages/pvp` — matchmaking bands, rivalry math, reward policy (no Discord/DB).
+* **RPCs**: `join_pvp_queue` / `try_match_pvp_queue` / `finalize_pvp_match` / `finalize_ai_practice_match` / rivalry + block helpers (migrations 098–101).
 * **Slash Command Group**:
-  * `/battle` command: Spawns the central `ArenaHubView`.
-  * `/battle bot` subcommand: Directly executes the live dynamic simulator loop in the Stadium thread.
-* **State Swapping Navigation**:
-  * Clicking `[ ?? Bot Battle ]` in the Hub edits the message to inform the user and programmatically launches the `run_bot_battle` simulation routine.
-* **Deprecation of old command**: `/match play` in `match_cog.py` is updated to return an ephemeral warning message directing players to `/battle`.
+  * `/battle hub`: Spawns hub (+ restores queue view if still searching).
+  * `/battle bot`: Legacy Bot Battle; when PvP enabled, nudges managers to hub Practice.
+  * `/battle friendly`: Sandbox PvP; respects `managers_pvp_blocked`.
+* **Deprecation of old command**: `/match play` warns to use `/battle`.
+* **SoT detail**: `specs/053-pvp-matchmaking-rivalries/`.
 
 ---
 

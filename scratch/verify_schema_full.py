@@ -54,7 +54,7 @@ REQUIRED_FUNCTIONS = [
     ("level_from_xp", "integer"),
     ("cumulative_xp_for_level", "integer"),
     ("xp_needed_for_level", "integer"),
-    ("process_match_result", "text, uuid[], integer, numeric[], integer[]"),
+    ("process_match_result", "text, uuid[], integer, numeric[], integer[], uuid"),
     ("process_stat_drill", "bigint, uuid, text"),
     ("train_with_fodder", "bigint, uuid, uuid"),
     ("allocate_skill_point", "bigint, uuid, text"),

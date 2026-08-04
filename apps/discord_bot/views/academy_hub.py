@@ -16,7 +16,11 @@ from apps.discord_bot.core.view_helpers import (
     set_view_controls_disabled,
 )
 from apps.discord_bot.db.client import get_client
-from apps.discord_bot.embeds.academy_embeds import academy_hub_embed, scout_shortlist_embed
+from apps.discord_bot.embeds.academy_embeds import (
+    academy_hub_embed,
+    graduation_embed,
+    scout_shortlist_embed,
+)
 from apps.discord_bot.embeds.common_embeds import error_embed, success_embed
 from economy import academy_slot_cap, scout_tier_cost, scout_tier_hours
 from gacha import generate_youth_intake
@@ -25,7 +29,7 @@ from player_engine import READY_OVR_DEFAULT, is_promotion_ready
 logger = logging.getLogger(__name__)
 
 
-async def _load_academy_state(owner_id: int) -> tuple[dict, list[dict], dict | None, int, int]:
+async def _load_academy_state(owner_id: int) -> tuple[dict, list[dict], dict | None, int, int, int, int]:
     db = await get_client()
     player_res = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
     player = player_res.data or {}
@@ -53,7 +57,16 @@ async def _load_academy_state(owner_id: int) -> tuple[dict, list[dict], dict | N
     )
     reports = report_res.data or []
     report = reports[0] if reports else None
-    return player, prospects, report, len(prospects), cap
+    promotes_used = 0
+    promote_cap = 2
+    try:
+        week_res = await db.rpc("ensure_academy_weekly_row", {"p_owner_id": owner_id}).execute()
+        week = week_res.data or {}
+        if isinstance(week, dict):
+            promotes_used = int(week.get("promotes_used", 0))
+    except Exception:
+        logger.debug("Weekly academy row load failed for %s", owner_id, exc_info=True)
+    return player, prospects, report, len(prospects), cap, promotes_used, promote_cap
 
 
 async def show_academy_hub(
@@ -62,11 +75,20 @@ async def show_academy_hub(
     *,
     origin: str = "profile",
 ) -> None:
-    player, prospects, report, used, cap = await _load_academy_state(owner_id)
+    player, prospects, report, used, cap, promotes_used, promote_cap = await _load_academy_state(owner_id)
     if not player:
         await interaction.followup.send(embed=error_embed("Player profile not found."), ephemeral=True)
         return
-    embed = academy_hub_embed(player, prospects, slots_used=used, slots_cap=cap, report=report)
+    embed = academy_hub_embed(
+        player,
+        prospects,
+        slots_used=used,
+        slots_cap=cap,
+        report=report,
+        promotes_used=promotes_used,
+        promote_cap=promote_cap,
+        origin=origin,
+    )
     view = AcademyHubView(owner_id, player, prospects, report, origin=origin)
     if interaction.response.is_done():
         if interaction.message:
@@ -141,27 +163,47 @@ class AcademyHubView(discord.ui.View):
             hours = scout_tier_hours(tier) or 0
             btn = discord.ui.Button(
                 style=discord.ButtonStyle.primary,
-                label=f"🔍 {label} ({cost // 1000}k · {hours}h)",
+                label=f"🔍 Find {label} ({cost // 1000}k · {hours}h)",
                 row=2,
                 custom_id=f"academy_scout_{tier}",
             )
             btn.callback = self._make_scout_callback(tier)
             self.add_item(btn)
 
+        assess_btn = discord.ui.Button(
+            style=discord.ButtonStyle.primary,
+            label="🔬 Assess (selected)",
+            row=3,
+            disabled=not self.selected_id,
+            custom_id=f"academy_assess_{owner_id}",
+        )
+        assess_btn.callback = self._assess_menu
+        self.assess_btn = assess_btn
+        self.add_item(assess_btn)
+
         if report:
             claim_btn = discord.ui.Button(
                 style=discord.ButtonStyle.success,
-                label="📋 Open Scout Report",
-                row=3,
+                label="📋 Open Discovery Report",
+                row=4,
             )
             claim_btn.callback = self._open_report
             self.add_item(claim_btn)
 
-        refresh_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="🔄 Refresh", row=3)
+        refresh_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="🔄 Refresh", row=4)
         refresh_btn.callback = self._refresh
         self.add_item(refresh_btn)
 
-        back_btn = discord.ui.Button(style=discord.ButtonStyle.secondary, label="⬅️ Profile", row=3)
+        back_labels = {
+            "development": "⬅️ Development",
+            "squad": "⬅️ Squad",
+            "profile": "⬅️ Profile",
+        }
+        back_btn = discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label=back_labels.get(origin, "⬅️ Back"),
+            row=4,
+        )
         back_btn.callback = self._back
         self.add_item(back_btn)
 
@@ -175,6 +217,7 @@ class AcademyHubView(discord.ui.View):
         self.selected_id = interaction.data["values"][0]
         self.promote_btn.disabled = False
         self.release_btn.disabled = False
+        self.assess_btn.disabled = False
         card = next((p for p in self.prospects if str(p["id"]) == self.selected_id), None)
         note = ""
         if card and not is_promotion_ready(int(card.get("overall", 0))):
@@ -201,23 +244,40 @@ class AcademyHubView(discord.ui.View):
         if not self.selected_id:
             await interaction.followup.send(embed=error_embed("Select a prospect first."), ephemeral=True)
             return
-        card = next((p for p in self.prospects if str(p["id"]) == self.selected_id), None)
-        early = card and not is_promotion_ready(int(card.get("overall", 0)))
         try:
             db = await get_client()
             res = await db.rpc(
                 "promote_academy_player",
                 {"p_owner_id": self.owner_id, "p_card_id": self.selected_id},
             ).execute()
-            data = res.data or {}
-            early_flag = data.get("early_promote", early)
-            msg = f"**{(card or {}).get('name', 'Player')}** promoted to the senior club."
-            if early_flag:
-                msg += " _(Early promote — they would have kept growing in the academy.)_"
-            await interaction.followup.send(embed=success_embed(msg), ephemeral=True)
+            data = res.data if isinstance(res.data, dict) else (res.data or {})
+            if not isinstance(data, dict):
+                data = {}
+            await interaction.followup.send(embed=graduation_embed(data), ephemeral=True)
             await show_academy_hub(interaction, self.owner_id, origin=self.origin)
         except Exception as exc:
             await interaction.followup.send(embed=error_embed(api_error_message(exc)), ephemeral=True)
+
+    async def _assess_menu(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        if not self.selected_id:
+            await interaction.followup.send(embed=error_embed("Select a prospect first."), ephemeral=True)
+            return
+        card = next((p for p in self.prospects if str(p["id"]) == self.selected_id), None)
+        name = (card or {}).get("name", "Prospect")
+        view = AssessTierView(self.owner_id, self.selected_id, name, origin=self.origin)
+        await interaction.followup.send(
+            embed=discord.Embed(
+                title="🔬 Assess potential",
+                description=(
+                    f"Narrow the POT range for **{name}** without changing who they are.\n"
+                    "Deep leaves a tight range — not an exact POT dump."
+                ),
+                color=0x2ECC71,
+            ),
+            view=view,
+            ephemeral=True,
+        )
 
     async def _release(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
@@ -283,7 +343,7 @@ class AcademyHubView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         try:
             await _finalize_if_due(self.owner_id, self.player)
-            player, prospects, report, used, cap = await _load_academy_state(self.owner_id)
+            player, prospects, report, used, cap, *_rest = await _load_academy_state(self.owner_id)
             self.player, self.prospects, self.report = player, prospects, report
             if not report:
                 await interaction.followup.send(
@@ -309,18 +369,94 @@ class AcademyHubView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         try:
             await _finalize_if_due(self.owner_id, self.player)
+            db = await get_client()
+            await db.rpc("finalize_due_academy_assessments", {}).execute()
         except Exception:
             logger.exception("Academy refresh finalize failed for %s", self.owner_id)
         await show_academy_hub(interaction, self.owner_id, origin=self.origin)
 
     async def _back(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
+        if self.origin == "development":
+            from apps.discord_bot.cogs.development_cog import show_hub
+
+            await show_hub(interaction, self.owner_id)
+            return
+        if self.origin == "squad":
+            from apps.discord_bot.cogs.squad_cog import show_squad_hub
+
+            await show_squad_hub(interaction, self.owner_id)
+            return
         from apps.discord_bot.cogs.profile_cog import show_profile
 
         await show_profile(interaction, self.owner_id)
 
     async def on_timeout(self) -> None:
         await disable_view_on_timeout(self)
+
+
+class AssessTierView(discord.ui.View):
+    def __init__(self, owner_id: int, card_id: str, name: str, *, origin: str = "profile") -> None:
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+        self.card_id = card_id
+        self.name = name
+        self.origin = origin
+        for tier, label in (("quick", "Quick"), ("standard", "Standard"), ("deep", "Deep")):
+            cost = scout_tier_cost(tier) or 0
+            hours = scout_tier_hours(tier) or 0
+            btn = discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label=f"{label} ({cost // 1000}k · {hours}h)",
+                custom_id=f"assess_{tier}_{card_id[:8]}",
+            )
+            btn.callback = self._make_cb(tier)
+            self.add_item(btn)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This belongs to another manager.", ephemeral=True)
+            return False
+        return True
+
+    def _make_cb(self, tier: str):
+        async def _cb(interaction: discord.Interaction) -> None:
+            await interaction.response.defer(ephemeral=True)
+            try:
+                db = await get_client()
+                wage_msg = await wages_market_block_message(db, self.owner_id)
+                if wage_msg:
+                    await interaction.followup.send(embed=error_embed(wage_msg), ephemeral=True)
+                    return
+                res = await db.rpc(
+                    "dispatch_academy_assessment",
+                    {
+                        "p_owner_id": self.owner_id,
+                        "p_card_id": self.card_id,
+                        "p_tier": tier,
+                    },
+                ).execute()
+                data = res.data or {}
+                finishes = data.get("finishes_at")
+                finish_line = ""
+                if finishes:
+                    try:
+                        ts = datetime.fromisoformat(str(finishes).replace("Z", "+00:00"))
+                        finish_line = f" Finishes `<t:{int(ts.timestamp())}:R>`."
+                    except ValueError:
+                        finish_line = f" Finishes `{finishes}`."
+                await interaction.followup.send(
+                    embed=success_embed(
+                        f"Assessing **{self.name}** ({tier}) for 🪙 **{int(data.get('cost', 0)):,}**."
+                        f"{finish_line}"
+                    ),
+                    ephemeral=True,
+                )
+                await show_academy_hub(interaction, self.owner_id, origin=self.origin)
+            except Exception as exc:
+                await interaction.followup.send(embed=error_embed(api_error_message(exc)), ephemeral=True)
+
+        return _cb
 
 
 class ReleaseConfirmView(discord.ui.View):

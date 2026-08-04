@@ -27,9 +27,15 @@ async def run_daily_academy_growth(bot: commands.Bot) -> dict:
         await _dm_age_out(bot, item, promoted=True)
     for item in summary.get("age_out_released") or []:
         await _dm_age_out(bot, item, promoted=False)
+    for item in summary.get("aging_warned") or []:
+        await _dm_aging_warn(bot, item)
 
     # Optional scout-ready finalize + DM (hub remains source of truth if DMs off)
     summary["scout_reports_finalized"] = await _finalize_due_scouts(bot)
+    try:
+        await db.rpc("finalize_due_academy_assessments", {}).execute()
+    except Exception:
+        logger.debug("Assessment finalize batch skipped", exc_info=True)
     try:
         from apps.discord_bot.core.potential_integrity import check_potential_integrity
 
@@ -56,10 +62,11 @@ async def _finalize_due_scouts(bot: commands.Bot) -> int:
         owner_id = int(row["discord_id"])
         try:
             level = int(row.get("youth_academy_level", 1))
-            cards = generate_youth_intake(academy_level=level)
+            cards = generate_youth_intake(count=2, academy_level=level)
             payload = [card_rpc_payload(c) for c in cards[:3]]
             while len(payload) < 3:
-                payload.append(payload[-1] if payload else {})
+                extra = generate_youth_intake(count=1, academy_level=level)
+                payload.append(card_rpc_payload(extra[0]) if extra else (payload[-1] if payload else {}))
             tier = row.get("scouting_active_tier") or "standard"
             await db.rpc(
                 "finalize_youth_scout_report",
@@ -75,8 +82,8 @@ async def _finalize_due_scouts(bot: commands.Bot) -> int:
 
 async def _dm_scout_ready(bot: commands.Bot, owner_id: int, tier: str) -> None:
     text = (
-        f"Your **{tier}** scout report is ready. "
-        "Open **Manage Academy** (`/profile`) to sign up to **1** prospect."
+        f"Your **{tier}** discovery report is ready. "
+        "Open **Youth Academy** (`/development`) to sign up to **1** prospect."
     )
     try:
         user = await bot.fetch_user(owner_id)
@@ -86,6 +93,25 @@ async def _dm_scout_ready(bot: commands.Bot, owner_id: int, tier: str) -> None:
         logger.info("DMs disabled for scout-ready owner %s", owner_id)
     except Exception:
         logger.exception("Scout-ready DM failed for owner %s", owner_id)
+
+
+async def _dm_aging_warn(bot: commands.Bot, item: dict) -> None:
+    owner_id = item.get("owner_id")
+    name = item.get("name", "A prospect")
+    if not owner_id:
+        return
+    text = (
+        f"**{name}** is aging in your academy (age {item.get('age', '?')}). "
+        "Promote or release them from **Youth Academy** (`/development`) before age-out grace expires."
+    )
+    try:
+        user = await bot.fetch_user(int(owner_id))
+        if user:
+            await user.send(text)
+    except discord.Forbidden:
+        logger.info("DMs disabled for aging-warn owner %s", owner_id)
+    except Exception:
+        logger.exception("Aging-warn DM failed for owner %s", owner_id)
 
 
 async def _dm_age_out(bot: commands.Bot, item: dict, *, promoted: bool) -> None:
@@ -99,9 +125,10 @@ async def _dm_age_out(bot: commands.Bot, item: dict, *, promoted: bool) -> None:
             "Assign them in `/squad` when ready."
         )
     else:
+        reason = item.get("reason") or item.get("result") or "age_out"
         text = (
-            f"**{name}** aged out of the academy but your senior roster was full, "
-            "so they were **released**. Free a senior slot next time via sell/release."
+            f"**{name}** left the academy after age-out grace (**released** — `{reason}`). "
+            "Promote earlier next time from **Youth Academy** (`/development`)."
         )
     try:
         user = await bot.fetch_user(int(owner_id))

@@ -31,8 +31,18 @@ def test_ready_at_65() -> None:
 
 
 def test_age_out() -> None:
-    assert should_age_out(20) is True
-    assert should_age_out(19) is False
+    assert should_age_out(21) is True
+    assert should_age_out(20) is False
+
+
+def test_aging_decay_bounds() -> None:
+    from player_engine.youth_math import apply_academy_aging_decay, should_age_warn
+
+    assert should_age_warn(20) is True
+    assert apply_academy_aging_decay(80, 78, 85) == 79
+    assert apply_academy_aging_decay(78, 78, 85) == 78
+    # Decay then clamp to rarity cap
+    assert apply_academy_aging_decay(90, 70, 85, max_decay=1) == 85
 
 
 def test_star_band() -> None:

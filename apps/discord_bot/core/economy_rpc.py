@@ -237,14 +237,44 @@ def compute_friendly_match_coins(result: str, v2: bool = True) -> int:
 def match_energy_cost(match_type: str, v2: bool = True) -> int:
     if not v2:
         return 10
-    return {"bot": 20, "friendly": 15, "league": 10}.get(match_type, 20)
+    return {
+        "bot": 20,
+        "friendly": 15,
+        "league": 10,
+        "pvp": 20,
+        "practice": 10,
+    }.get(match_type, 20)
 
 
 _MATCH_ENERGY_CONFIG_KEY = {
     "bot": "match_energy_bot",
     "league": "match_energy_league",
     "friendly": "match_energy_friendly",
+    "pvp": "match_energy_pvp",
+    "practice": "match_energy_practice",
 }
+
+
+def compute_pvp_match_coins(result: str, division_win_coins: int, *, v2: bool = True) -> int:
+    """Ranked PvP coins = bot baseline × mode multipliers (defaults 1.25/1.10/1.00)."""
+    from pvp.reward_policy import PVP_COIN_MULT
+
+    base = compute_bot_match_coins(result, division_win_coins, v2=v2)
+    return int(base * float(PVP_COIN_MULT.get(result, 1.0)))
+
+
+def compute_practice_match_coins(
+    result: str,
+    division_win_coins: int,
+    *,
+    is_new_manager: bool = False,
+    v2: bool = True,
+) -> int:
+    from pvp.reward_policy import PRACTICE_ESTABLISHED_MULT, PRACTICE_NEW_MULT
+
+    base = compute_bot_match_coins(result, division_win_coins, v2=v2)
+    mult = PRACTICE_NEW_MULT if is_new_manager else PRACTICE_ESTABLISHED_MULT
+    return int(base * mult)
 
 
 async def get_match_energy_cost(db: Any, match_type: str, *, v2: bool = True) -> int:

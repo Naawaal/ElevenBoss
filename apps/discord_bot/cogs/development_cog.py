@@ -204,7 +204,8 @@ async def show_hub(interaction: discord.Interaction, owner_id: int):
             title="🏋️‍♂️ Development Center",
             description=(
                 f"Welcome to **{club_name}** development center. "
-                f"Train stats, **Recover** fitness, fuse cards, run evolutions, or allocate skill points.\n\n"
+                f"Train stats, **Recover** fitness, grow the **Youth Academy**, "
+                f"fuse cards, run evolutions, or allocate skill points.\n\n"
                 f"{energy_line}"
             ),
             color=0x00FF87,
@@ -428,6 +429,13 @@ class DevelopmentHubView(discord.ui.View):
     @discord.ui.button(style=discord.ButtonStyle.danger, label="🔥 Card Fusion", custom_id="hub_fusion", row=1)
     async def fusion_btn(self, interaction: discord.Interaction, _button: discord.ui.Button):
         await show_card_fusion_menu(interaction, self.owner_id)
+
+    @discord.ui.button(style=discord.ButtonStyle.success, label="🌱 Youth Academy", custom_id="hub_youth_academy", row=1)
+    async def youth_academy_btn(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        from apps.discord_bot.views.academy_hub import show_academy_hub
+
+        await show_academy_hub(interaction, self.owner_id, origin="development")
 
     async def on_timeout(self) -> None:
         await disable_view_on_timeout(self)

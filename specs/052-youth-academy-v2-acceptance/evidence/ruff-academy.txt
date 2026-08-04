@@ -1,0 +1,85 @@
+[1m[91mF401 [0m[1m`.player_generator.generate_player` imported but unused; consider removing, adding to `__all__`, or using a redundant alias[0m
+ [1m[94m-->[0m packages\player_engine\__init__.py:1:31
+  [1m[94m|[0m
+[1m[94m1 |[0m from .player_generator import generate_player, generate_squad
+  [1m[94m|[0m                               [1m[91m^^^^^^^^^^^^^^^[0m
+[1m[94m2 |[0m from .ratings import calculate_player_value, calculate_player_wage
+[1m[94m3 |[0m from .bot_club_generator import generate_bot_clubs_data, GeneratedBotClub
+  [1m[94m|[0m
+[1m[96mhelp[0m: [1mUse an explicit re-export: `generate_player as generate_player`[0m
+
+[1m[91mF401 [0m[1m`.player_generator.generate_squad` imported but unused; consider removing, adding to `__all__`, or using a redundant alias[0m
+ [1m[94m-->[0m packages\player_engine\__init__.py:1:48
+  [1m[94m|[0m
+[1m[94m1 |[0m from .player_generator import generate_player, generate_squad
+  [1m[94m|[0m                                                [1m[91m^^^^^^^^^^^^^^[0m
+[1m[94m2 |[0m from .ratings import calculate_player_value, calculate_player_wage
+[1m[94m3 |[0m from .bot_club_generator import generate_bot_clubs_data, GeneratedBotClub
+  [1m[94m|[0m
+[1m[96mhelp[0m: [1mUse an explicit re-export: `generate_squad as generate_squad`[0m
+
+[1m[91mF401 [0m[1m`.ratings.calculate_player_value` imported but unused; consider removing, adding to `__all__`, or using a redundant alias[0m
+ [1m[94m-->[0m packages\player_engine\__init__.py:2:22
+  [1m[94m|[0m
+[1m[94m1 |[0m from .player_generator import generate_player, generate_squad
+[1m[94m2 |[0m from .ratings import calculate_player_value, calculate_player_wage
+  [1m[94m|[0m                      [1m[91m^^^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m3 |[0m from .bot_club_generator import generate_bot_clubs_data, GeneratedBotClub
+  [1m[94m|[0m
+[1m[96mhelp[0m: [1mUse an explicit re-export: `calculate_player_value as calculate_player_value`[0m
+
+[1m[91mF401 [0m[1m`.ratings.calculate_player_wage` imported but unused; consider removing, adding to `__all__`, or using a redundant alias[0m
+ [1m[94m-->[0m packages\player_engine\__init__.py:2:46
+  [1m[94m|[0m
+[1m[94m1 |[0m from .player_generator import generate_player, generate_squad
+[1m[94m2 |[0m from .ratings import calculate_player_value, calculate_player_wage
+  [1m[94m|[0m                                              [1m[91m^^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m3 |[0m from .bot_club_generator import generate_bot_clubs_data, GeneratedBotClub
+  [1m[94m|[0m
+[1m[96mhelp[0m: [1mUse an explicit re-export: `calculate_player_wage as calculate_player_wage`[0m
+
+[1m[91mF401 [0m[1m`.bot_club_generator.generate_bot_clubs_data` imported but unused; consider removing, adding to `__all__`, or using a redundant alias[0m
+ [1m[94m-->[0m packages\player_engine\__init__.py:3:33
+  [1m[94m|[0m
+[1m[94m1 |[0m from .player_generator import generate_player, generate_squad
+[1m[94m2 |[0m from .ratings import calculate_player_value, calculate_player_wage
+[1m[94m3 |[0m from .bot_club_generator import generate_bot_clubs_data, GeneratedBotClub
+  [1m[94m|[0m                                 [1m[91m^^^^^^^^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+[1m[96mhelp[0m: [1mUse an explicit re-export: `generate_bot_clubs_data as generate_bot_clubs_data`[0m
+
+[1m[91mF401 [0m[1m`.bot_club_generator.GeneratedBotClub` imported but unused; consider removing, adding to `__all__`, or using a redundant alias[0m
+ [1m[94m-->[0m packages\player_engine\__init__.py:3:58
+  [1m[94m|[0m
+[1m[94m1 |[0m from .player_generator import generate_player, generate_squad
+[1m[94m2 |[0m from .ratings import calculate_player_value, calculate_player_wage
+[1m[94m3 |[0m from .bot_club_generator import generate_bot_clubs_data, GeneratedBotClub
+  [1m[94m|[0m                                                          [1m[91m^^^^^^^^^^^^^^^^[0m
+  [1m[94m|[0m
+[1m[96mhelp[0m: [1mUse an explicit re-export: `GeneratedBotClub as GeneratedBotClub`[0m
+
+[1m[91mF401 [0m[1m`.injury_math.hospital_bed_capacity` imported but unused; consider removing, adding to `__all__`, or using a redundant alias[0m
+   [1m[94m-->[0m packages\player_engine\player_engine\__init__.py:198:30
+    [1m[94m|[0m
+[1m[94m196 |[0m     fair_hospital_final_eta,
+[1m[94m197 |[0m     fair_overflow_remaining_days,
+[1m[94m198 |[0m     hospital_bed_capacity as injury_hospital_beds,
+    [1m[94m|[0m                              [1m[91m^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m199 |[0m     hospital_recovery_multiplier as injury_hospital_mult,
+[1m[94m200 |[0m     injury_chance,
+    [1m[94m|[0m
+[1m[96mhelp[0m: [1mAdd unused import `injury_hospital_beds` to __all__[0m
+
+[1m[91mF401 [0m[1m`.injury_math.hospital_recovery_multiplier` imported but unused; consider removing, adding to `__all__`, or using a redundant alias[0m
+   [1m[94m-->[0m packages\player_engine\player_engine\__init__.py:199:37
+    [1m[94m|[0m
+[1m[94m197 |[0m     fair_overflow_remaining_days,
+[1m[94m198 |[0m     hospital_bed_capacity as injury_hospital_beds,
+[1m[94m199 |[0m     hospital_recovery_multiplier as injury_hospital_mult,
+    [1m[94m|[0m                                     [1m[91m^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m200 |[0m     injury_chance,
+[1m[94m201 |[0m     new_total_recovery_days,
+    [1m[94m|[0m
+[1m[96mhelp[0m: [1mAdd unused import `injury_hospital_mult` to __all__[0m
+
+Found 8 errors.

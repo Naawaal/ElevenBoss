@@ -12,6 +12,7 @@ from .match_points import (
     clamp_global_lp,
     division_rank_points,
     global_lp_delta,
+    provisional_global_lp_delta,
     season_fixture_points,
 )
 from .weekly_tiers import (
@@ -117,6 +118,7 @@ __all__ = [
     "FOOTBALL_PTS",
     "GLOBAL_LP_DELTA",
     "clamp_global_lp",
+    "provisional_global_lp_delta",
     "division_rank_points",
     "global_lp_delta",
     "season_fixture_points",

@@ -8,9 +8,14 @@ from .engine import POSITION_WEIGHTS
 
 POINTS_PER_OVR: int = 100
 READY_OVR_DEFAULT: int = 65
-AGE_OUT_DEFAULT: int = 20
+AGE_OUT_DEFAULT: int = 21  # 051: pending age-out boundary (warn at 20)
+AGE_WARN_DEFAULT: int = 20
+AGING_DECAY_MAX_DEFAULT: int = 1
 
 _ATTRS = ("pac", "sho", "pas", "dri", "def", "phy")
+
+# Advisory ready OVR by YA level (early promote still allowed)
+READY_OVR_BY_LEVEL: dict[int, int] = {1: 62, 2: 63, 3: 65, 4: 66, 5: 68}
 
 
 @dataclass(frozen=True)
@@ -23,9 +28,15 @@ class GrowthResult:
 
 
 def academy_daily_points(academy_level: int, potential: int) -> int:
+    """Passive academy progress points/day. Higher YA level → faster development."""
     level = max(1, min(5, int(academy_level)))
     pot = max(0, int(potential))
     return 10 + (5 * level) + (pot // 25)
+
+
+def ready_ovr_for_level(academy_level: int) -> int:
+    level = max(1, min(5, int(academy_level)))
+    return READY_OVR_BY_LEVEL[level]
 
 
 def star_band(potential: int) -> int:
@@ -45,8 +56,27 @@ def is_promotion_ready(overall: int, ready_ovr: int = READY_OVR_DEFAULT) -> bool
     return int(overall) >= int(ready_ovr)
 
 
+def should_age_warn(age: int, age_warn: int = AGE_WARN_DEFAULT) -> bool:
+    return int(age) >= int(age_warn)
+
+
 def should_age_out(age: int, age_out: int = AGE_OUT_DEFAULT) -> bool:
     return int(age) >= int(age_out)
+
+
+def apply_academy_aging_decay(
+    potential: int,
+    overall: int,
+    rarity_cap: int,
+    *,
+    max_decay: int = AGING_DECAY_MAX_DEFAULT,
+) -> int:
+    """At most max_decay POT loss; never below OVR; never above rarity cap."""
+    pot = int(potential)
+    ovr = int(overall)
+    cap = int(rarity_cap)
+    decay = max(0, min(int(max_decay), pot - ovr))
+    return min(cap, max(ovr, pot - decay))
 
 
 def _primary_attrs(position: str) -> list[str]:

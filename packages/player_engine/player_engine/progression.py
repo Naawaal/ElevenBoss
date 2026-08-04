@@ -13,7 +13,7 @@ FUSION_XP_BASE = 50
 FUSION_XP_LEVEL_MULT = 8
 FUSION_XP_OVR_MULT = 2
 
-MATCH_TYPE_MULT = {"friendly": 0.8, "bot": 1.0, "league": 1.25}
+MATCH_TYPE_MULT = {"friendly": 0.8, "bot": 1.0, "league": 1.25, "pvp": 1.0, "practice": 0.75}
 RESULT_BONUS = {"win": 5, "draw": 2, "loss": 0}
 MATCH_XP_MIN = 1
 MATCH_XP_MAX = 35

@@ -26,7 +26,7 @@ async def run_season_youth_intake(bot: commands.Bot) -> dict:
         owner_id = int(row["discord_id"])
         try:
             academy_level = int(row.get("youth_academy_level", 1))
-            cards = generate_youth_intake(academy_level=academy_level)
+            cards = generate_youth_intake(count=2, academy_level=academy_level)
             payload = [card_rpc_payload(c) for c in cards]
             res = await db.rpc("process_youth_intake", {
                 "p_owner_id": owner_id,
@@ -40,6 +40,8 @@ async def run_season_youth_intake(bot: commands.Bot) -> dict:
             seated_ids = result.get("card_ids") or []
             summary["new_cards"] += len(seated_ids)
             summary["intake_skipped_slots"] += int(result.get("skipped") or 0)
+            if result.get("capacity_blocked"):
+                summary["capacity_blocked"] = summary.get("capacity_blocked", 0) + 1
             # Only DM the seated subset by index order
             seated_n = int(result.get("seated") or len(seated_ids))
             seated_cards = cards[:seated_n]
@@ -52,6 +54,8 @@ async def run_season_youth_intake(bot: commands.Bot) -> dict:
                 skipped=int(result.get("skipped") or 0),
                 slots_used=result.get("slots_used"),
                 slots_cap=result.get("slots_cap"),
+                academy_level=academy_level,
+                capacity_blocked=bool(result.get("capacity_blocked")),
             )
         except Exception:
             summary["failed"] += 1
@@ -84,6 +88,8 @@ async def _notify_manager(
     skipped: int | None = None,
     slots_used: int | None = None,
     slots_cap: int | None = None,
+    academy_level: int = 1,
+    capacity_blocked: bool = False,
 ) -> None:
     embed = youth_intake_embed(
         cards,
@@ -92,6 +98,8 @@ async def _notify_manager(
         skipped=skipped,
         slots_used=slots_used,
         slots_cap=slots_cap,
+        academy_level=academy_level,
+        capacity_blocked=capacity_blocked,
     )
     try:
         user = await bot.fetch_user(owner_id)
@@ -110,6 +118,6 @@ async def _notify_manager(
                 )
             return
     except discord.Forbidden:
-        logger.info("DMs disabled for owner %s — youth intake stored (Manage Academy)", owner_id)
+        logger.info("DMs disabled for owner %s — youth intake stored (Youth Academy hub)", owner_id)
     except Exception:
         logger.exception("Failed to DM youth intake to owner %s", owner_id)

@@ -334,6 +334,22 @@ class ChallengeView(discord.ui.View):
 
     @discord.ui.button(style=discord.ButtonStyle.success, label="✅ Accept", custom_id="challenge_accept")
     async def accept_callback(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        # Re-check blocks at accept time (US6)
+        try:
+            db = await get_client()
+            block_res = await db.rpc(
+                "managers_pvp_blocked",
+                {"p_a": self.challenger.id, "p_b": self.opponent.id},
+            ).execute()
+            if block_res.data is True or block_res.data == "true":
+                await interaction.response.send_message(
+                    embed=error_embed("Cannot accept — a PvP block is in place between you."),
+                    ephemeral=True,
+                )
+                return
+        except Exception:
+            logger.debug("block check on friendly accept failed", exc_info=True)
+
         self.stop()
         await interaction.response.edit_message(
             content=f"🤝 Challenge accepted by {self.opponent.mention}! Match is preparing...",
@@ -1547,10 +1563,20 @@ async def run_league_match_simulation(
     )
 
 class ArenaHubView(discord.ui.View):
-    def __init__(self, cog: BattleCog, owner_id: int) -> None:
+    def __init__(self, cog: BattleCog, owner_id: int, *, pvp_enabled: bool = False) -> None:
         super().__init__(timeout=900)
         self.cog = cog
         self.owner_id = owner_id
+        self.pvp_enabled = pvp_enabled
+        self.clear_items()
+        if pvp_enabled:
+            self.add_item(FindOpponentButton())
+            self.add_item(FriendlyTipButton())
+            self.add_item(AiPracticeButton())
+            self.add_item(RivalriesButton())
+        else:
+            self.add_item(LegacyBotBattleButton())
+            self.add_item(FriendlyTipButton())
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -1558,19 +1584,59 @@ class ArenaHubView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(style=discord.ButtonStyle.danger, label="🤖 Bot Battle ⚡", custom_id="arena_bot_battle")
-    async def bot_battle_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Defer ephemeral button click response
-        await interaction.response.defer(ephemeral=True)
-        # Programmatically execute bot battle simulation
-        await self.cog.execute_bot_battle(interaction)
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="🤝 Friendly Match", custom_id="arena_friendly")
-    async def friendly_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+class FindOpponentButton(discord.ui.Button):
+    def __init__(self) -> None:
+        super().__init__(style=discord.ButtonStyle.danger, label="⚔️ Find Opponent", custom_id="arena_find_opponent")
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view: ArenaHubView = self.view  # type: ignore[assignment]
+        await interaction.response.defer(ephemeral=True)
+        await view.cog.start_pvp_search(interaction)
+
+
+class AiPracticeButton(discord.ui.Button):
+    def __init__(self) -> None:
+        super().__init__(style=discord.ButtonStyle.secondary, label="🤖 AI Practice", custom_id="arena_ai_practice")
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view: ArenaHubView = self.view  # type: ignore[assignment]
+        await interaction.response.defer(ephemeral=True)
+        await view.cog.execute_bot_battle(interaction)
+
+
+class LegacyBotBattleButton(discord.ui.Button):
+    def __init__(self) -> None:
+        super().__init__(style=discord.ButtonStyle.danger, label="🤖 Bot Battle ⚡", custom_id="arena_bot_battle")
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view: ArenaHubView = self.view  # type: ignore[assignment]
+        await interaction.response.defer(ephemeral=True)
+        await view.cog.execute_bot_battle(interaction)
+
+
+class FriendlyTipButton(discord.ui.Button):
+    def __init__(self) -> None:
+        super().__init__(style=discord.ButtonStyle.secondary, label="🤝 Friendly Challenge", custom_id="arena_friendly")
+
+    async def callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_message(
-            "🤝 **Friendly Match**: To challenge another manager, use the `/battle friendly` slash command (e.g. `/battle friendly opponent:@Manager`).",
-            ephemeral=True
+            "🤝 **Friendly Challenge**: use `/battle friendly opponent:@Manager`. "
+            "Friendly is a sandbox — no coins, XP, LP, or rivalry.",
+            ephemeral=True,
         )
+
+
+class RivalriesButton(discord.ui.Button):
+    def __init__(self) -> None:
+        super().__init__(style=discord.ButtonStyle.primary, label="🔥 Rivalries", custom_id="arena_rivalries")
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view: ArenaHubView = self.view  # type: ignore[assignment]
+        from apps.discord_bot.views.rivalries_view import open_rivalries_hub
+
+        await open_rivalries_hub(interaction, view.cog)
+
 
 class BattleCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
@@ -1584,31 +1650,120 @@ class BattleCog(commands.Cog):
     async def battle_hub(self, interaction: discord.Interaction) -> None:
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
-        
+
         db = await get_client()
         player_res = await db.table("players").select("*").eq("discord_id", interaction.user.id).maybe_single().execute()
         player = player_res.data
+        if not player:
+            await interaction.followup.send(embed=error_embed("Player profile not found."), ephemeral=True)
+            return
 
-        v2 = await economy_v2_enabled(db)
-        bot_energy = await get_match_energy_cost(db, "bot", v2=v2)
+        state: dict = {}
+        try:
+            hub_res = await db.rpc(
+                "get_battle_hub_state",
+                {"p_owner_id": interaction.user.id, "p_guild_id": interaction.guild_id or 0},
+            ).execute()
+            raw = hub_res.data
+            state = raw if isinstance(raw, dict) else {}
+        except Exception:
+            logger.exception("get_battle_hub_state failed; falling back to legacy hub")
+            v2 = await economy_v2_enabled(db)
+            bot_energy = await get_match_energy_cost(db, "bot", v2=v2)
+            state = {
+                "battle_pvp_enabled": False,
+                "action_energy": player.get("action_energy"),
+                "global_lp": player.get("global_lp", 0),
+                "pvp_energy_cost": 20,
+                "practice_energy_cost": bot_energy,
+            }
 
-        embed = discord.Embed(
-            title="🏟️ ElevenBoss Battle Arena",
-            description=(
-                f"Welcome to the Battle Arena, Manager **{player['manager_name']}**!\n"
-                f"Choose your competitive match pathway below. Bot battles consume **{bot_energy}** ⚡ action energy.\n"
-                f"Friendly matches are **free** — no energy, no coins, no XP."
-            ),
-            color=0x00FF87
-        )
-        embed.set_footer(text="⚡ Energy cost applies")
-        view = ArenaHubView(self, interaction.user.id)
+        from apps.discord_bot.embeds.pvp_embeds import battle_hub_embed
+
+        pvp_on = bool(state.get("battle_pvp_enabled"))
+        embed = battle_hub_embed(state, manager_name=player["manager_name"])
+        view = ArenaHubView(self, interaction.user.id, pvp_enabled=pvp_on)
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+        # US7: restore queue controls if still searching after restart
+        q = state.get("queue")
+        if pvp_on and isinstance(q, dict) and q.get("status") in ("searching", "matching"):
+            from apps.discord_bot.views.pvp_queue_view import build_search_followup
+
+            payload = {
+                **q,
+                "global_division": q.get("global_division") or player.get("global_division") or "?",
+                "global_lp": q.get("global_lp", player.get("global_lp", 0)),
+                "xi_rating": q.get("xi_rating", 0),
+                "joined_at": q.get("joined_at"),
+            }
+            await build_search_followup(interaction, self, payload)
+
+    async def start_pvp_search(self, interaction: discord.Interaction) -> None:
+        """Join ranked queue (no energy charge)."""
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+        db = await get_client()
+        try:
+            res = await db.rpc(
+                "join_pvp_queue",
+                {
+                    "p_owner_id": interaction.user.id,
+                    "p_guild_id": interaction.guild_id or 0,
+                    "p_channel_id": interaction.channel_id or 0,
+                },
+            ).execute()
+            payload = res.data if isinstance(res.data, dict) else {}
+            # Immediate match attempt
+            try:
+                match_res = await db.rpc(
+                    "try_match_pvp_queue",
+                    {"p_guild_id": interaction.guild_id},
+                ).execute()
+                match_data = match_res.data if isinstance(match_res.data, dict) else {}
+                if match_data.get("matched"):
+                    from apps.discord_bot.core.pvp_match import dispatch_matched_pvp
+
+                    asyncio.create_task(dispatch_matched_pvp(self.bot, match_data))
+            except Exception:
+                logger.debug("immediate try_match after join failed", exc_info=True)
+            from apps.discord_bot.views.pvp_queue_view import build_search_followup
+
+            await build_search_followup(interaction, self, payload)
+            # Schedule timeout UX (60s) without auto-AI
+            timeout_s = int(payload.get("search_timeout") or 60)
+            asyncio.create_task(self._pvp_search_timeout(interaction.user.id, payload, timeout_s))
+        except Exception as e:
+            await interaction.followup.send(embed=error_embed(api_error_message(e)), ephemeral=True)
+
+    async def _pvp_search_timeout(self, owner_id: int, payload: dict, timeout_s: int) -> None:
+        await asyncio.sleep(max(5, timeout_s))
+        # UX reminder is best-effort; manager can still Cancel from original message.
+        # Matchmaker job (US1 T028) will expire rows; timeout choices are on the search view refresh path.
+        logger.info("pvp search timeout elapsed owner=%s queue=%s", owner_id, payload.get("queue_id"))
 
     @battle_group.command(name="bot", description="Simulate a league match against a division-calibrated AI opponent.")
     @app_commands.guild_only()
     @app_commands.check(ensure_registered)
     async def bot_battle_command(self, interaction: discord.Interaction) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+        db = await get_client()
+        try:
+            hub_res = await db.rpc(
+                "get_battle_hub_state",
+                {"p_owner_id": interaction.user.id, "p_guild_id": interaction.guild_id or 0},
+            ).execute()
+            state = hub_res.data if isinstance(hub_res.data, dict) else {}
+        except Exception:
+            state = {}
+        if state.get("battle_pvp_enabled"):
+            await interaction.followup.send(
+                "Ranked PvP is live — use `/battle hub` → **Find Opponent** for competitive matches, "
+                "or **AI Practice** for non-ranked AI games (no Global LP).",
+                ephemeral=True,
+            )
+            return
         await self.execute_bot_battle(interaction)
 
     @battle_group.command(name="friendly", description="Challenge another manager to a live friendly match.")
@@ -1643,6 +1798,23 @@ class BattleCog(commands.Cog):
             )
             return
 
+        # US6: PvP blocks also stop Friendly challenges either direction
+        try:
+            block_res = await db.rpc(
+                "managers_pvp_blocked",
+                {"p_a": challenger.id, "p_b": opponent.id},
+            ).execute()
+            if block_res.data is True or block_res.data == "true":
+                await interaction.followup.send(
+                    embed=error_embed(
+                        "Friendly challenge blocked — you or this manager has a PvP block in place."
+                    ),
+                    ephemeral=True,
+                )
+                return
+        except Exception:
+            logger.debug("managers_pvp_blocked check failed; continuing", exc_info=True)
+
         # Check if either player is already locked in a match
         challenger_locked = await is_in_match(db, challenger.id)
         opponent_locked = await is_in_match(db, opponent.id)
@@ -1673,10 +1845,21 @@ class BattleCog(commands.Cog):
         rewards_applied = False
         settled = False
         state = None
+        practice_mode = False
         try:
             db = await get_client()
 
-            if not await acquire_match_lock(db, interaction.user.id, "bot"):
+            try:
+                hub = await db.rpc(
+                    "get_battle_hub_state",
+                    {"p_owner_id": interaction.user.id, "p_guild_id": interaction.guild_id or 0},
+                ).execute()
+                practice_mode = bool((hub.data or {}).get("battle_pvp_enabled")) if isinstance(hub.data, dict) else False
+            except Exception:
+                practice_mode = False
+
+            lock_type = "practice" if practice_mode else "bot"
+            if not await acquire_match_lock(db, interaction.user.id, lock_type):
                 await interaction.followup.send(embed=error_embed("You are currently locked in another match."), ephemeral=True)
                 return
             lock_acquired = True
@@ -1693,11 +1876,13 @@ class BattleCog(commands.Cog):
             v2 = await economy_v2_enabled(db)
             energy_row = await sync_action_energy(db, interaction.user.id)
             curr_energy = energy_row.get("action_energy", player.get("action_energy", 0))
-            needed = await get_match_energy_cost(db, "bot", v2=v2)
+            energy_key = "practice" if practice_mode else "bot"
+            needed = await get_match_energy_cost(db, energy_key, v2=v2)
             if curr_energy < needed:
+                label = "AI Practice" if practice_mode else "Bot"
                 await interaction.followup.send(
                     embed=error_embed(
-                        f"Insufficient energy. Bot matches require **{needed}** ⚡ (you have **{curr_energy}**)."
+                        f"Insufficient energy. {label} matches require **{needed}** ⚡ (you have **{curr_energy}**)."
                     ),
                     ephemeral=True,
                 )
@@ -1792,7 +1977,7 @@ class BattleCog(commands.Cog):
             sim_seed = generate_sim_seed()
             run_row = await create_ephemeral_run(
                 db,
-                run_type="bot",
+                run_type="practice" if practice_mode else "bot",
                 active_discord_id=interaction.user.id,
                 home_discord_id=interaction.user.id,
                 away_discord_id=None,
@@ -1914,36 +2099,62 @@ class BattleCog(commands.Cog):
             poss_h, poss_a, shots_h, shots_a = _match_stats_from_state(state)
             motm = state.live_stats.pick_motm(random.choice(match_cards).name)
 
-            coins_earned, fitness_summary = await apply_bot_match_rewards(
-                db,
-                player_id=interaction.user.id,
-                player_row=player,
-                result_str=res_str,
-                cards=active_cards,
-                club_name=player["club_name"],
-                team_rating=my_rating,
-                opponent_rating=opp_rating,
-                goals_for=state.home_score,
-                goals_against=state.away_score,
-                points_earned=points_earned,
-                lp_change=lp_delta,
-                division_win_coins=win_coins,
-                run_id=bot_run_id,
-                motm_name=motm,
-                key_events=key_events_list,
-                bench_ids=await fetch_bench_ids(
-                    db, interaction.user.id, [str(c["id"]) for c in active_cards]
-                ),
-                tactics_modifier=float(getattr(state, "home_tactics_modifier", 1.0) or 1.0),
-                bot=self.bot,
-                recorded_injuries=recorded_for_side(state.recorded_injuries, "home"),
-            )
-            rewards_applied = True
-
-            # Durable settle before Discord present (US-42.4)
-            if bot_run_id:
-                await complete_run(db, bot_run_id, home_score=state.home_score, away_score=state.away_score)
+            if practice_mode and bot_run_id:
+                is_new = int(player.get("matches_played") or 0) < 10
+                prac = await db.rpc(
+                    "finalize_ai_practice_match",
+                    {
+                        "p_run_id": bot_run_id,
+                        "p_owner_id": interaction.user.id,
+                        "p_result": res_str,
+                        "p_home_score": state.home_score,
+                        "p_away_score": state.away_score,
+                        "p_my_rating": my_rating,
+                        "p_opp_rating": opp_rating,
+                        "p_is_new_manager": is_new,
+                    },
+                ).execute()
+                prac_data = prac.data if isinstance(prac.data, dict) else {}
+                coins_earned = int(prac_data.get("coins") or 0)
+                fitness_summary = {"ok": True, "xp_line": None, "line": None}
+                points_earned = 0
+                lp_delta = 0
+                actual_lp_change = 0
+                new_lp = user_lp
+                rewards_applied = True
                 settled = True
+                lock_acquired = False  # finalize released lock
+            else:
+                coins_earned, fitness_summary = await apply_bot_match_rewards(
+                    db,
+                    player_id=interaction.user.id,
+                    player_row=player,
+                    result_str=res_str,
+                    cards=active_cards,
+                    club_name=player["club_name"],
+                    team_rating=my_rating,
+                    opponent_rating=opp_rating,
+                    goals_for=state.home_score,
+                    goals_against=state.away_score,
+                    points_earned=points_earned,
+                    lp_change=lp_delta,
+                    division_win_coins=win_coins,
+                    run_id=bot_run_id,
+                    motm_name=motm,
+                    key_events=key_events_list,
+                    bench_ids=await fetch_bench_ids(
+                        db, interaction.user.id, [str(c["id"]) for c in active_cards]
+                    ),
+                    tactics_modifier=float(getattr(state, "home_tactics_modifier", 1.0) or 1.0),
+                    bot=self.bot,
+                    recorded_injuries=recorded_for_side(state.recorded_injuries, "home"),
+                )
+                rewards_applied = True
+
+                # Durable settle before Discord present (US-42.4)
+                if bot_run_id:
+                    await complete_run(db, bot_run_id, home_score=state.home_score, away_score=state.away_score)
+                    settled = True
 
             result = MatchResult(
                 result=res_str,

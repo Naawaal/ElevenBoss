@@ -351,33 +351,33 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 - **AC-31e:** Contract renewal is blocked server-side for players age 35+. Agent sale offers factor in player age.
 - **AC-31f:** Phase B youth intake and Phase C club facilities remain separate follow-ups (not required for Phase A).
 
-### US-32: Youth Academy Intake (Phase B) — holding phase (015)
+### US-32: Youth Academy Intake (Phase B) — holding phase (015 / 051)
 
-> **As a** football club manager,
+> **As a** manager,
 > **I want** fresh youth prospects each week that seat in my academy,
-> **So that** I can develop and promote them without bloating the senior XI.
+> **So that** I can develop youth without flooding my senior club.
 
 **Acceptance Criteria:**
-- **AC-32a:** Every **Monday 00:00 UTC**, each human manager receives up to **3** new youth cards (ages 16–19; quality scaled by YA level; L1 baseline OVR 50–65 / POT 72–82) via RPC `process_youth_intake`.
+- **AC-32a:** Monday UTC free intake generates up to **2** prospects (config `youth_intake_count`).
 - **AC-32b:** New intake seats into free **academy slots** (`player_cards.in_academy = true`) — **not** auto-assigned to the starting XI and not senior-match-eligible until promoted. Pre-015 cards already on the senior roster remain grandfathered (`in_academy = false`).
-- **AC-32c:** Intake is **idempotent** per manager per UTC week (`youth_intake_log` primary key). Full/partial-full academy → partial-seat free slots and skip the rest with a clear skipped count (no replace prompt).
-- **AC-32d:** Managers receive a **DM embed** listing seated prospects when DMs are enabled; DMs-off clubs still see prospects in Manage Academy.
-- **AC-32e:** Intake quality scales with **Youth Academy** level (US-33); Manage Academy under **`/profile`** is the primary surface (no `/academy` slash). Upgrades remain under `/store` → Club Facilities.
+- **AC-32c:** Intake is **idempotent** per manager per UTC week (`youth_intake_log` primary key). Full/over-capacity academy → 0 seats + capacity block (no backlog claim pile).
+- **AC-32d:** Every academy-generated prospect obeys rarity POT ceilings (Common 75 / Rare 85 / Epic 92 / Legendary 99); Legendary only at YA L5.
+- **AC-32e:** Primary surface is **`/development` → Youth Academy** (also `/squad`, legacy `/profile`); no `/academy` slash. Upgrades remain under `/store` → Club Facilities.
 
-### US-33: Club Facilities (Phase C) — academy gameplay (015)
+### US-33: Club Facilities (Phase C) — academy gameplay (015 / 051)
 
-> **As a** football club manager,
+> **As a** manager,
 > **I want** to invest coins in club facilities and manage my academy,
-> **So that** my youth pipeline and training improve over time.
+> **So that** facilities feel meaningful without rerolling existing youth.
 
 **Acceptance Criteria:**
 - **AC-33a:** `players` stores `youth_academy_level` and `training_ground_level` (default 1, max 5).
-- **AC-33b:** `/store` hub includes **Club Facilities** with upgrade buttons for YA + Training Ground. **Manage Academy** (slots, growth, promote/release, hybrid paid scouting) lives under **`/profile`**.
+- **AC-33e:** **Youth Academy** sets capacity **3/3/4/4/5**, rarity odds, initial scout-range width, and daily growth speed. Upgrades **do not** reroll existing prospects. Academy growth is **not** `apply_card_xp`.
+- **AC-33f:** Prospects show **visible POT ranges**; assessment scouts narrow ranges; Deep is not an exact POT dump by default. Max **2** academy promotions per UTC week.
 - **AC-33c:** Upgrades cost **750 / 2,000 / 5,000 / 12,000** coins per step (server-validated via `upgrade_club_facility` RPC).
 - **AC-33d:** **Training Ground** grants **+0…+4** flat drill XP (L1 = today); wired in `process_stat_drill` and drill preview.
-- **AC-33e:** **Youth Academy** improves intake POT/OVR/gem bands, slot caps (4/5/6/8/10), and daily academy growth (does not affect daily packs). Academy growth is **not** `apply_card_xp`.
-- **AC-33f:** Max **1 facility upgrade per UTC week**; L2 requires **5** career matches, L4 requires **20**.
-- **AC-33g:** Senior soft cap for promotion uses `game_config.senior_roster_cap` (default 48).
+- **AC-33g:** Max **1 facility upgrade per UTC week**; L2 requires **5** career matches, L4 requires **20**.
+- **AC-33h:** Senior soft cap for promotion uses `game_config.senior_roster_cap` (default 48).
 
 ### US-34: Scouting Pool / Regen Market (Phase D)
 
@@ -459,11 +459,12 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 > **So that** all competitive match play pathways are in one unified dashboard.
 
 **Acceptance Criteria:**
-- **AC-12a:** Slash command `/battle` is introduced, opening the central `ArenaHubView` containing three button pathways: `[🤖 Bot Battle]`, `[🤝 Friendly Match (Soon)]` (disabled), and `[🏆 Ranked (Soon)]` (disabled).
+- **AC-12a:** Slash command `/battle hub` opens `ArenaHubView`. When `battle_pvp_enabled` is false: `[🤖 Bot Battle ⚡]` + Friendly tip. When true (Feature 053): `[⚔️ Find Opponent]`, `[🤝 Friendly Challenge]`, `[🤖 AI Practice]`, `[🔥 Rivalries]` — Ranked is guild-local PvP; AI Practice grants **no Global LP**.
 - **AC-12b:** Deprecated command: Running the old `/match play` command displays an ephemeral warning: *"⚠️ The match system has been moved! Please use /battle instead."*
-- **AC-12c:** Bot Battle sub-command: Spawns the subcommand `/battle bot` which runs the live dynamic simulator in the Stadium thread.
-- **AC-12d:** State-swapping UI: Clicking `[🤖 Bot Battle]` inside the Battle Hub launches the Bot Battle logic directly.
+- **AC-12c:** Bot Battle / AI Practice: `/battle bot` runs live stadium sim; when PvP flag on, redirects managers to hub (Practice via hub button).
+- **AC-12d:** Hub buttons launch Find Opponent / Practice / Rivalries / legacy Bot Battle as appropriate for the flag.
 - **AC-12e:** Safety and timeout: All views enforce a 15-minute timeout and verify user identity.
+- **AC-12f (053):** Friendly remains sandbox (no coins/XP/LP/rivalry). Blocks via `managers_pvp_blocked` stop Friendly challenges. See `specs/053-pvp-matchmaking-rivalries/`.
 
 ---
 

@@ -103,7 +103,8 @@ def test_regen_never_exceeds_rarity() -> None:
         assert card.overall <= card.potential
 
 
-def test_youth_intake_common_clamped() -> None:
+def test_youth_intake_obeys_rarity_ceilings() -> None:
+    """V2 academy intake may roll Rare/Epic at L5; still must obey caps."""
     rng = random.Random(7)
     cards = generate_youth_intake_cards(
         5,
@@ -113,9 +114,9 @@ def test_youth_intake_common_clamped() -> None:
         rng=rng,
     )
     for card in cards:
-        assert card.rarity == "Common"
-        assert card.potential <= 75
-        assert card.base_potential <= 75
+        cap = rarity_potential_cap(card.rarity)
+        assert card.potential <= cap
+        assert card.base_potential <= cap
         assert card.overall <= card.potential
 
 

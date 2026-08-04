@@ -21,6 +21,32 @@ BEGIN
       ('table:public.match_locks'),
       ('table:public.match_runs'),
       ('table:public.match_events'),
+      ('table:public.pvp_matchmaking_queue'),
+      ('table:public.manager_rivalries'),
+      ('table:public.pvp_blocks'),
+      ('column:public.match_history.opponent_owner_id'),
+      ('column:public.match_history.match_type'),
+      ('column:public.match_history.global_lp_delta'),
+      ('column:public.match_history.rivalry_counted'),
+      ('column:public.players.pvp_badge_keys'),
+      ('column:public.players.pvp_requeue_available_at'),
+      ('function:join_pvp_queue'),
+      ('function:cancel_pvp_queue'),
+      ('function:try_match_pvp_queue'),
+      ('function:expire_pvp_queue_rows'),
+      ('function:get_battle_hub_state'),
+      ('function:finalize_pvp_match'),
+      ('function:finalize_ai_practice_match'),
+      ('function:reclaim_stale_pvp_matching'),
+      ('function:set_pvp_block'),
+      ('function:set_pvp_prefs'),
+      ('function:managers_pvp_blocked'),
+      ('function:get_manager_rivalries'),
+      ('function:get_rivalry_detail'),
+      ('function:get_server_hottest_rivalries'),
+      ('policy:public.pvp_matchmaking_queue.pvp_queue_select'),
+      ('policy:public.manager_rivalries.manager_rivalries_select'),
+      ('policy:public.pvp_blocks.pvp_blocks_select'),
       ('column:public.match_runs.engine_version'),
       ('column:public.match_runs.simulation_schema_version'),
       ('column:public.match_runs.event_schema_version'),
@@ -232,12 +258,22 @@ BEGIN
       ('column:public.player_cards.in_academy'),
       ('column:public.player_cards.academy_progress'),
       ('column:public.player_cards.academy_seated_at'),
+      ('column:public.player_cards.pot_visible_lo'),
+      ('column:public.player_cards.pot_visible_hi'),
+      ('column:public.player_cards.scout_assessment_level'),
+      ('column:public.player_cards.academy_origin'),
+      ('column:public.player_cards.academy_age_out_pending_at'),
+      ('column:public.player_cards.academy_warned_aging_at'),
       ('column:public.players.scouting_finishes_at'),
       ('column:public.players.scouting_active_tier'),
       ('table:public.scouting_reports'),
+      ('table:public.academy_weekly_actions'),
+      ('table:public.academy_scout_assessments'),
       ('policy:public.scouting_reports.scouting_reports_select'),
       ('policy:public.scouting_reports.scouting_reports_insert'),
       ('policy:public.scouting_reports.scouting_reports_update'),
+      ('policy:public.academy_weekly_actions.academy_weekly_actions_select'),
+      ('policy:public.academy_scout_assessments.academy_scout_assessments_select'),
       ('function:academy_slot_cap'),
       ('function:promote_academy_player'),
       ('function:release_academy_player'),
@@ -245,6 +281,10 @@ BEGIN
       ('function:dispatch_youth_scout'),
       ('function:finalize_youth_scout_report'),
       ('function:sign_youth_scout_prospect'),
+      ('function:dispatch_academy_assessment'),
+      ('function:finalize_academy_assessment'),
+      ('function:finalize_due_academy_assessments'),
+      ('function:ensure_academy_weekly_row'),
       ('policy:public.mentor_transfer_log.mentor_transfer_log_select'),
       ('policy:public.mentor_transfer_log.mentor_transfer_log_insert'),
       ('policy:public.league_members.league_members_select'),
@@ -411,6 +451,10 @@ BEGIN
         WHEN 'dispatch_youth_scout' THEN to_regprocedure('public.dispatch_youth_scout(bigint,text)')
         WHEN 'finalize_youth_scout_report' THEN to_regprocedure('public.finalize_youth_scout_report(bigint,jsonb,text)')
         WHEN 'sign_youth_scout_prospect' THEN to_regprocedure('public.sign_youth_scout_prospect(bigint,uuid,integer)')
+        WHEN 'dispatch_academy_assessment' THEN to_regprocedure('public.dispatch_academy_assessment(bigint,uuid,text)')
+        WHEN 'finalize_academy_assessment' THEN to_regprocedure('public.finalize_academy_assessment(bigint,uuid)')
+        WHEN 'finalize_due_academy_assessments' THEN to_regprocedure('public.finalize_due_academy_assessments()')
+        WHEN 'ensure_academy_weekly_row' THEN to_regprocedure('public.ensure_academy_weekly_row(bigint)')
         WHEN 'rarity_potential_cap' THEN to_regprocedure('public.rarity_potential_cap(text)')
         WHEN 'effective_card_potential' THEN to_regprocedure('public.effective_card_potential(text,integer)')
         WHEN 'assert_card_potential_integrity' THEN to_regprocedure('public.assert_card_potential_integrity(text,integer,integer,integer)')
@@ -423,6 +467,20 @@ BEGIN
         WHEN 'get_development_hub_state' THEN to_regprocedure('public.get_development_hub_state(bigint)')
         WHEN 'get_skill_allocation_hub' THEN to_regprocedure('public.get_skill_allocation_hub(bigint,uuid)')
         WHEN 'get_mentor_targets' THEN to_regprocedure('public.get_mentor_targets(bigint,uuid)')
+        WHEN 'join_pvp_queue' THEN to_regprocedure('public.join_pvp_queue(bigint,bigint,bigint)')
+        WHEN 'try_match_pvp_queue' THEN to_regprocedure('public.try_match_pvp_queue(bigint)')
+        WHEN 'cancel_pvp_queue' THEN to_regprocedure('public.cancel_pvp_queue(bigint,uuid)')
+        WHEN 'expire_pvp_queue_rows' THEN to_regprocedure('public.expire_pvp_queue_rows()')
+        WHEN 'reclaim_stale_pvp_matching' THEN to_regprocedure('public.reclaim_stale_pvp_matching(integer)')
+        WHEN 'get_battle_hub_state' THEN to_regprocedure('public.get_battle_hub_state(bigint,bigint)')
+        WHEN 'finalize_pvp_match' THEN to_regprocedure('public.finalize_pvp_match(uuid,integer,integer,numeric,numeric)')
+        WHEN 'finalize_ai_practice_match' THEN to_regprocedure('public.finalize_ai_practice_match(uuid,bigint,text,integer,integer,numeric,numeric,boolean)')
+        WHEN 'set_pvp_block' THEN to_regprocedure('public.set_pvp_block(bigint,bigint,boolean)')
+        WHEN 'set_pvp_prefs' THEN to_regprocedure('public.set_pvp_prefs(bigint,boolean,boolean,boolean)')
+        WHEN 'managers_pvp_blocked' THEN to_regprocedure('public.managers_pvp_blocked(bigint,bigint)')
+        WHEN 'get_manager_rivalries' THEN to_regprocedure('public.get_manager_rivalries(bigint)')
+        WHEN 'get_rivalry_detail' THEN to_regprocedure('public.get_rivalry_detail(bigint,bigint)')
+        WHEN 'get_server_hottest_rivalries' THEN to_regprocedure('public.get_server_hottest_rivalries(bigint,integer)')
         ELSE NULL
       END IS NOT NULL
     )

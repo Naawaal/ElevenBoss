@@ -2,6 +2,32 @@
 
 Hey Managers!
 
+## Ranked PvP & Rivalries (rolling out)
+
+Coming to `/battle hub` behind a server flag:
+
+- **Find Opponent** — queue for Ranked PvP against managers in *this* Discord server (Global LP on the line)
+- **AI Practice** — train against AI with **no Global LP** and **no rivalry progress**
+- **Friendly** — still a free sandbox (no coins / XP / LP / rivalry)
+- **Rivalries** — after enough Ranked meetings, track H2H, streaks, and badges (story only — no sim buffs)
+- Block managers you don’t want to face; Rivalries prefs control DMs / callouts / leaderboard visibility
+
+Energy is charged when a Ranked or Practice match **finalizes**, not when you join the queue.
+
+---
+## Youth Academy V2
+
+The academy loop is tighter and fairer:
+
+- **Capacity** by Youth Academy level is now **3 / 3 / 4 / 4 / 5** (over-capacity clubs keep current prospects but cannot add more until they free seats)
+- Monday free intake seats up to **2** prospects into free academy seats only
+- Prospects show a **potential range** first — use **Assess** to narrow it (Deep stays a tight range, not an exact POT dump)
+- At most **2 academy promotions per UTC week** (first can be free; fee from config)
+- Open **Youth Academy** from **`/development`** (also `/squad` and legacy `/profile`)
+- Facility upgrades preview capacity, rarity odds, scout range width, and growth — they **never reroll** prospects you already hold
+- Rarity ceilings still apply (Common 75 / Rare 85 / Epic 92 / Legendary 99); Legendary academy rolls only at YA L5 and stay extremely rare
+
+---
 ## Free manager card gifts
 
 Every currently registered human manager gets a **one-time free Epic player card**. Claim it from the DM **Claim** button after the next bot restart, or from `/development` → **Claim Card Gift(s)** if DMs are blocked.

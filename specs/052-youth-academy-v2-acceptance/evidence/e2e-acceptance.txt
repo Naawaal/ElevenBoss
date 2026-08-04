@@ -1,0 +1,20 @@
+TEST_OWNER=900000000000000052
+started=2026-08-04T06:59:02.408789+00:00
+PASS: ceilings + no Legendary below L5 + kill switch
+PASS: empty L1 intake seated=2
+PASS: same-week intake idempotent
+PASS: partial seats only free slot
+PASS: full academy capacity_blocked
+PASS: over-capacity blocks intake (occupied=4)
+PASS: scout ladder ends 77-78
+PASS: double assess rejected
+PASS: assess ok range 56-63
+PASS: promote #1 fee=0 name=Steven Ross
+PASS: promote #2 fee=500 name=Mark Allen
+PASS: third promote blocked
+PASS: released cannot promote
+PASS: facility preview (3, 3) (12, 10)
+PASS: aging warn/decay bounds
+PASS: age-out grace auto-release released_n=1
+finished failures=0
+ALL_E2E_CHECKS_PASSED

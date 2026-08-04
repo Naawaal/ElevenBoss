@@ -89,12 +89,24 @@ def _next_upgrade_line(player: dict, facility_key: str) -> str:
 
 
 def _youth_next_preview(level: int) -> str:
-    if level >= FACILITY_MAX_LEVEL:
+    from economy.facility_effects import youth_facility_preview
+
+    prev = youth_facility_preview(level)
+    if not prev:
         return ""
-    nxt = youth_academy_tier(level + 1)
+    cap_a, cap_b = prev["capacity"]  # type: ignore[misc]
+    rw_a, rw_b = prev["range_width"]  # type: ignore[misc]
+    g_a, g_b = prev["growth"]  # type: ignore[misc]
+    odds = prev["rarity_odds"]  # type: ignore[assignment]
+    to_odds = odds["to"]  # type: ignore[index]
+    rare_pct = to_odds.get("Rare", 0)
+    epic_pct = to_odds.get("Epic", 0)
+    leg_pct = to_odds.get("Legendary", 0)
     return (
-        f"After upgrade: OVR **{nxt.ovr_min}–{nxt.ovr_max}** · POT cap **{nxt.pot_max}** · "
-        f"Gem **{int(nxt.gem_chance * 100)}%**\n"
+        f"After upgrade: capacity **{cap_a}→{cap_b}** · scout range width **{rw_a}→{rw_b}** · "
+        f"growth **{g_a}→{g_b}** · rarity odds Rare **{rare_pct}%** / Epic **{epic_pct}%**"
+        + (f" / Legendary **{leg_pct}%**" if leg_pct else "")
+        + "\n_Existing prospects keep their rarity & potential._\n"
     )
 
 
@@ -138,11 +150,10 @@ def facilities_embed(player: dict, *, academy_used: int | None = None) -> discor
     embed.add_field(
         name=f"🌱 Youth Academy — Level {youth_lv}/{FACILITY_MAX_LEVEL}",
         value=(
-            "Improves **weekly youth intake** quality and academy growth. "
-            "Prospects seat in **/profile → Manage Academy** (not your starting XI). "
+            "Improves **intake rarity odds**, initial scout accuracy, capacity, and growth. "
+            "Open from **/development → Youth Academy** (not your starting XI). "
             "Does **not** affect daily gacha packs.\n"
-            f"**Now:** {slots_line} · OVR **{youth_tier.ovr_min}–{youth_tier.ovr_max}** · "
-            f"POT cap **{youth_tier.pot_max}** · Gem **{int(youth_tier.gem_chance * 100)}%** · "
+            f"**Now:** {slots_line} · intake OVR **{youth_tier.ovr_min}–{youth_tier.ovr_max}** · "
             f"~**{growth_pts}** growth pts/day\n"
             + _youth_next_preview(youth_lv)
             + _next_upgrade_line(player, "youth_academy")
@@ -164,7 +175,7 @@ def facilities_embed(player: dict, *, academy_used: int | None = None) -> discor
         inline=False,
     )
     embed.set_footer(
-        text="OVR = current rating · POT = growth ceiling · Academy / Hospital: /profile"
+        text="Academy: /development · Hospital: /profile · Upgrades never reroll existing youth"
     )
     return embed
 
