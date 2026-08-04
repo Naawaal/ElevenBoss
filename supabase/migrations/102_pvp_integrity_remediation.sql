@@ -95,6 +95,7 @@ BEGIN
         jsonb_agg(
             jsonb_build_object(
                 'id', pc.id,
+                'level', COALESCE(pc.level, 1),
                 'age', public.card_age_from_dob(pc.date_of_birth),
                 'date_of_birth', pc.date_of_birth,
                 'fatigue', pc.fatigue,
@@ -740,11 +741,14 @@ BEGIN
 
     -- Process recorded injuries
     FOR v_inj IN SELECT * FROM jsonb_array_elements(p_recorded_injuries) LOOP
-        v_card_id := (v_inj #>> '{id}')::UUID;
+        v_card_id := COALESCE((v_inj #>> '{id}')::UUID, (v_inj #>> '{player_card_id}')::UUID);
         v_tier := v_inj #>> '{tier}';
-        v_days := (v_inj #>> '{days}')::INTEGER;
-        IF v_card_id IS NOT NULL AND v_tier IS NOT NULL AND v_days > 0 THEN
-            v_until := NOW() + make_interval(days => v_days);
+        v_days := COALESCE((v_inj #>> '{days}')::INTEGER, (v_inj #>> '{recovery_days}')::INTEGER, 2);
+        IF v_card_id IS NOT NULL AND v_tier IS NOT NULL THEN
+            IF v_tier ~ '^[0-9]+$' THEN
+                v_tier := CASE v_tier::INTEGER WHEN 1 THEN 'minor' WHEN 2 THEN 'moderate' WHEN 3 THEN 'major' ELSE 'minor' END;
+            END IF;
+            v_until := NOW() + make_interval(days => GREATEST(1, v_days));
             UPDATE public.player_cards
             SET injury_tier = v_tier, hospitalized_until = v_until
             WHERE id = v_card_id AND owner_id = p_owner_id;

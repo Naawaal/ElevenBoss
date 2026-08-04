@@ -485,6 +485,28 @@ async def _apply_side_xp_fatigue(
                 }
                 for c, m in zip(cards, meta) if m.get("id")
             ]
+            recorded_injuries = list(side_data.get("recorded_injuries") or [])
+            if not recorded_injuries and meta:
+                try:
+                    from player_engine import select_post_match_injury, recovery_days_for_tier, TIER_NAMES
+                    refreshed_cards = [
+                        {
+                            "id": str(m["id"]),
+                            "fatigue": int(m.get("fatigue", 100)),
+                            "phy": int(getattr(c, "phy", 70) if not isinstance(c, dict) else c.get("phy", 70)),
+                            "age": int(m.get("age", 25)),
+                        }
+                        for c, m in zip(cards, meta)
+                        if m.get("id") and not m.get("injury_tier")
+                    ]
+                    hit = select_post_match_injury(refreshed_cards, intensity_tier=tier)
+                    if hit:
+                        t_name = TIER_NAMES.get(hit.tier, "minor").lower()
+                        r_days = recovery_days_for_tier(hit.tier, hospital_level=0, intensity_tier=tier)
+                        recorded_injuries = [{"id": hit.player_card_id, "tier": t_name, "days": r_days}]
+                except Exception:
+                    logger.debug("select_post_match_injury check skipped", exc_info=True)
+
             await db.rpc(
                 "apply_pvp_post_match_fitness_once",
                 {
@@ -493,7 +515,7 @@ async def _apply_side_xp_fatigue(
                     "p_owner_id": pid,
                     "p_starter_drains": drains,
                     "p_bench_ids": bench_ids,
-                    "p_recorded_injuries": [],
+                    "p_recorded_injuries": recorded_injuries,
                 },
             ).execute()
         except Exception:
