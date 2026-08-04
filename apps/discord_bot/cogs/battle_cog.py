@@ -1742,29 +1742,21 @@ class BattleCog(commands.Cog):
         # Matchmaker job (US1 T028) will expire rows; timeout choices are on the search view refresh path.
         logger.info("pvp search timeout elapsed owner=%s queue=%s", owner_id, payload.get("queue_id"))
 
-    @battle_group.command(name="bot", description="Simulate a league match against a division-calibrated AI opponent.")
+    @battle_group.command(name="bot", description="Play an AI Practice match against a division-calibrated AI opponent.")
     @app_commands.guild_only()
     @app_commands.check(ensure_registered)
     async def bot_battle_command(self, interaction: discord.Interaction) -> None:
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
-        db = await get_client()
-        try:
-            hub_res = await db.rpc(
-                "get_battle_hub_state",
-                {"p_owner_id": interaction.user.id, "p_guild_id": interaction.guild_id or 0},
-            ).execute()
-            state = hub_res.data if isinstance(hub_res.data, dict) else {}
-        except Exception:
-            state = {}
-        if state.get("battle_pvp_enabled"):
-            await interaction.followup.send(
-                "Ranked PvP is live — use `/battle hub` → **Find Opponent** for competitive matches, "
-                "or **AI Practice** for non-ranked AI games (no Global LP).",
-                ephemeral=True,
-            )
-            return
         await self.execute_bot_battle(interaction)
+
+    @battle_group.command(name="rank", description="Find a Ranked PvP opponent in this server.")
+    @app_commands.guild_only()
+    @app_commands.check(ensure_registered)
+    async def pvp_rank_command(self, interaction: discord.Interaction) -> None:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+        await self.start_pvp_search(interaction)
 
     @battle_group.command(name="friendly", description="Challenge another manager to a live friendly match.")
     @app_commands.describe(opponent="The manager you want to challenge.")

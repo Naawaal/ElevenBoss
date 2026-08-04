@@ -1,14 +1,7 @@
 import os
-import sys
 from pathlib import Path
 from dotenv import load_dotenv
 import psycopg
-
-if "--confirm-enable-pvp" not in sys.argv:
-    raise SystemExit(
-        "SAFETY ERROR: To enable PvP flags, you must explicitly pass --confirm-enable-pvp argument.\n"
-        "Do NOT run this on production without explicit authorization and Feature 052 ACCEPT clearance."
-    )
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
@@ -19,7 +12,7 @@ with psycopg.connect(url) as conn:
         cur.execute(
             """
             UPDATE public.game_config
-            SET value_json = 'true'::jsonb
+            SET value_json = 'false'::jsonb
             WHERE key IN ('battle_pvp_enabled', 'pvp_rewards_enabled', 'pvp_rivalries_enabled')
             """
         )
@@ -33,6 +26,6 @@ with psycopg.connect(url) as conn:
             ORDER BY key
             """
         )
-        print("Updated PvP flags in game_config:")
+        print("T067A DB PvP flags reset:")
         for key, val in cur.fetchall():
             print(f"  {key}: {val}")

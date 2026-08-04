@@ -44,6 +44,11 @@ BEGIN
       ('function:get_manager_rivalries'),
       ('function:get_rivalry_detail'),
       ('function:get_server_hottest_rivalries'),
+      ('function:pvp_division_rank'),
+      ('function:build_pvp_squad_snapshot'),
+      ('function:apply_pvp_match_xp_once'),
+      ('function:apply_pvp_post_match_fitness_once'),
+      ('function:complete_pvp_run'),
       ('policy:public.pvp_matchmaking_queue.pvp_queue_select'),
       ('policy:public.manager_rivalries.manager_rivalries_select'),
       ('policy:public.pvp_blocks.pvp_blocks_select'),
@@ -481,6 +486,11 @@ BEGIN
         WHEN 'get_manager_rivalries' THEN to_regprocedure('public.get_manager_rivalries(bigint)')
         WHEN 'get_rivalry_detail' THEN to_regprocedure('public.get_rivalry_detail(bigint,bigint)')
         WHEN 'get_server_hottest_rivalries' THEN to_regprocedure('public.get_server_hottest_rivalries(bigint,integer)')
+        WHEN 'pvp_division_rank' THEN to_regprocedure('public.pvp_division_rank(integer)')
+        WHEN 'build_pvp_squad_snapshot' THEN to_regprocedure('public.build_pvp_squad_snapshot(bigint)')
+        WHEN 'apply_pvp_match_xp_once' THEN to_regprocedure('public.apply_pvp_match_xp_once(uuid,uuid,bigint,text,jsonb,numeric)')
+        WHEN 'apply_pvp_post_match_fitness_once' THEN to_regprocedure('public.apply_pvp_post_match_fitness_once(uuid,uuid,bigint,jsonb,uuid[],jsonb)')
+        WHEN 'complete_pvp_run' THEN to_regprocedure('public.complete_pvp_run(uuid)')
         ELSE NULL
       END IS NOT NULL
     )

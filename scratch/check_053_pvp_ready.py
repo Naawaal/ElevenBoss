@@ -50,18 +50,16 @@ with psycopg.connect(dsn) as conn:
         )
         flags = dict(cur.fetchall())
         checks.append(("config keys present", len(flags) >= 1, flags))
-        pvp_on = flags.get("battle_pvp_enabled", "true")
-        checks.append(
-            (
-                "battle_pvp_enabled set true",
-                pvp_on.lower() in ("true", "1"),
-                pvp_on,
-            )
-        )
+        all_dark = True
+        for k in ("battle_pvp_enabled", "pvp_rewards_enabled", "pvp_rivalries_enabled"):
+            v = str(flags.get(k, "false")).lower()
+            if v not in ("false", "0", "null", ""):
+                all_dark = False
+        checks.append(("all pvp flags false (dark state gate)", all_dark, flags))
 
 failed = [c for c in checks if not c[1]]
 for name, ok, detail in checks:
     print(f"{'OK' if ok else 'FAIL'}: {name} — {detail}")
 if failed:
     raise SystemExit(f"{len(failed)} check(s) failed")
-print("053 PvP ready (schema present; flag ON).")
+print("053 PvP ready (schema present; dark state gate respected).")

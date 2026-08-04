@@ -171,9 +171,9 @@ GRANT ALL ON public.pvp_blocks TO service_role;
 -- 5) game_config seeds (flag OFF)
 -- ---------------------------------------------------------------------------
 INSERT INTO public.game_config (key, value_json) VALUES
-    ('battle_pvp_enabled', 'true'),
-    ('pvp_rewards_enabled', 'true'),
-    ('pvp_rivalries_enabled', 'true'),
+    ('battle_pvp_enabled', 'false'),
+    ('pvp_rewards_enabled', 'false'),
+    ('pvp_rivalries_enabled', 'false'),
     ('pvp_rivalry_dms_enabled', 'true'),
     ('pvp_server_leaderboard_enabled', 'true'),
     ('ai_practice_rewards_enabled', 'true'),

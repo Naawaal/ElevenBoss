@@ -67,6 +67,11 @@ REQUIRED_FUNCTIONS = [
     ("claim_daily_login", "bigint"),
     ("purchase_energy_refill", "bigint"),
     ("get_game_config", "text"),
+    ("pvp_division_rank", "integer"),
+    ("build_pvp_squad_snapshot", "bigint"),
+    ("apply_pvp_match_xp_once", "uuid, uuid, bigint, text, jsonb, numeric"),
+    ("apply_pvp_post_match_fitness_once", "uuid, uuid, bigint, jsonb, uuid[], jsonb"),
+    ("complete_pvp_run", "uuid"),
 ]
 
 

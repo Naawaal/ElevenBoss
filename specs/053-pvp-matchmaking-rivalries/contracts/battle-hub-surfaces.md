@@ -8,7 +8,8 @@
 | Command | Behavior when PvP enabled | Rollback (flag off) |
 |---------|---------------------------|---------------------|
 | `/battle hub` | Redesigned arena embed + buttons | Legacy Bot Battle + Friendly tip |
-| `/battle bot` | Compatibility guidance → AI Practice / hub | Legacy bot battle |
+| `/battle bot` | Direct AI Practice match (`run_type=practice`) | Legacy bot battle |
+| `/battle rank` | Direct Ranked PvP queue search (`join_pvp_queue`) | Ephemeral notice |
 | `/battle friendly` | Unchanged sandbox + block checks | Unchanged |
 
 ## Hub embed (PvP on)

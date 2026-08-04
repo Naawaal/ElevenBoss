@@ -52,7 +52,7 @@ async def pvp_matchmaker_job(bot: Any) -> None:
             logger.debug("recover_active_pvp_runs failed", exc_info=True)
 
         try:
-            completing = await retry_completing_pvp_runs(db)
+            await retry_completing_pvp_runs(db, bot)
         except Exception:
             logger.debug("retry_completing_pvp_runs failed", exc_info=True)
 

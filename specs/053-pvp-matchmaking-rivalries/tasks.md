@@ -313,6 +313,22 @@ Task: "Create pvp_queue_view.py"
 
 ---
 
+## Phase 10: Remediation & Gate Compliance (T067A–T075)
+
+**Goal**: Resolve static audit findings and enforce Feature 052 gate dark state compliance before internal soak (**T063**).
+
+- [x] T067A Emergency gate restoration: Reset DB flags to boolean `false`, update migration 098 defaults back to `false`, add forced-off override in migration 102, update `scratch/check_053_pvp_ready.py` dark state check for all 3 flags, and harden `scratch/enable_pvp_flags.py` with `--confirm-enable-pvp`.
+- [x] T068 Candidate starvation fix in `try_match_pvp_queue` SQL: filter ALL eligibility constraints (cooldowns, daily caps, blocks, locks, division rank) directly during candidate selection (`WHERE ...`).
+- [x] T069 Full canonical squad snapshot freezing: `build_pvp_squad_snapshot` helper freezes starting XI stats (`def_stat`, `morale`, `playstyles`), positions, ratings, and `finalization_policy` at pairing time; `run_pvp_stadium` reconstructs squads via `squads_from_snapshot`.
+- [x] T070 Durable 2-phase finalization & exactly-once RPCs: `finalize_pvp_match` transitions status to `'completing'`; `apply_pvp_match_xp_once` & `apply_pvp_post_match_fitness_once` execute atomic progression; `complete_pvp_run` verifies server-side stamps; `retry_completing_pvp_runs` handles scheduler retries.
+- [x] T071 Exact 30-day window count for rivalry activation: `_upsert_rivalry_from_pvp` counts single-perspective ranked matches in the last 30 days (`played_at >= NOW() - INTERVAL '30 days'`).
+- [x] T072 Guild-isolated server rivalry leaderboard: `get_server_hottest_rivalries` joins `match_runs` (`guild_id = p_guild_id`) with one perspective per run (`mh.player_id = LEAST(...)`).
+- [x] T073 SQL division-rank helper & parity: `pvp_division_rank` SQL helper and `_pvp_search_bands` `max_div_diff` parity matching `packages/pvp`.
+- [x] T074 Reconcile documentation parity & add regression suite: update `change_log.md` (±4 to ±12 OVR, 5 provisional matches) and create `tests/test_pvp_integrity_remediation.py`.
+- [x] T075 Readiness & verification gates: run test suite (24/24 passed), full schema verifier (ALL CHECKS PASSED), and dark state gate check (`053 PvP ready`).
+
+---
+
 ## Notes
 
 - [P] = different files, no incomplete dependencies

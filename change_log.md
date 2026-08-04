@@ -6,8 +6,8 @@ Hey Managers!
 
 Find human opponents in your guild and build competitive manager rivalries in the updated `/battle` hub:
 
-- **Find Opponent (Ranked PvP)**: Queue for live guild-local matchmaking against other managers in your Discord server. Search range widens smoothly over 60 seconds (starting ±5 OVR up to ±20 OVR).
-- **Global LP & Integrity**: Only **Ranked PvP** moves Global LP and competitive records. Provisional LP loss protection applies during your first 10 ranked matches. Finalization is strictly server-verified and idempotent.
+- **Find Opponent (Ranked PvP)**: Queue for live guild-local matchmaking against other managers in your Discord server. Search range widens smoothly over 60 seconds (starting ±4 OVR up to ±12 OVR).
+- **Global LP & Integrity**: Only **Ranked PvP** moves Global LP and competitive records. Provisional LP loss protection applies during your first 5 ranked matches. Finalization is strictly server-verified and idempotent.
 - **Daily Caps & Cooldowns**: Maximum **5 ranked matches per day**, **30-minute same-pair cooldown**, and at most **2 ranked matches per day** against the exact same manager to preserve competitive integrity.
 - **AI Practice**: Train against AI with capped coin/XP rewards, **0 Global LP**, and **no rivalry progress**. If a PvP queue search times out after 60s, choose between *Continue Search*, *Cancel*, or switching to *AI Practice* — no silent bot backfilling.
 - **Friendly Matches**: Free sandbox play with custom teams or friends (0 coins / 0 XP / 0 LP / 0 rivalry). Includes a **Friendly Rematch** action directly from Rivalry detail views.

@@ -174,26 +174,23 @@ async def run_pvp_stadium(bot: Any, match_meta: dict[str, Any]) -> None:
     ).eq("id", run_id).execute()
 
     try:
-        _, _, home_active = await fetch_squad_xi(db, home_id)
-        _, _, away_active = await fetch_squad_xi(db, away_id)
-        home_cards = await ordered_cards_to_match_squad(db, home_active)
-        away_cards = await ordered_cards_to_match_squad(db, away_active)
+        from apps.discord_bot.core.match_runs import squads_from_snapshot
+
+        if snap and snap.get("home_squad") and snap.get("away_squad"):
+            home_cards, away_cards = squads_from_snapshot(snap)
+        else:
+            _, _, home_active = await fetch_squad_xi(db, home_id)
+            _, _, away_active = await fetch_squad_xi(db, away_id)
+            home_cards = await ordered_cards_to_match_squad(db, home_active)
+            away_cards = await ordered_cards_to_match_squad(db, away_active)
+
         if len(home_cards) != 11 or len(away_cards) != 11:
             await thread.send(embed=error_embed("A manager no longer has a valid XI. Match abandoned — no energy charged."))
             await abandon_run(db, run_id, reason="pvp_xi_invalid")
             return
 
-        home_rating = sum(p.overall for p in home_cards) / 11
-        away_rating = sum(p.overall for p in away_cards) / 11
-        await db.table("match_runs").update({
-            "squad_snapshot": {
-                **snap,
-                "home_card_ids": [str(c["id"]) for c in home_active],
-                "away_card_ids": [str(c["id"]) for c in away_active],
-                "home_xi_rating": home_rating,
-                "away_xi_rating": away_rating,
-            }
-        }).eq("id", run_id).execute()
+        home_rating = float(snap.get("home_rating") or (sum(p.overall for p in home_cards) / 11))
+        away_rating = float(snap.get("away_rating") or (sum(p.overall for p in away_cards) / 11))
 
         engine_version = (run_row or {}).get("engine_version") or "nss_v2"
         state = MatchState(home_rating=home_rating, away_rating=away_rating)
@@ -439,11 +436,14 @@ async def _apply_side_xp_fatigue(
     away_p: dict,
     state: MatchState,
 ) -> None:
-    """Post-SQL XP/fatigue using existing Python pipes (idempotent via history stamps)."""
+    """Post-SQL XP/fatigue using atomic exactly-once RPCs and complete_pvp_run."""
+    run_id = str(payload.get("run_id") or "")
+    if not run_id:
+        return
+
     try:
-        from apps.discord_bot.core.match_xp import apply_match_xp_if_needed
-        from apps.discord_bot.core.injury_rpc import apply_post_match_fitness, fetch_bench_ids
-        from apps.discord_bot.core.match_runs import mark_match_fatigue_applied, fetch_match_reward_row
+        from apps.discord_bot.core.injury_rpc import fetch_bench_ids
+        from player_engine.fatigue import match_fatigue_drain
     except Exception:
         logger.exception("xp/fatigue imports failed")
         return
@@ -458,38 +458,95 @@ async def _apply_side_xp_fatigue(
             continue
         pid = int(player["discord_id"])
         res_str = "win" if gf > ga else ("draw" if gf == ga else "loss")
-        existing = await fetch_match_reward_row(db, pid, run_id=payload.get("run_id"))
+        cards_json = [
+            {
+                "id": str(c.get("id", "")),
+                "level": int(c.get("level", 1)),
+                "date_of_birth": str(c.get("date_of_birth", "2000-01-01")),
+            }
+            for c in cards
+        ]
         try:
-            await apply_match_xp_if_needed(
-                db,
-                history_id=history_id,
-                existing_row=existing,
-                cards=cards,
-                result_str=res_str,
-                match_type="pvp",
-                motm_name="",
-                key_events=[],
-                club_name=player["club_name"],
-                team_rating=float(side_data.get("rating") or 0),
-            )
+            await db.rpc(
+                "apply_pvp_match_xp_once",
+                {
+                    "p_history_id": str(history_id),
+                    "p_run_id": run_id,
+                    "p_owner_id": pid,
+                    "p_result_str": res_str,
+                    "p_cards": cards_json,
+                    "p_team_rating": float(side_data.get("rating") or 0),
+                },
+            ).execute()
         except Exception:
-            logger.exception("pvp XP apply failed side=%s", side)
+            logger.exception("pvp XP apply failed side=%s run=%s", side, run_id)
+
         try:
-            if not (existing and existing.get("fatigue_applied_at")):
-                bench = await fetch_bench_ids(db, pid, [str(c["id"]) for c in cards])
-                await apply_post_match_fitness(
-                    db,
-                    pid,
-                    starter_cards=cards,
-                    bench_ids=bench,
-                    tactics_modifier=1.0,
-                    intensity_tier=int(player.get("intensity_tier") or 1),
-                    apply_injuries=True,
-                    recorded_injuries=[],
-                )
-                await mark_match_fatigue_applied(db, history_id)
+            starter_ids = [str(c.get("id")) for c in cards if c.get("id")]
+            bench_ids = await fetch_bench_ids(db, pid, starter_ids)
+            tier = int(player.get("intensity_tier") or 1)
+            drains = [
+                {"id": sid, "drain": match_fatigue_drain(tier, is_starter=True)}
+                for sid in starter_ids
+            ]
+            await db.rpc(
+                "apply_pvp_post_match_fitness_once",
+                {
+                    "p_history_id": str(history_id),
+                    "p_run_id": run_id,
+                    "p_owner_id": pid,
+                    "p_starter_drains": drains,
+                    "p_bench_ids": bench_ids,
+                    "p_recorded_injuries": [],
+                },
+            ).execute()
         except Exception:
-            logger.exception("pvp fatigue apply failed side=%s", side)
+            logger.exception("pvp fatigue apply failed side=%s run=%s", side, run_id)
+
+    try:
+        await db.rpc("complete_pvp_run", {"p_run_id": run_id}).execute()
+    except Exception:
+        logger.exception("complete_pvp_run failed run=%s", run_id)
+
+
+async def retry_completing_pvp_runs(db: Any, bot: Any = None) -> None:
+    """Scheduler recovery pass retrying progression for any runs stuck in 'completing'."""
+    try:
+        res = await db.table("match_runs").select("*").eq("run_type", "pvp").eq("status", "completing").execute()
+        runs = res.data or []
+        for run in runs:
+            run_id = str(run["id"])
+            home_id = int(run["home_discord_id"])
+            away_id = int(run["away_discord_id"])
+            snap = dict(run.get("squad_snapshot") or {})
+            home_p_res = await db.table("players").select("*").eq("discord_id", home_id).maybe_single().execute()
+            away_p_res = await db.table("players").select("*").eq("discord_id", away_id).maybe_single().execute()
+            if not home_p_res or not away_p_res:
+                continue
+            home_p = home_p_res.data
+            away_p = away_p_res.data
+
+            from apps.discord_bot.core.match_runs import squads_from_snapshot
+            home_cards, away_cards = squads_from_snapshot(snap) if snap.get("home_squad") else ([], [])
+            state = MatchState(home_rating=float(snap.get("home_rating") or 80), away_rating=float(snap.get("away_rating") or 80))
+            state.home_score = int(run.get("home_score") or 0)
+            state.away_score = int(run.get("away_score") or 0)
+
+            hist_res = await db.table("match_history").select("*").eq("run_id", run_id).execute()
+            hists = hist_res.data or []
+            home_h = next((h for h in hists if int(h["player_id"]) == home_id), None)
+            away_h = next((h for h in hists if int(h["player_id"]) == away_id), None)
+            if not home_h or not away_h:
+                continue
+
+            payload = {
+                "run_id": run_id,
+                "home": {"history_id": home_h["id"], "rating": snap.get("home_rating")},
+                "away": {"history_id": away_h["id"], "rating": snap.get("away_rating")},
+            }
+            await _apply_side_xp_fatigue(db, bot, payload, home_cards, away_cards, home_p, away_p, state)
+    except Exception:
+        logger.exception("retry_completing_pvp_runs failed")
 
 
 async def _resolve_pvp_thread(bot: Any, thread_id: int, guild_id: int) -> discord.Thread | None:
@@ -565,37 +622,6 @@ async def recover_active_pvp_runs(bot: Any, db: Any) -> int:
     return recovered
 
 
-async def retry_completing_pvp_runs(db: Any) -> int:
-    """Idempotent finalize retry for PvP runs stuck in completing (US7)."""
-    res = (
-        await db.table("match_runs")
-        .select("*")
-        .eq("run_type", "pvp")
-        .eq("status", "completing")
-        .execute()
-    )
-    n = 0
-    for run in res.data or []:
-        try:
-            await db.rpc(
-                "finalize_pvp_match",
-                {
-                    "p_run_id": run["id"],
-                    "p_home_score": int(run.get("home_score") or 0),
-                    "p_away_score": int(run.get("away_score") or 0),
-                    "p_home_rating": float(
-                        ((run.get("squad_snapshot") or {}).get("home_xi_rating")) or 0
-                    ),
-                    "p_away_rating": float(
-                        ((run.get("squad_snapshot") or {}).get("away_xi_rating")) or 0
-                    ),
-                },
-            ).execute()
-            n += 1
-            logger.info("pvp_completing_retry ok run=%s", run["id"])
-        except Exception:
-            logger.debug("pvp_completing_retry failed run=%s", run.get("id"), exc_info=True)
-    return n
 
 
 async def _maybe_send_rivalry_dms(
