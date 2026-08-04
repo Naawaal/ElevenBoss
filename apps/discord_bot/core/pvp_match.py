@@ -178,11 +178,19 @@ async def run_pvp_stadium(bot: Any, match_meta: dict[str, Any]) -> None:
 
         if snap and snap.get("home_squad") and snap.get("away_squad"):
             home_cards, away_cards = squads_from_snapshot(snap)
+            home_card_meta = list(snap.get("home_card_meta") or [])
+            away_card_meta = list(snap.get("away_card_meta") or [])
+            if not home_card_meta and snap.get("home_card_ids"):
+                home_card_meta = [{"id": str(cid)} for cid in snap.get("home_card_ids", [])]
+            if not away_card_meta and snap.get("away_card_ids"):
+                away_card_meta = [{"id": str(cid)} for cid in snap.get("away_card_ids", [])]
         else:
             _, _, home_active = await fetch_squad_xi(db, home_id)
             _, _, away_active = await fetch_squad_xi(db, away_id)
             home_cards = await ordered_cards_to_match_squad(db, home_active)
             away_cards = await ordered_cards_to_match_squad(db, away_active)
+            home_card_meta = [{"id": str(c["id"]), "slot": idx + 1, "date_of_birth": str(c.get("date_of_birth", "2000-01-01")), "level": int(c.get("level", 1))} for idx, c in enumerate(home_active)]
+            away_card_meta = [{"id": str(c["id"]), "slot": idx + 1, "date_of_birth": str(c.get("date_of_birth", "2000-01-01")), "level": int(c.get("level", 1))} for idx, c in enumerate(away_active)]
 
         if len(home_cards) != 11 or len(away_cards) != 11:
             await thread.send(embed=error_embed("A manager no longer has a valid XI. Match abandoned — no energy charged."))
@@ -289,8 +297,8 @@ async def run_pvp_stadium(bot: Any, match_meta: dict[str, Any]) -> None:
             away_score=state.away_score,
             home_rating=home_rating,
             away_rating=away_rating,
-            home_cards=home_active,
-            away_cards=away_active,
+            home_cards=home_card_meta,
+            away_cards=away_card_meta,
             home_p=home_p,
             away_p=away_p,
         )
@@ -351,7 +359,7 @@ async def run_pvp_stadium(bot: Any, match_meta: dict[str, Any]) -> None:
         # Apply XP/fatigue best-effort after SQL finalize (history rows exist)
         if finalize_payload and not finalize_payload.get("rewards_skipped"):
             await _apply_side_xp_fatigue(
-                db, bot, finalize_payload, home_cards, away_cards, home_p, away_p, state
+                db, bot, finalize_payload, home_cards, away_cards, home_card_meta, away_card_meta, home_p, away_p, state
             )
 
     except Exception:
@@ -413,8 +421,10 @@ async def _apply_side_xp_fatigue(
     db: Any,
     bot: Any,
     payload: dict[str, Any],
-    home_cards: list[dict],
-    away_cards: list[dict],
+    home_cards: list[Any],
+    away_cards: list[Any],
+    home_meta: list[dict],
+    away_meta: list[dict],
     home_p: dict,
     away_p: dict,
     state: MatchState,
@@ -431,9 +441,9 @@ async def _apply_side_xp_fatigue(
         logger.exception("xp/fatigue imports failed")
         return
 
-    for side, cards, player, gf, ga in (
-        ("home", home_cards, home_p, state.home_score, state.away_score),
-        ("away", away_cards, away_p, state.away_score, state.home_score),
+    for side, cards, meta, player, gf, ga in (
+        ("home", home_cards, home_meta, home_p, state.home_score, state.away_score),
+        ("away", away_cards, away_meta, away_p, state.away_score, state.home_score),
     ):
         side_data = payload.get(side) or {}
         history_id = side_data.get("history_id")
@@ -443,11 +453,11 @@ async def _apply_side_xp_fatigue(
         res_str = "win" if gf > ga else ("draw" if gf == ga else "loss")
         cards_json = [
             {
-                "id": str(c.get("id", "")),
-                "level": int(c.get("level", 1)),
-                "date_of_birth": str(c.get("date_of_birth", "2000-01-01")),
+                "id": str(m.get("id", "")),
+                "level": int(m.get("level", 1)),
+                "date_of_birth": str(m.get("date_of_birth", "2000-01-01")),
             }
-            for c in cards
+            for m in meta if m.get("id")
         ]
         try:
             await db.rpc(
@@ -465,15 +475,15 @@ async def _apply_side_xp_fatigue(
             logger.exception("pvp XP apply failed side=%s run=%s", side, run_id)
 
         try:
-            starter_ids = [str(getattr(c, "id", c.get("id") if isinstance(c, dict) else "")) for c in cards if getattr(c, "id", c.get("id") if isinstance(c, dict) else "")]
+            starter_ids = [str(m.get("id")) for m in meta if m.get("id")]
             bench_ids = await fetch_bench_ids(db, pid, starter_ids)
             tier = int(player.get("intensity_tier") or 1)
             drains = [
                 {
-                    "id": str(getattr(c, "id", c.get("id") if isinstance(c, dict) else "")),
+                    "id": str(m.get("id")),
                     "drain": match_fatigue_drain(int(getattr(c, "phy", 70) if not isinstance(c, dict) else c.get("phy", 70)), intensity_tier=tier),
                 }
-                for c in cards
+                for c, m in zip(cards, meta) if m.get("id")
             ]
             await db.rpc(
                 "apply_pvp_post_match_fitness_once",
@@ -514,6 +524,13 @@ async def retry_completing_pvp_runs(db: Any, bot: Any = None) -> None:
 
             from apps.discord_bot.core.match_runs import squads_from_snapshot
             home_cards, away_cards = squads_from_snapshot(snap) if snap.get("home_squad") else ([], [])
+            home_card_meta = list(snap.get("home_card_meta") or [])
+            away_card_meta = list(snap.get("away_card_meta") or [])
+            if not home_card_meta and snap.get("home_card_ids"):
+                home_card_meta = [{"id": str(cid)} for cid in snap.get("home_card_ids", [])]
+            if not away_card_meta and snap.get("away_card_ids"):
+                away_card_meta = [{"id": str(cid)} for cid in snap.get("away_card_ids", [])]
+
             state = MatchState(home_rating=float(snap.get("home_rating") or 80), away_rating=float(snap.get("away_rating") or 80))
             state.home_score = int(run.get("home_score") or 0)
             state.away_score = int(run.get("away_score") or 0)
@@ -530,7 +547,7 @@ async def retry_completing_pvp_runs(db: Any, bot: Any = None) -> None:
                 "home": {"history_id": home_h["id"], "rating": snap.get("home_rating")},
                 "away": {"history_id": away_h["id"], "rating": snap.get("away_rating")},
             }
-            await _apply_side_xp_fatigue(db, bot, payload, home_cards, away_cards, home_p, away_p, state)
+            await _apply_side_xp_fatigue(db, bot, payload, home_cards, away_cards, home_card_meta, away_card_meta, home_p, away_p, state)
     except Exception:
         logger.exception("retry_completing_pvp_runs failed")
 
@@ -577,14 +594,10 @@ async def recover_active_pvp_runs(bot: Any, db: Any) -> int:
     for run in res.data or []:
         try:
             if await _pvp_rewards_applied(db, run):
-                await complete_run(
-                    db,
-                    run["id"],
-                    home_score=int(run.get("home_score") or 0),
-                    away_score=int(run.get("away_score") or 0),
-                )
+                await db.table("match_runs").update({"status": "completing"}).eq("id", run["id"]).execute()
+                await retry_completing_pvp_runs(db, bot)
                 recovered += 1
-                logger.info("pvp_recovery completed_after_rewards run=%s", run["id"])
+                logger.info("pvp_recovery transitioned to completing run=%s", run["id"])
                 continue
             meta = {
                 "run_id": run["id"],

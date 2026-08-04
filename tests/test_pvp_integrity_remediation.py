@@ -148,3 +148,50 @@ async def test_t070_durable_completing_recovery_call():
     # Ensure complete_pvp_run RPC was called
     rpc_calls = [c.args[0] for c in mock_rpc.call_args_list]
     assert "complete_pvp_run" in rpc_calls
+
+
+@pytest.mark.asyncio
+async def test_t070_apply_side_xp_fatigue_metadata_propagation():
+    """Verify _apply_side_xp_fatigue passes correct card metadata IDs to RPCs."""
+    mock_db = MagicMock()
+    mock_rpc = AsyncMock()
+    mock_db.rpc = mock_rpc
+
+    from apps.discord_bot.core.pvp_match import _apply_side_xp_fatigue
+    from match_engine import MatchState
+
+    sample_meta = [{"id": "card-uuid-1", "level": 5, "date_of_birth": "2000-01-01"}]
+    mock_card = MagicMock()
+    mock_card.phy = 75
+
+    state = MatchState(home_rating=80, away_rating=80)
+    state.home_score = 1
+    state.away_score = 0
+
+    payload = {
+        "run_id": "run-uuid-123",
+        "home": {"history_id": "hist-uuid-456", "rating": 80},
+    }
+    home_p = {"discord_id": 101, "club_name": "Home FC", "intensity_tier": 1}
+
+    mock_bench_ids = AsyncMock(return_value=["bench-uuid-1"])
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("apps.discord_bot.core.injury_rpc.fetch_bench_ids", mock_bench_ids)
+        await _apply_side_xp_fatigue(
+            mock_db,
+            MagicMock(),
+            payload,
+            [mock_card],
+            [],
+            sample_meta,
+            [],
+            home_p,
+            {"discord_id": 102},
+            state,
+        )
+
+    # Verify apply_pvp_match_xp_once received card-uuid-1 in payload
+    xp_call = [c for c in mock_rpc.call_args_list if c.args[0] == "apply_pvp_match_xp_once"]
+    assert len(xp_call) > 0
+    xp_args = xp_call[0].args[1]
+    assert xp_args["p_cards"][0]["id"] == "card-uuid-1"
