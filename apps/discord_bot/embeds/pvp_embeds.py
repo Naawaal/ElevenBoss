@@ -1,5 +1,5 @@
 # apps/discord_bot/embeds/pvp_embeds.py
-"""Ranked PvP / Practice embeds (Feature 053)."""
+"""Ranked PvP, Ghost Backfill, and Practice embeds (Features 053 & 054)."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -19,6 +19,8 @@ def battle_hub_embed(state: dict[str, Any], *, manager_name: str) -> discord.Emb
     prac_cost = state.get("practice_energy_cost", 10)
     daily = state.get("daily_pvp_count", 0)
     daily_cap = state.get("daily_pvp_cap", 5)
+    backfill_count = state.get("daily_backfill_count", 0)
+    backfill_cap = state.get("daily_backfill_cap", 3)
 
     if pvp_on:
         desc = (
@@ -26,11 +28,12 @@ def battle_hub_embed(state: dict[str, Any], *, manager_name: str) -> discord.Emb
             f"Global Division: **{div}**\n"
             f"Global LP: **{lp:,}**\n"
             f"Action Energy: **{energy}**\n\n"
-            f"**Ranked PvP** — play human managers to earn Global LP "
-            f"(energy **{pvp_cost}** when the match finalizes).\n"
-            f"Today: **{daily}/{daily_cap}** ranked.\n"
-            f"**AI Practice** costs **{prac_cost}** ⚡ and awards **no Global LP**.\n"
-            f"Friendly remains a free sandbox."
+            f"**⚔️ Ranked Battle**\n"
+            f"Find a live manager first. If none is available,\n"
+            f"you'll face a recent real-club snapshot within seconds.\n"
+            f"Ranked matches today: **{daily}/{daily_cap}** (Backfills used: **{backfill_count}/{backfill_cap}**).\n\n"
+            f"**🤖 AI Practice**\n"
+            f"Costs **{prac_cost}** ⚡ and awards **0 LP**."
         )
     else:
         desc = (
@@ -67,18 +70,35 @@ def searching_embed(
         joined_at = joined_at.replace(tzinfo=timezone.utc)
     wait = max(0.0, (now - joined_at).total_seconds())
     band = search_range_for_wait(wait)
+
+    if wait < 5:
+        stage_title = "🔎 Finding Your Opponent"
+        stage_desc = (
+            f"Searching for:\n"
+            f"1. 🟢 Live manager\n"
+            f"2. 👻 Ghost manager snapshot\n"
+            f"3. 🤖 Ranked AI backfill\n\n"
+            f"Estimated start: under **10 seconds**\n"
+            f"Current phase: **Live manager search**"
+        )
+    else:
+        stage_title = "🔎 Expanding Search Range"
+        stage_desc = (
+            f"No close live manager found yet.\n"
+            f"Checking wider divisions before selecting a ghost opponent.\n\n"
+            f"Estimated start: under **5 seconds**\n"
+            f"Current phase: **Expanded search**"
+        )
+
     embed = discord.Embed(
-        title="🔎 Searching for an Opponent",
+        title=stage_title,
         description=(
-            f"Division: **{division}**\n"
-            f"Global LP: **{global_lp:,}**\n"
-            f"Starting XI: **{xi_rating:.1f} OVR**\n\n"
-            f"Search range:\n"
+            f"Division: **{division}** · **{global_lp:,} LP** · **{xi_rating:.1f} OVR**\n\n"
+            f"{stage_desc}\n\n"
             f"• Division Δ ≤ **{band.max_division_delta}**\n"
             f"• ±**{band.max_lp_delta}** LP\n"
-            f"• ±**{band.max_ovr_delta:g}** XI OVR\n\n"
-            f"Searching: **{int(wait)}** seconds\n\n"
-            f"No energy has been spent."
+            f"• ±**{band.max_ovr_delta:g}** OVR\n\n"
+            f"Searching: **{int(wait)}s** | No energy spent yet."
         ),
         color=0x3498DB,
     )
@@ -95,17 +115,34 @@ def opponent_found_embed(
     away_div: str,
     away_lp: int,
     away_ovr: float,
+    opponent_mode: str = "live",
+    snapshot_age_seconds: int | None = None,
 ) -> discord.Embed:
-    return discord.Embed(
-        title="⚔️ Opponent Found",
+    if opponent_mode == "ghost":
+        badge = "👻 GHOST MANAGER MATCH"
+        age_str = f"{snapshot_age_seconds // 3600}h ago" if snapshot_age_seconds and snapshot_age_seconds >= 3600 else "recent"
+        footer_text = f"Facing a frozen squad snapshot ({age_str}). Reduced Ranked rewards apply."
+        color = 0x9B59B6
+    elif opponent_mode == "ai_backfill":
+        badge = "🤖 RANKED AI BACKFILL MATCH"
+        footer_text = "Calibrated Ranked AI opponent. Reduced Ranked rewards apply."
+        color = 0x34495E
+    else:
+        badge = "🟢 LIVE MANAGER MATCH"
+        footer_text = "Both managers are live in this stadium! Full Ranked rewards apply."
+        color = 0x2ECC71
+
+    embed = discord.Embed(
+        title=badge,
         description=(
             f"**{home_name}**\n{home_div} · {home_lp:,} LP · {home_ovr:.1f} OVR\n\n"
-            f"**vs**\n\n"
-            f"**{away_name}**\n{away_div} · {away_lp:,} LP · {away_ovr:.1f} OVR\n\n"
-            f"Opening the stadium…"
+            f"⚔️ **VS** ⚔️\n\n"
+            f"**{away_name}**\n{away_div} · {away_lp:,} LP · {away_ovr:.1f} OVR"
         ),
-        color=0xE67E22,
+        color=color,
     )
+    embed.set_footer(text=footer_text)
+    return embed
 
 
 def queue_timeout_embed() -> discord.Embed:
@@ -113,8 +150,7 @@ def queue_timeout_embed() -> discord.Embed:
         title="⌛ No Opponent Found",
         description=(
             "Search timed out.\n\n"
-            "Choose **Continue Search**, **AI Practice**, or **Cancel**.\n"
-            "The system will **never** silently replace Ranked PvP with AI."
+            "Choose **Continue Search**, **AI Practice**, or **Cancel**."
         ),
         color=0x95A5A6,
     )
@@ -124,9 +160,14 @@ def practice_result_footer() -> str:
     return "AI Practice — No Global LP · No rivalry progress"
 
 
-def match_history_mode_label(match_type: str | None) -> str:
+def match_history_mode_label(match_type: str | None, opponent_mode: str | None = None) -> str:
+    if match_type == "pvp":
+        if opponent_mode == "ghost":
+            return "👻 Ghost PvP"
+        elif opponent_mode == "ai_backfill":
+            return "🤖 Ranked AI"
+        return "🟢 Ranked PvP"
     return {
-        "pvp": "Ranked PvP",
         "practice": "AI Practice",
         "friendly": "Friendly",
         "league": "League",
@@ -149,131 +190,19 @@ async def rivalry_prematch_field(
     db: Any,
     home_id: int,
     away_id: int,
-    home_p: dict[str, Any],
-    away_p: dict[str, Any],
-) -> str | None:
-    """Presentation-only pre-match rivalry blurb when active and callouts enabled."""
+    home_p: dict,
+    away_p: dict,
+) -> str:
     try:
-        if home_p.get("pvp_rivalry_callouts") is False and away_p.get("pvp_rivalry_callouts") is False:
-            return None
-        res = await db.rpc(
-            "get_rivalry_detail",
-            {"p_viewer_id": home_id, "p_opponent_id": away_id},
-        ).execute()
-        data = res.data if isinstance(res.data, dict) else {}
-        if not data.get("found") or data.get("status") != "active":
-            return None
-        meetings = int(data.get("meetings") or 0)
-        a_wins = int(data.get("a_wins") or 0)
-        b_wins = int(data.get("b_wins") or 0)
-        a_id = int(data.get("manager_a_id") or 0)
-        if home_id == a_id:
-            my_w, their_w = a_wins, b_wins
-        else:
-            my_w, their_w = b_wins, a_wins
-        lead = (
-            f"{home_p.get('club_name')} leads {my_w}–{their_w}"
-            if my_w > their_w
-            else (
-                f"{away_p.get('club_name')} leads {their_w}–{my_w}"
-                if their_w > my_w
-                else f"Series tied {my_w}–{their_w}"
-            )
-        )
-        return f"Meeting **#{meetings}** · {lead}"
+        from apps.discord_bot.core.pvp_rpc import call_get_rivalry_detail
+        detail = await call_get_rivalry_detail(db, home_id, away_id)
+        if not detail or not detail.get("meetings"):
+            return f"First official meeting between {home_p['club_name']} and {away_p['club_name']}!"
+        m = detail.get("meetings", 0)
+        a_w = detail.get("a_wins", 0)
+        b_w = detail.get("b_wins", 0)
+        d = detail.get("draws", 0)
+        status = detail.get("status", "tracking").upper()
+        return f"**{status} RIVALRY** · Meetings: **{m}** (W{a_w}-D{d}-L{b_w})"
     except Exception:
-        return None
-
-
-def rivalries_list_embed(payload: dict[str, Any], *, manager_name: str) -> discord.Embed:
-    rows = payload.get("rivalries") or []
-    embed = discord.Embed(
-        title="🔥 Manager Rivalries",
-        description=f"Rivalries for **{manager_name}** (presentation only — no sim buffs).",
-        color=0xE74C3C,
-    )
-    if not rows:
-        embed.add_field(
-            name="None yet",
-            value="Play **3 Ranked PvP** meetings with the same manager within 30 days to activate a rivalry.",
-            inline=False,
-        )
-        return embed
-    for row in rows[:10]:
-        status = row.get("status", "?")
-        opp = row.get("opponent_id")
-        embed.add_field(
-            name=f"<@{opp}> · {status}",
-            value=(
-                f"H2H **{row.get('my_wins', 0)}–{row.get('their_wins', 0)}** "
-                f"({row.get('draws', 0)} draws) · {row.get('meetings', 0)} meetings"
-            ),
-            inline=False,
-        )
-    return embed
-
-
-def rivalry_detail_embed(detail: dict[str, Any], *, opponent_id: int, viewer_id: int) -> discord.Embed:
-    a_id = int(detail.get("manager_a_id") or 0)
-    if viewer_id == a_id:
-        my_w, their_w = int(detail.get("a_wins") or 0), int(detail.get("b_wins") or 0)
-        my_g, their_g = int(detail.get("a_goals") or 0), int(detail.get("b_goals") or 0)
-    else:
-        my_w, their_w = int(detail.get("b_wins") or 0), int(detail.get("a_wins") or 0)
-        my_g, their_g = int(detail.get("b_goals") or 0), int(detail.get("a_goals") or 0)
-    embed = discord.Embed(
-        title=f"🔥 Rivalry vs <@{opponent_id}>",
-        description=f"Status: **{detail.get('status')}** · Meetings: **{detail.get('meetings', 0)}**",
-        color=0xC0392B,
-    )
-    embed.add_field(name="Head-to-head", value=f"**{my_w}–{their_w}** ({detail.get('draws', 0)} draws)", inline=True)
-    embed.add_field(name="Goals", value=f"**{my_g}–{their_g}**", inline=True)
-    streak_owner = detail.get("current_streak_owner")
-    streak_n = detail.get("current_streak_count") or 0
-    if streak_owner and streak_n:
-        embed.add_field(name="Streak", value=f"<@{streak_owner}> ×{streak_n}", inline=True)
-    recent = detail.get("recent") or []
-    if recent:
-        lines = []
-        for m in recent[:5]:
-            lines.append(
-                f"`{m.get('result', '?')}` {m.get('goals_for', 0)}–{m.get('goals_against', 0)} "
-                f"(LP {int(m.get('lp_delta') or 0):+d})"
-            )
-        embed.add_field(name="Last 5 Ranked", value="\n".join(lines), inline=False)
-    badges = detail.get("viewer_badges") or []
-    if badges:
-        embed.add_field(name="Badges", value=", ".join(f"`{b}`" for b in badges[:8]), inline=False)
-    prefs = detail.get("prefs") or {}
-    embed.set_footer(
-        text=(
-            f"DMs={'on' if prefs.get('dms', True) else 'off'} · "
-            f"Callouts={'on' if prefs.get('callouts', True) else 'off'} · "
-            f"LB={'on' if prefs.get('lb_visible', True) else 'off'} · "
-            f"Blocked={'yes' if detail.get('blocked') else 'no'}"
-        )
-    )
-    return embed
-
-
-def hottest_rivalries_embed(payload: dict[str, Any]) -> discord.Embed:
-    rows = payload.get("rivalries") or []
-    embed = discord.Embed(
-        title="🌡️ Hottest Rivalries",
-        description="Server board (visibility prefs respected).",
-        color=0xE67E22,
-    )
-    if not rows:
-        embed.description = "No active rivalries to show yet."
-        return embed
-    for i, row in enumerate(rows[:10], start=1):
-        embed.add_field(
-            name=f"#{i}",
-            value=(
-                f"<@{row.get('manager_a_id')}> vs <@{row.get('manager_b_id')}>\n"
-                f"{row.get('a_wins', 0)}–{row.get('b_wins', 0)} · "
-                f"{row.get('meetings_30d', row.get('meetings', 0))} meetings (30d)"
-            ),
-            inline=False,
-        )
-    return embed
+        return ""

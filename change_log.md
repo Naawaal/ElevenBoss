@@ -2,6 +2,21 @@
 
 Hey Managers!
 
+## Instant PvP Backfill & Ghost Managers (Feature 054)
+
+No more long queue waits or PvP timeouts! Ranked PvP now guarantees match entry within 15 seconds:
+
+- **Instant Matchmaking**: Searching for Ranked PvP searches for a live human opponent for 10 seconds. If no live manager is queued, the matchmaker automatically matches you with a recent frozen snapshot of a real manager's team (**Ghost Manager**) or a division-calibrated **Ranked AI**.
+- **Ghost Manager Snapshots**: Ghost opponents use real managers' actual club names, starting XI lineups, formations, and tactics. The opponent team is controlled deterministically by the match engine.
+- **Zero Offline Penalty**: Offline ghost owners suffer **zero LP loss, zero coin loss, zero energy drain**, and receive no unwanted Discord mentions. Facing a ghost is a single-sided challenge against stored club data.
+- **Calibrated Ranked Rewards**: Ghost and AI backfill matches award full competitive experience with calibrated LP and reward multipliers:
+  - **Live Human**: 1.00x coins, 1.00x XP, 1.00x positive/negative LP, full rivalry tracking.
+  - **Ghost Manager**: 0.85x coins, 0.90x XP, 0.75x positive LP, 0.50x negative LP.
+  - **Ranked AI**: 0.70x coins, 0.75x XP, 0.50x positive LP, 0.25x negative LP.
+- **Daily Limits**: Maximum **3 ghost/AI backfills per day** within your standard daily Ranked allowance. Rivalries and head-to-head records remain strictly live-human only.
+
+---
+
 ## Ranked PvP & Rivalries (Feature 053)
 
 Find human opponents in your guild and build competitive manager rivalries in the updated `/battle` hub:

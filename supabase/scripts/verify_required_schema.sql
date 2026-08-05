@@ -21,15 +21,14 @@ BEGIN
       ('table:public.match_locks'),
       ('table:public.match_runs'),
       ('table:public.match_events'),
-      ('table:public.pvp_matchmaking_queue'),
-      ('table:public.manager_rivalries'),
-      ('table:public.pvp_blocks'),
-      ('column:public.match_history.opponent_owner_id'),
-      ('column:public.match_history.match_type'),
-      ('column:public.match_history.global_lp_delta'),
-      ('column:public.match_history.rivalry_counted'),
-      ('column:public.players.pvp_badge_keys'),
-      ('column:public.players.pvp_requeue_available_at'),
+      ('table:public.pvp_ghost_snapshots'),
+      ('table:public.pvp_ghost_encounters'),
+      ('column:public.pvp_matchmaking_queue.backfill_after'),
+      ('column:public.pvp_matchmaking_queue.preferred_mode'),
+      ('column:public.match_runs.opponent_mode'),
+      ('column:public.match_history.opponent_mode'),
+      ('column:public.match_history.opponent_snapshot_age_seconds'),
+      ('function:refresh_pvp_ghost_snapshot'),
       ('function:join_pvp_queue'),
       ('function:cancel_pvp_queue'),
       ('function:try_match_pvp_queue'),
@@ -472,6 +471,7 @@ BEGIN
         WHEN 'get_development_hub_state' THEN to_regprocedure('public.get_development_hub_state(bigint)')
         WHEN 'get_skill_allocation_hub' THEN to_regprocedure('public.get_skill_allocation_hub(bigint,uuid)')
         WHEN 'get_mentor_targets' THEN to_regprocedure('public.get_mentor_targets(bigint,uuid)')
+        WHEN 'refresh_pvp_ghost_snapshot' THEN to_regprocedure('public.refresh_pvp_ghost_snapshot(bigint,uuid)')
         WHEN 'join_pvp_queue' THEN to_regprocedure('public.join_pvp_queue(bigint,bigint,bigint)')
         WHEN 'try_match_pvp_queue' THEN to_regprocedure('public.try_match_pvp_queue(bigint)')
         WHEN 'cancel_pvp_queue' THEN to_regprocedure('public.cancel_pvp_queue(bigint,uuid)')

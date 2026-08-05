@@ -1,10 +1,10 @@
 # packages/pvp/pvp/matchmaking.py
-"""Guild-local Ranked PvP search widening, eligibility, and pair scoring."""
+"""Guild-local Ranked PvP search widening, ghost backfill eligibility, and pair scoring."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from pvp.models import PairScore, QueueCandidate, SearchRange
+from pvp.models import GhostSnapshot, PairScore, QueueCandidate, SearchRange
 
 # Defaults mirror contracts/pvp-queue-rpcs.md / game_config
 DEFAULT_INITIAL_LP = 100
@@ -14,6 +14,11 @@ DEFAULT_MAX_OVR = 12.0
 DEFAULT_SAME_PAIR_COOLDOWN = timedelta(minutes=30)
 DEFAULT_SAME_PAIR_DAILY = 2
 DEFAULT_MANAGER_DAILY = 5
+DEFAULT_BACKFILL_AFTER_SECONDS = 10
+DEFAULT_GHOST_SNAPSHOT_MAX_AGE = timedelta(days=7)
+DEFAULT_GHOST_SAME_COOLDOWN = timedelta(hours=24)
+DEFAULT_GHOST_SAME_WEEKLY_LIMIT = 2
+DEFAULT_BACKFILL_DAILY_LIMIT = 3
 
 
 def search_range_for_wait(
@@ -38,6 +43,57 @@ def wait_seconds(candidate: QueueCandidate, now: datetime | None = None) -> floa
     if joined.tzinfo is None:
         joined = joined.replace(tzinfo=timezone.utc)
     return max(0.0, (now - joined).total_seconds())
+
+
+def is_backfill_eligible(candidate: QueueCandidate, now: datetime | None = None) -> bool:
+    """True if candidate queue age has reached the backfill threshold."""
+    now = now or datetime.now(timezone.utc)
+    if candidate.backfill_after is not None:
+        bf = candidate.backfill_after
+        if bf.tzinfo is None:
+            bf = bf.replace(tzinfo=timezone.utc)
+        return now >= bf
+    return wait_seconds(candidate, now) >= DEFAULT_BACKFILL_AFTER_SECONDS
+
+
+def is_ghost_snapshot_eligible(
+    snapshot: GhostSnapshot,
+    *,
+    seeker_id: int,
+    now: datetime | None = None,
+    max_age: timedelta = DEFAULT_GHOST_SNAPSHOT_MAX_AGE,
+) -> bool:
+    """Validate snapshot freshness, owner id, and active eligibility flag."""
+    if not snapshot.eligible:
+        return False
+    if snapshot.owner_id == seeker_id:
+        return False
+    now = now or datetime.now(timezone.utc)
+    cap_at = snapshot.captured_at if snapshot.captured_at.tzinfo else snapshot.captured_at.replace(tzinfo=timezone.utc)
+    if (now - cap_at) > max_age:
+        return False
+    squad = snapshot.snapshot_json.get("squad")
+    if not isinstance(squad, list) or len(squad) != 11:
+        return False
+    return True
+
+
+def ghost_candidate_score(seeker: QueueCandidate, ghost: GhostSnapshot) -> tuple[int, float, int, float, float, int]:
+    """
+    Lower tuple values indicate higher priority selection for Ghost opponents:
+    1. Division rank difference
+    2. XI rating difference
+    3. Global LP difference
+    4. Negated captured_at timestamp (freshest snapshot first)
+    5. Last selected timestamp (least recently selected first)
+    6. Selection count (lowest count first)
+    """
+    div_delta = abs(seeker.division_rank - ghost.division_rank)
+    ovr_delta = abs(seeker.xi_rating - ghost.xi_rating)
+    lp_delta = abs(seeker.global_lp - ghost.global_lp)
+    cap_ts = ghost.captured_at.timestamp() if ghost.captured_at else 0.0
+    last_sel_ts = ghost.last_selected_at.timestamp() if ghost.last_selected_at else 0.0
+    return (div_delta, ovr_delta, lp_delta, -cap_ts, last_sel_ts, ghost.selection_count)
 
 
 def pair_in_range(
@@ -123,10 +179,8 @@ def eligible_pair(
         return False
     if not under_manager_daily_cap(a_matches_today) or not under_manager_daily_cap(b_matches_today):
         return False
-    # Use the *stricter* (earlier) wait band so both are inside the older searcher's range
     band_a = search_range_for_wait(wait_seconds(a, now), max_lp=max_lp, max_ovr=max_ovr)
     band_b = search_range_for_wait(wait_seconds(b, now), max_lp=max_lp, max_ovr=max_ovr)
-    # ponytail: require pair fits both managers' current widening bands
     return pair_in_range(a, b, band_a) and pair_in_range(a, b, band_b)
 
 

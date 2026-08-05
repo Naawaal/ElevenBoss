@@ -1,10 +1,13 @@
 # packages/pvp/pvp/__init__.py
-"""Pure Ranked PvP matchmaking, rivalry math, and reward policy (Feature 053)."""
+"""Pure Ranked PvP matchmaking, ghost backfill, rivalry math, and reward policy (Features 053 & 054)."""
 from __future__ import annotations
 
 from pvp.matchmaking import (
     best_opponent,
     eligible_pair,
+    ghost_candidate_score,
+    is_backfill_eligible,
+    is_ghost_snapshot_eligible,
     pair_blocked,
     score_pair,
     search_range_for_wait,
@@ -12,6 +15,9 @@ from pvp.matchmaking import (
     wait_seconds,
 )
 from pvp.models import (
+    GhostEncounter,
+    GhostSnapshot,
+    OpponentMode,
     PairScore,
     QueueCandidate,
     RewardPolicyResult,
@@ -33,6 +39,9 @@ from pvp.rivalry_math import (
 )
 
 __all__ = [
+    "GhostEncounter",
+    "GhostSnapshot",
+    "OpponentMode",
     "PairScore",
     "QueueCandidate",
     "RewardPolicyResult",
@@ -45,6 +54,9 @@ __all__ = [
     "best_opponent",
     "canonical_pair",
     "eligible_pair",
+    "ghost_candidate_score",
+    "is_backfill_eligible",
+    "is_ghost_snapshot_eligible",
     "pair_blocked",
     "practice_lp_delta",
     "pvp_lp_delta",

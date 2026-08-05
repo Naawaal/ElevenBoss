@@ -1,20 +1,21 @@
 # apps/discord_bot/tasks/pvp_matchmaker_job.py
-"""APScheduler job: expire PvP queue rows, recover runs, attempt matches (Feature 053)."""
+"""APScheduler job: expire PvP queue rows, recover runs, attempt matches (Features 053 & 054)."""
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 async def pvp_matchmaker_job(bot: Any) -> None:
-    """Interval matchmaker — safe no-op when flag off / no searchers."""
+    """Interval matchmaker — evaluates live humans, ghost manager snapshots, and AI backfill."""
     try:
         from apps.discord_bot.db.client import get_client
-        from apps.discord_bot.core.pvp_match import (
-            dispatch_matched_pvp,
+        from apps.discord_bot.core.pvp_match import dispatch_matched_pvp
+        from apps.discord_bot.core.match_recovery import (
             recover_active_pvp_runs,
             retry_completing_pvp_runs,
         )
@@ -56,7 +57,7 @@ async def pvp_matchmaker_job(bot: Any) -> None:
         except Exception:
             logger.debug("retry_completing_pvp_runs failed", exc_info=True)
 
-        for _ in range(3):
+        for _ in range(5):
             try:
                 res = await db.rpc("try_match_pvp_queue", {"p_guild_id": None}).execute()
                 data = res.data if isinstance(res.data, dict) else {}
@@ -64,11 +65,11 @@ async def pvp_matchmaker_job(bot: Any) -> None:
                     break
                 matched += 1
                 logger.info(
-                    "pvp_match_found run=%s home=%s away=%s guild=%s",
+                    "pvp_match_found run=%s mode=%s home=%s away=%s",
                     data.get("run_id"),
-                    data.get("home_owner_id"),
-                    data.get("away_owner_id"),
-                    data.get("guild_id"),
+                    data.get("opponent_mode"),
+                    data.get("home_discord_id"),
+                    data.get("away_discord_id"),
                 )
                 asyncio.create_task(dispatch_matched_pvp(bot, data))
             except Exception:
