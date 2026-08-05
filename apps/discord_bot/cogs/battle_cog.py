@@ -2544,7 +2544,7 @@ class BattleCog(commands.Cog):
             )
 
             rpc_res = await db.rpc("start_friendly_match", {
-                "p_challenge_id": getattr(invitation_msg, "id", None),
+                "p_challenge_id": str(getattr(invitation_msg, "id", "")),
                 "p_home_id": challenger.id,
                 "p_away_id": opponent.id,
                 "p_squad_snapshot": snapshot,

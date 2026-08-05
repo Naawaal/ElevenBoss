@@ -86,11 +86,22 @@ def parse_latest_changelog_entry(changelog_path: Path) -> ChangelogEntry | None:
 
 
 def get_current_commit_sha() -> str:
-    """Read short or full commit SHA from platform environment variables."""
+    """Read short or full commit SHA from platform environment variables or git repo."""
     for var_name in ("GIT_COMMIT_SHA", "RENDER_GIT_COMMIT", "RAILWAY_GIT_COMMIT_SHA", "HEROKU_SLUG_COMMIT"):
         val = os.environ.get(var_name, "").strip()
         if val:
             return val
+    try:
+        import subprocess
+
+        output = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL, timeout=2
+        )
+        sha = output.decode("utf-8").strip()
+        if sha:
+            return sha
+    except Exception:
+        pass
     return "unknown"
 
 
