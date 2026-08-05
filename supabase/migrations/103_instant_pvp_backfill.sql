@@ -77,6 +77,94 @@ ALTER TABLE public.match_history
     ADD COLUMN IF NOT EXISTS opponent_snapshot_age_seconds INTEGER;
 
 -- 4) RPC: refresh_pvp_ghost_snapshot
+-- 4) Build Canonical Squad Snapshot RPC with correct column names (player_card_id, position_slot, "def")
+CREATE OR REPLACE FUNCTION public.build_pvp_squad_snapshot(
+    p_owner_id BIGINT
+) RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_player public.players%ROWTYPE;
+    v_squad JSONB;
+    v_ids UUID[];
+    v_meta JSONB;
+    v_rating NUMERIC;
+    v_policy JSONB;
+BEGIN
+    SELECT * INTO v_player FROM public.players WHERE discord_id = p_owner_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Player % not found', p_owner_id;
+    END IF;
+
+    SELECT
+        jsonb_agg(
+            jsonb_build_object(
+                'name', pc.name,
+                'position', pc.position,
+                'overall', pc.overall,
+                'pac', pc.pac,
+                'sho', pc.sho,
+                'pas', pc.pas,
+                'dri', pc.dri,
+                'def_stat', pc."def",
+                'phy', pc.phy,
+                'morale', COALESCE(pc.morale, 80),
+                'playstyles', '[]'::jsonb
+            ) ORDER BY sa.position_slot ASC
+        ),
+        array_agg(pc.id ORDER BY sa.position_slot ASC),
+        jsonb_agg(
+            jsonb_build_object(
+                'id', pc.id,
+                'level', COALESCE(pc.level, 1),
+                'age', public.card_age_from_dob(pc.date_of_birth),
+                'date_of_birth', pc.date_of_birth,
+                'fatigue', pc.fatigue,
+                'injury_tier', pc.injury_tier,
+                'slot', sa.position_slot
+            ) ORDER BY sa.position_slot ASC
+        ),
+        AVG(pc.overall)::NUMERIC
+    INTO v_squad, v_ids, v_meta, v_rating
+    FROM public.squad_assignments sa
+    JOIN public.player_cards pc ON pc.id = sa.player_card_id
+    WHERE sa.discord_id = p_owner_id
+      AND pc.owner_id = p_owner_id
+      AND COALESCE(pc.is_retired, FALSE) = FALSE;
+
+    IF v_squad IS NULL
+       OR jsonb_array_length(v_squad) <> 11
+       OR cardinality(v_ids) <> 11
+    THEN
+        RAISE EXCEPTION 'Player % starting XI does not contain 11 valid cards', p_owner_id;
+    END IF;
+
+    v_policy := jsonb_build_object(
+        'economy_enabled', COALESCE((public.get_game_config('pvp_rewards_enabled') #>> '{}')::BOOLEAN, FALSE),
+        'xp_enabled', COALESCE((public.get_game_config('pvp_rewards_enabled') #>> '{}')::BOOLEAN, FALSE),
+        'fitness_enabled', COALESCE((public.get_game_config('pvp_rewards_enabled') #>> '{}')::BOOLEAN, FALSE),
+        'rivalry_enabled', COALESCE((public.get_game_config('pvp_rivalries_enabled') #>> '{}')::BOOLEAN, FALSE)
+    );
+
+    RETURN jsonb_build_object(
+        'owner_id', p_owner_id,
+        'formation', COALESCE((SELECT formation FROM public.squads WHERE discord_id = p_owner_id), '4-3-3'),
+        'tactics', jsonb_build_object(
+            'formation', COALESCE((SELECT formation FROM public.squads WHERE discord_id = p_owner_id), '4-3-3'),
+            'stance', 'balanced',
+            'intensity_tier', 2
+        ),
+        'xi_rating', ROUND(v_rating, 2),
+        'squad', v_squad,
+        'card_ids', to_jsonb(v_ids),
+        'card_meta', v_meta,
+        'policies', v_policy
+    );
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.refresh_pvp_ghost_snapshot(
     p_owner_id BIGINT,
     p_source_run_id UUID DEFAULT NULL
@@ -112,7 +200,7 @@ BEGIN
         owner_id, club_name, global_lp, global_division, division_rank,
         xi_rating, snapshot_json, snapshot_schema, captured_at, eligible, updated_at
     ) VALUES (
-        p_owner_id, v_player.club_name, v_player.global_lp, COALESCE(v_player.global_division, 'Unranked'), v_div_rank,
+        p_owner_id, v_player.club_name, v_player.global_lp, 'Division ' || v_div_rank, v_div_rank,
         v_xi_rating, v_snap, 1, NOW(), TRUE, NOW()
     )
     ON CONFLICT (owner_id) DO UPDATE SET
@@ -870,6 +958,7 @@ BEGIN
 
     RETURN jsonb_build_object(
         'battle_pvp_enabled', public._pvp_flag_on(),
+        'pvp_backfill_enabled', COALESCE((public.get_game_config('pvp_backfill_enabled') #>> '{}')::BOOLEAN, TRUE),
         'pvp_rewards_enabled', COALESCE((public.get_game_config('pvp_rewards_enabled') #>> '{}')::BOOLEAN, FALSE),
         'pvp_rivalries_enabled', COALESCE((public.get_game_config('pvp_rivalries_enabled') #>> '{}')::BOOLEAN, FALSE),
         'pvp_energy_cost', public.get_game_config_int('pvp_energy_cost', 20),
@@ -899,6 +988,66 @@ BEGIN
 END;
 $$;
 
+-- Operational Bootstrap: Populate ghost snapshots for all active human managers
+CREATE OR REPLACE FUNCTION public.bootstrap_pvp_ghost_snapshots()
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_rec RECORD;
+    v_count INTEGER := 0;
+BEGIN
+    FOR v_rec IN
+        SELECT DISTINCT p.discord_id
+        FROM public.players p
+        JOIN public.player_cards pc ON pc.owner_id = p.discord_id
+        WHERE pc.is_active = TRUE
+        GROUP BY p.discord_id
+        HAVING COUNT(pc.id) = 11
+    LOOP
+        BEGIN
+            PERFORM public.refresh_pvp_ghost_snapshot(v_rec.discord_id);
+            v_count := v_count + 1;
+        EXCEPTION WHEN OTHERS THEN
+            NULL; -- Skip any invalid rosters
+        END;
+    END LOOP;
+
+    RETURN v_count;
+END;
+$$;
+
+-- Bulk Refresh: Refreshes snapshots for all managers whose snapshot is older than p_max_age_hours
+CREATE OR REPLACE FUNCTION public.refresh_all_pvp_ghost_snapshots(p_max_age_hours INTEGER DEFAULT 24)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_rec RECORD;
+    v_count INTEGER := 0;
+BEGIN
+    FOR v_rec IN
+        SELECT gs.owner_id
+        FROM public.pvp_ghost_snapshots gs
+        WHERE gs.captured_at < NOW() - (p_max_age_hours || ' hours')::INTERVAL
+    LOOP
+        BEGIN
+            PERFORM public.refresh_pvp_ghost_snapshot(v_rec.owner_id);
+            v_count := v_count + 1;
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END;
+    END LOOP;
+
+    RETURN v_count;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.bootstrap_pvp_ghost_snapshots() TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.refresh_all_pvp_ghost_snapshots(INTEGER) TO anon, authenticated, service_role;
+
 -- 9) Schema guard block
 DO $$
 DECLARE
@@ -912,6 +1061,8 @@ DECLARE
         'column:public.match_history.opponent_mode',
         'column:public.match_history.opponent_snapshot_age_seconds',
         'function:public.refresh_pvp_ghost_snapshot',
+        'function:public.bootstrap_pvp_ghost_snapshots',
+        'function:public.refresh_all_pvp_ghost_snapshots',
         'function:public.try_match_pvp_queue',
         'function:public.finalize_pvp_match',
         'policy:public.pvp_ghost_snapshots.pvp_ghost_snapshots_read_anon',
@@ -932,7 +1083,7 @@ BEGIN
                 SELECT 1 FROM information_schema.columns
                 WHERE table_schema = split_part(split_part(req, ':', 2), '.', 1)
                   AND table_name = split_part(split_part(req, ':', 2), '.', 2)
-                  AND column_name = split_part(req, ':', 3)
+                  AND column_name = split_part(split_part(req, ':', 2), '.', 3)
             ) THEN
                 RAISE EXCEPTION 'Schema guard failed: missing column %', req;
             END IF;
@@ -950,7 +1101,7 @@ BEGIN
                 SELECT 1 FROM pg_policies
                 WHERE schemaname = split_part(split_part(req, ':', 2), '.', 1)
                   AND tablename = split_part(split_part(req, ':', 2), '.', 2)
-                  AND policyname = split_part(req, ':', 3)
+                  AND policyname = split_part(split_part(req, ':', 2), '.', 3)
             ) THEN
                 RAISE EXCEPTION 'Schema guard failed: missing policy %', req;
             END IF;

@@ -41,9 +41,10 @@ def _ticker_helpers():
     return append_goal_scroll, format_ticker_line, get_momentum_bar, _match_stats_from_state
 
 
-async def dispatch_matched_pvp(bot: Any, match_meta: dict[str, Any]) -> None:
+async def dispatch_matched_pvp(bot: Any, match_meta: dict[str, Any] | str) -> None:
     """Entry from matchmaker / join — run stadium for a claimed PvP run."""
-    run_id = match_meta.get("run_id")
+    meta_dict = {"run_id": match_meta} if isinstance(match_meta, str) else (match_meta if isinstance(match_meta, dict) else {})
+    run_id = meta_dict.get("run_id")
     if not run_id:
         return
     inflight = getattr(bot, "_pvp_inflight", None)
@@ -54,31 +55,41 @@ async def dispatch_matched_pvp(bot: Any, match_meta: dict[str, Any]) -> None:
         return
     inflight.add(run_id)
     try:
-        await run_pvp_stadium(bot, match_meta)
+        await run_pvp_stadium(bot, meta_dict)
     finally:
         inflight.discard(run_id)
 
 
-async def run_pvp_stadium(bot: Any, match_meta: dict[str, Any]) -> None:
+async def run_pvp_stadium(bot: Any, match_meta: dict[str, Any] | str) -> None:
     """
     Executes PvP stadium battle supporting Live Human, Ghost Manager, and Ranked AI opponents.
     """
     append_goal_scroll, format_ticker_line, get_momentum_bar, match_stats = _ticker_helpers()
     db = await get_client()
-    run_id = str(match_meta["run_id"])
-    home_id = int(match_meta["home_owner_id"])
-    away_id_val = match_meta.get("away_owner_id")
-    away_id = int(away_id_val) if away_id_val is not None else None
-    guild_id = int(match_meta.get("guild_id") or 0)
-    channel_id = int(match_meta.get("channel_id") or 0)
-    sim_seed = int(match_meta.get("sim_seed") or generate_sim_seed())
-    is_recovery = bool(match_meta.get("recovery"))
+    meta_dict = {"run_id": match_meta} if isinstance(match_meta, str) else (match_meta if isinstance(match_meta, dict) else {})
+    run_id = str(meta_dict.get("run_id") or "")
+    if not run_id:
+        return
 
     run_row = (
         await db.table("match_runs").select("*").eq("id", run_id).maybe_single().execute()
     ).data or {}
-    snap = dict(run_row.get("squad_snapshot") or match_meta.get("squad_snapshot") or {})
-    opponent_mode = str(run_row.get("opponent_mode") or match_meta.get("opponent_mode") or snap.get("opponent_mode") or "live")
+    snap = dict(run_row.get("squad_snapshot") or meta_dict.get("squad_snapshot") or {})
+    opponent_mode = str(run_row.get("opponent_mode") or meta_dict.get("opponent_mode") or snap.get("opponent_mode") or "live")
+
+    home_id_val = meta_dict.get("home_owner_id") or meta_dict.get("home_discord_id") or run_row.get("home_discord_id")
+    if home_id_val is None:
+        await abandon_run(db, run_id, reason="pvp_missing_home_player")
+        return
+    home_id = int(home_id_val)
+
+    away_id_val = meta_dict.get("away_owner_id") or meta_dict.get("away_discord_id") or run_row.get("away_discord_id")
+    away_id = int(away_id_val) if away_id_val is not None else None
+
+    guild_id = int(meta_dict.get("guild_id") or run_row.get("guild_id") or 0)
+    channel_id = int(meta_dict.get("channel_id") or run_row.get("channel_id") or 0)
+    sim_seed = int(meta_dict.get("sim_seed") or run_row.get("sim_seed") or generate_sim_seed())
+    is_recovery = bool(meta_dict.get("recovery"))
 
     thread: discord.Thread | None = None
     kicked_off = False
@@ -432,7 +443,7 @@ async def _apply_side_xp_fatigue(
 
     try:
         from apps.discord_bot.core.injury_rpc import fetch_bench_ids
-        from player_engine.fatigue import match_fatigue_drain
+        from player_engine.fatigue import match_fatigue_drain, stance_from_tactics_modifier
     except Exception:
         logger.exception("xp/fatigue imports failed")
         return
@@ -448,23 +459,35 @@ async def _apply_side_xp_fatigue(
             continue
 
         p_id = int(player["discord_id"])
-        bench_ids = await fetch_bench_ids(db, p_id)
-        drain_seq = match_fatigue_drain(state.intensity_tier, len(cards), len(bench_ids))
         sub_card_ids = [m["id"] for m in meta if m.get("id")]
+        bench_ids = await fetch_bench_ids(db, p_id, sub_card_ids)
+        t_mod = getattr(state, "home_tactics_modifier" if side == "home" else "away_tactics_modifier", 1.0)
+        stance = stance_from_tactics_modifier(t_mod)
+        tier = getattr(state, "intensity_tier", 1)
+        # Build per-card drain list matching SQL signature: [{id, drain}, ...]
+        starter_drains = [
+            {"id": str(meta[i].get("id") or ""), "drain": match_fatigue_drain(getattr(c, "phy", 70), stance=stance, intensity_tier=tier)}
+            for i, c in enumerate(cards)
+            if i < len(meta) and meta[i].get("id")
+        ]
 
-        await db.rpc(
+        res_fit = db.rpc(
             "apply_pvp_post_match_fitness_once",
             {
                 "p_history_id": history_id,
                 "p_run_id": run_id,
                 "p_owner_id": p_id,
-                "p_fatigue_payload": {"drains": drain_seq},
-                "p_sub_card_ids": sub_card_ids,
-                "p_injury_payload": {"goals_for": gf, "goals_against": ga},
+                "p_starter_drains": starter_drains,
+                "p_bench_ids": bench_ids,
+                "p_recorded_injuries": side_data.get("recorded_injuries") or [],
             },
-        ).execute()
+        )
+        if hasattr(res_fit, "execute"):
+            await res_fit.execute()
+        else:
+            await res_fit
 
-        await db.rpc(
+        res_xp = db.rpc(
             "apply_pvp_match_xp_once",
             {
                 "p_history_id": history_id,
@@ -474,6 +497,43 @@ async def _apply_side_xp_fatigue(
                 "p_cards": meta,
                 "p_team_rating": float(side_data.get("rating") or 80.0),
             },
-        ).execute()
+        )
+        if hasattr(res_xp, "execute"):
+            await res_xp.execute()
+        else:
+            await res_xp
 
-    await complete_run(db, run_id)
+
+async def recover_active_pvp_runs(bot: Any, db: Any) -> int:
+    """Recover interrupted PvP match runs by redispatching stadium tasks."""
+    builder = db.table("match_runs").select("*").eq("status", "streaming").eq("run_type", "pvp")
+    res = await (builder.execute() if hasattr(builder, "execute") else builder)
+    runs = getattr(res, "data", []) or []
+    count = 0
+    for run in runs:
+        try:
+            asyncio.create_task(dispatch_matched_pvp(bot, run["id"]))
+            count += 1
+        except Exception:
+            logger.exception("Failed to recover pvp run %s", run.get("id"))
+    return count
+
+
+async def retry_completing_pvp_runs(db: Any, bot: Any = None) -> int:
+    """Retry completion for stuck completing PvP match runs."""
+    builder = db.table("match_runs").select("*").eq("status", "completing").eq("run_type", "pvp")
+    res = await (builder.execute() if hasattr(builder, "execute") else builder)
+    runs = getattr(res, "data", []) or []
+    count = 0
+    for run in runs:
+        try:
+            # complete_pvp_run only takes p_run_id; scores already stored by finalize_pvp_match
+            rpc_res = db.rpc("complete_pvp_run", {"p_run_id": run["id"]})
+            if hasattr(rpc_res, "execute"):
+                await rpc_res.execute()
+            else:
+                await rpc_res
+            count += 1
+        except Exception:
+            logger.exception("Failed to retry completing pvp run %s", run.get("id"))
+    return count

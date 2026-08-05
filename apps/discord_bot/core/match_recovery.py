@@ -315,3 +315,10 @@ async def recover_interrupted_matches(bot: commands.Bot) -> None:
 
     deleted = await reconcile_orphaned_match_locks(db)
     logger.info("Match recovery complete; reconciled %s orphaned lock(s).", deleted)
+
+
+def __getattr__(name: str) -> Any:
+    if name in ("recover_active_pvp_runs", "retry_completing_pvp_runs"):
+        from apps.discord_bot.core import pvp_match
+        return getattr(pvp_match, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

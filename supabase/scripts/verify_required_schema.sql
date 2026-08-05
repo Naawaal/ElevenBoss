@@ -29,6 +29,8 @@ BEGIN
       ('column:public.match_history.opponent_mode'),
       ('column:public.match_history.opponent_snapshot_age_seconds'),
       ('function:refresh_pvp_ghost_snapshot'),
+      ('function:bootstrap_pvp_ghost_snapshots'),
+      ('function:refresh_all_pvp_ghost_snapshots'),
       ('function:join_pvp_queue'),
       ('function:cancel_pvp_queue'),
       ('function:try_match_pvp_queue'),
@@ -472,6 +474,8 @@ BEGIN
         WHEN 'get_skill_allocation_hub' THEN to_regprocedure('public.get_skill_allocation_hub(bigint,uuid)')
         WHEN 'get_mentor_targets' THEN to_regprocedure('public.get_mentor_targets(bigint,uuid)')
         WHEN 'refresh_pvp_ghost_snapshot' THEN to_regprocedure('public.refresh_pvp_ghost_snapshot(bigint,uuid)')
+        WHEN 'bootstrap_pvp_ghost_snapshots' THEN to_regprocedure('public.bootstrap_pvp_ghost_snapshots()')
+        WHEN 'refresh_all_pvp_ghost_snapshots' THEN to_regprocedure('public.refresh_all_pvp_ghost_snapshots(integer)')
         WHEN 'join_pvp_queue' THEN to_regprocedure('public.join_pvp_queue(bigint,bigint,bigint)')
         WHEN 'try_match_pvp_queue' THEN to_regprocedure('public.try_match_pvp_queue(bigint)')
         WHEN 'cancel_pvp_queue' THEN to_regprocedure('public.cancel_pvp_queue(bigint,uuid)')

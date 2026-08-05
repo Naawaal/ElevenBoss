@@ -1738,9 +1738,43 @@ class BattleCog(commands.Cog):
 
     async def _pvp_search_timeout(self, owner_id: int, payload: dict, timeout_s: int) -> None:
         await asyncio.sleep(max(5, timeout_s))
-        # UX reminder is best-effort; manager can still Cancel from original message.
-        # Matchmaker job (US1 T028) will expire rows; timeout choices are on the search view refresh path.
         logger.info("pvp search timeout elapsed owner=%s queue=%s", owner_id, payload.get("queue_id"))
+        # Best-effort: check if the queue expired without a match and tell the user why.
+        try:
+            db = await get_client()
+            q_res = await db.table("pvp_matchmaking_queue") \
+                .select("status,matched_run_id") \
+                .eq("id", payload.get("queue_id")) \
+                .maybe_single().execute()
+            q = q_res.data if q_res else None
+            if q and q.get("status") == "expired" and not q.get("matched_run_id"):
+                # Count today's backfill uses to give a precise message
+                cfg_res = await db.table("game_config") \
+                    .select("value_json").eq("key", "pvp_backfill_daily_limit").maybe_single().execute()
+                cap = int((cfg_res.data or {}).get("value_json") or 10)
+                enc_res = await db.table("pvp_ghost_encounters") \
+                    .select("id", count="exact") \
+                    .eq("challenger_id", owner_id) \
+                    .gte("created_at", "now()::date").execute()
+                used = enc_res.count or 0
+                channel_id = payload.get("channel_id")
+                channel = self.bot.get_channel(channel_id) if channel_id else None
+                if channel:
+                    from apps.discord_bot.embeds.pvp_embeds import queue_timeout_embed
+                    embed = queue_timeout_embed()
+                    if used >= cap:
+                        embed.title = "🤖 Daily AI Backfill Limit Reached"
+                        embed.description = (
+                            f"You've used **{used}/{cap}** ranked AI backfill matches today.\n\n"
+                            "The daily limit resets at **midnight UTC**. You can still play "
+                            "**AI Practice** matches (`/battle bot`) without limits."
+                        )
+                        embed.color = 0xE67E22
+                    user = self.bot.get_user(owner_id)
+                    mention = user.mention if user else f"<@{owner_id}>"
+                    await channel.send(f"{mention} — search ended.", embed=embed, delete_after=60)
+        except Exception:
+            logger.debug("pvp_search_timeout followup failed", exc_info=True)
 
     @battle_group.command(name="bot", description="Play an AI Practice match against a division-calibrated AI opponent.")
     @app_commands.guild_only()

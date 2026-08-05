@@ -14,8 +14,8 @@ async def pvp_matchmaker_job(bot: Any) -> None:
     """Interval matchmaker — evaluates live humans, ghost manager snapshots, and AI backfill."""
     try:
         from apps.discord_bot.db.client import get_client
-        from apps.discord_bot.core.pvp_match import dispatch_matched_pvp
-        from apps.discord_bot.core.match_recovery import (
+        from apps.discord_bot.core.pvp_match import (
+            dispatch_matched_pvp,
             recover_active_pvp_runs,
             retry_completing_pvp_runs,
         )

@@ -206,3 +206,84 @@ async def rivalry_prematch_field(
         return f"**{status} RIVALRY** · Meetings: **{m}** (W{a_w}-D{d}-L{b_w})"
     except Exception:
         return ""
+
+
+def hottest_rivalries_embed(payload: dict[str, Any]) -> discord.Embed:
+    rivalries = payload.get("rivalries") or []
+    embed = discord.Embed(
+        title="🌡️ Server Hottest Rivalries",
+        description="Top active rivalries in this server based on heat index.",
+        color=0xE74C3C,
+    )
+    if not rivalries:
+        embed.description = "No active rivalries found in this server yet."
+        return embed
+
+    lines: list[str] = []
+    for idx, r in enumerate(rivalries[:10], start=1):
+        a_name = r.get("manager_a_name") or f"Manager {r.get('manager_a_id')}"
+        b_name = r.get("manager_b_name") or f"Manager {r.get('manager_b_id')}"
+        heat = r.get("heat_level", 0)
+        status = str(r.get("status", "tracking")).upper()
+        meetings = r.get("meetings", 0)
+        lines.append(f"**{idx}. {a_name} vs {b_name}**\nStatus: **{status}** · Heat: **{heat} 🔥** · Meetings: **{meetings}**")
+
+    embed.add_field(name="Leaderboard", value="\n\n".join(lines), inline=False)
+    return embed
+
+
+def rivalries_list_embed(payload: dict[str, Any], *, manager_name: str) -> discord.Embed:
+    rivalries = payload.get("rivalries") or []
+    embed = discord.Embed(
+        title=f"🔥 Manager Rivalries — {manager_name}",
+        description="Track your head-to-head records against rival managers.",
+        color=0xE67E22,
+    )
+    if not rivalries:
+        embed.description = "You have no active rivalries yet. Play Ranked PvP matches against other managers to build rivalries!"
+        return embed
+
+    for r in rivalries[:10]:
+        opp_id = r.get("opponent_id")
+        opp_name = r.get("opponent_name") or f"Manager {opp_id}"
+        status = str(r.get("status", "tracking")).upper()
+        heat = r.get("heat_level", 0)
+        my_wins = r.get("my_wins", 0)
+        their_wins = r.get("their_wins", 0)
+        draws = r.get("draws", 0)
+        meetings = r.get("meetings", 0)
+        embed.add_field(
+            name=f"vs {opp_name}",
+            value=f"Status: **{status}** ({heat} 🔥)\nRecord: **{my_wins}W - {draws}D - {their_wins}L** ({meetings} total)",
+            inline=True,
+        )
+    return embed
+
+
+def rivalry_detail_embed(detail: dict[str, Any], *, opponent_id: int, viewer_id: int) -> discord.Embed:
+    opp_name = detail.get("opponent_name") or f"Manager {opponent_id}"
+    status = str(detail.get("status", "tracking")).upper()
+    heat = detail.get("heat_level", 0)
+    my_wins = detail.get("my_wins", 0)
+    their_wins = detail.get("their_wins", 0)
+    draws = detail.get("draws", 0)
+    meetings = detail.get("meetings", 0)
+    events = detail.get("recent_events") or []
+
+    embed = discord.Embed(
+        title=f"⚔️ Head-to-Head: vs {opp_name}",
+        description=f"Status: **{status}** · Heat Index: **{heat} 🔥**",
+        color=0xE74C3C,
+    )
+    embed.add_field(
+        name="Record",
+        value=f"**{my_wins}** Wins · **{draws}** Draws · **{their_wins}** Losses\nTotal Meetings: **{meetings}**",
+        inline=False,
+    )
+    if events:
+        embed.add_field(
+            name="Recent Events",
+            value=format_rivalry_events(events),
+            inline=False,
+        )
+    return embed
