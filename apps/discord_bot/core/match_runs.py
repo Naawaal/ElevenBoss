@@ -101,35 +101,6 @@ def build_league_snapshot(
     }
 
 
-def build_ephemeral_match_snapshot(
-    *,
-    home_name: str,
-    away_name: str,
-    home_squad: list[MatchPlayerCard],
-    away_squad: list[MatchPlayerCard],
-    home_cards: list[dict],
-    away_cards: list[dict],
-    home_formation: str = "4-4-2",
-    away_formation: str = "4-4-2",
-    home_tactics: dict | None = None,
-    away_tactics: dict | None = None,
-) -> dict[str, Any]:
-    """Build an immutable 11-card squad snapshot for friendly/bot/practice matches."""
-    return {
-        "version": 1,
-        "home_name": home_name,
-        "away_name": away_name,
-        "home_formation": home_formation,
-        "away_formation": away_formation,
-        "home_tactics": home_tactics or {},
-        "away_tactics": away_tactics or {},
-        "home_squad": [_card_to_dict(c) for c in home_squad],
-        "away_squad": [_card_to_dict(c) for c in away_squad],
-        "home_card_ids": [str(c.get("id")) for c in home_cards if c.get("id")],
-        "away_card_ids": [str(c.get("id")) for c in away_cards if c.get("id")],
-    }
-
-
 def squads_from_snapshot(snapshot: dict[str, Any]) -> tuple[list[MatchPlayerCard], list[MatchPlayerCard]]:
     home = [card_from_dict(c) for c in snapshot.get("home_squad", [])]
     away = [card_from_dict(c) for c in snapshot.get("away_squad", [])]
@@ -240,10 +211,6 @@ async def complete_run(db, run_id: str, *, home_score: int, away_score: int) -> 
         "completed_at": now,
         "updated_at": now,
     }).eq("id", run_id).execute()
-    try:
-        await db.table("match_locks").delete().eq("run_id", run_id).execute()
-    except Exception:
-        pass
 
 
 async def abandon_match_run(db, run_id: str, *, reason: str | None = None) -> Any:

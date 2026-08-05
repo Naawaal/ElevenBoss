@@ -373,14 +373,7 @@ class ElevenBossBot(commands.Bot):
         except Exception as e:
             logger.error("Potential integrity check failed on startup: %s", e, exc_info=True)
 
-        try:
-            from apps.discord_bot.middleware.match_lock import reconcile_orphaned_match_locks
-            from apps.discord_bot.db.client import get_client
-            cleared = await reconcile_orphaned_match_locks(await get_client())
-            if cleared > 0:
-                logger.info("Reconciled %s orphaned match locks on startup", cleared)
-        except Exception as e:
-            logger.error("Orphaned match lock reconciliation failed on startup: %s", e, exc_info=True)
+
 
     async def _trigger_deployment_changelog(self) -> None:
         await asyncio.sleep(5)
