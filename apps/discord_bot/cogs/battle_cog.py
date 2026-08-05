@@ -2498,14 +2498,25 @@ class BattleCog(commands.Cog):
             await invitation_msg.channel.send(embed=error_embed(f"Failed to create match thread: {str(e)}"))
             return
 
+        # 2. Acquire concurrency locks
+        if not await acquire_match_lock(db, challenger.id, "friendly"):
+            await thread.send(embed=error_embed("Could not acquire match lock for challenger."))
+            return
+        locks_held.append(challenger.id)
+        if not await acquire_match_lock(db, opponent.id, "friendly"):
+            await release_match_lock(db, challenger.id)
+            await thread.send(embed=error_embed("Could not acquire match lock for opponent."))
+            return
+        locks_held.append(opponent.id)
+
         try:
             async def get_squad_cards(discord_id: int):
                 _, assignments, active_cards = await fetch_squad_xi(db, discord_id)
                 match_cards = await ordered_cards_to_match_squad(db, active_cards)
-                return match_cards, active_cards, assignments
+                return match_cards, [c["id"] for c in active_cards], active_cards, assignments
 
-            c_cards, c_active_cards, _ = await get_squad_cards(challenger.id)
-            o_cards, o_active_cards, _ = await get_squad_cards(opponent.id)
+            c_cards, _, _, _ = await get_squad_cards(challenger.id)
+            o_cards, _, _, _ = await get_squad_cards(opponent.id)
 
             if len(c_cards) != 11 or len(o_cards) != 11:
                 error_msg = ""
@@ -2518,31 +2529,6 @@ class BattleCog(commands.Cog):
 
             c_rating = sum(p.overall for p in c_cards) / 11
             o_rating = sum(p.overall for p in o_cards) / 11
-
-            snapshot = build_ephemeral_match_snapshot(
-                home_name=c_player["club_name"],
-                away_name=o_player["club_name"],
-                home_squad=c_cards,
-                away_squad=o_cards,
-                home_cards=c_active_cards,
-                away_cards=o_active_cards,
-            )
-
-            rpc_res = await db.rpc("start_friendly_match", {
-                "p_challenge_id": str(getattr(invitation_msg, "id", "")),
-                "p_home_id": challenger.id,
-                "p_away_id": opponent.id,
-                "p_squad_snapshot": snapshot,
-            }).execute()
-
-            rpc_data = rpc_res.data if isinstance(rpc_res.data, dict) else {}
-            if rpc_data.get("status") != "success":
-                await thread.send(embed=error_embed(rpc_data.get("message", "One or both managers are currently in an active match.")))
-                return
-
-            friendly_run_id = rpc_data.get("run_id")
-            locks_held.append(challenger.id)
-            locks_held.append(opponent.id)
 
             # 3. Initialize Engine
             state = MatchState(home_rating=c_rating, away_rating=o_rating)
@@ -2559,7 +2545,18 @@ class BattleCog(commands.Cog):
             ticker_msg = await thread.send(embed=init_embed)
 
             sim_seed = generate_sim_seed()
-            engine_version = "nss_v2"
+            run_row = await create_ephemeral_run(
+                db,
+                run_type="friendly",
+                active_discord_id=challenger.id,
+                home_discord_id=challenger.id,
+                away_discord_id=opponent.id,
+                sim_seed=sim_seed,
+                guild_id=invitation_msg.guild.id if invitation_msg.guild else None,
+                thread_id=thread.id,
+            )
+            friendly_run_id = run_row.get("id")
+            engine_version = run_row.get("engine_version") or "nss_v2"
             match_rng = random.Random(sim_seed)
 
             # Ticker Streaming Loop

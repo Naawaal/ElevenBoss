@@ -63,10 +63,6 @@ BEGIN
       ('function:claim_due_topgg_vote_reminders'),
       ('function:claim_deployment_changelog'),
       ('function:complete_deployment_changelog'),
-      ('function:assert_manager_match_available'),
-      ('function:start_friendly_match'),
-      ('function:start_single_manager_match'),
-      ('column:public.match_locks.run_id'),
       ('policy:public.match_events.match_events_insert'),
       ('column:public.league_seasons.config_json'),
       ('column:public.league_seasons.announcement_message_id'),
@@ -507,9 +503,6 @@ BEGIN
         WHEN 'claim_due_topgg_vote_reminders' THEN to_regprocedure('public.claim_due_topgg_vote_reminders(integer)')
         WHEN 'claim_deployment_changelog' THEN to_regprocedure('public.claim_deployment_changelog(text,text)')
         WHEN 'complete_deployment_changelog' THEN to_regprocedure('public.complete_deployment_changelog(text,text,text,bigint)')
-        WHEN 'assert_manager_match_available' THEN to_regprocedure('public.assert_manager_match_available(bigint)')
-        WHEN 'start_friendly_match' THEN to_regprocedure('public.start_friendly_match(text,bigint,bigint,jsonb)')
-        WHEN 'start_single_manager_match' THEN to_regprocedure('public.start_single_manager_match(bigint,text,jsonb)')
         ELSE NULL
       END IS NOT NULL
     )
