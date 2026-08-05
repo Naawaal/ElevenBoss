@@ -1,6 +1,22 @@
-# ElevenBoss — v2.0 Patch Notes
+# ElevenBoss — Patch Notes
 
 Hey Managers!
+
+## [2.1.0] - 2026-08-05
+
+### Added
+- **Instant Ranked PvP**: No more waiting in empty queues! Jump into Ranked PvP matches in under 15 seconds against live managers, offline Ghost Manager squads, or division-tuned AI opponents.
+- **Top.gg Vote Reminders**: Receive a friendly DM reminder as soon as your Top.gg vote cooldown expires so you never miss out on free Store reward packs.
+- **Automated Patch Notes**: Release updates now post automatically to your server's League Announcement channel right when a new update deploys.
+- **Guild Rivalries & Head-to-Head**: Track active manager rivalries, win streaks, and head-to-head records directly inside `/battle`.
+- **Youth Academy V2**: Evaluate prospect potential ranges, manage tighter squad seats, and claim up to 2 weekly youth promotions.
+
+### Fixed
+- Fixed an issue where matches against AI or Ghost managers could get stuck on the completion screen.
+- Fixed AI opponents generating identical lineups — AI squads now feature varied formations, tactics, and realistic player names.
+- Added clear notifications when hitting the daily AI match limit so your queue search doesn't expire silently.
+
+---
 
 ## Instant PvP Backfill & Ghost Managers (Feature 054)
 

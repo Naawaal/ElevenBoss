@@ -58,6 +58,11 @@ BEGIN
       ('column:public.match_runs.event_schema_version'),
       ('column:public.match_runs.events_flushed_thru'),
       ('policy:public.match_events.match_events_select'),
+      ('table:public.topgg_vote_reminders'),
+      ('policy:public.topgg_vote_reminders.topgg_vote_reminders_read_anon'),
+      ('function:claim_due_topgg_vote_reminders'),
+      ('function:claim_deployment_changelog'),
+      ('function:complete_deployment_changelog'),
       ('policy:public.match_events.match_events_insert'),
       ('column:public.league_seasons.config_json'),
       ('column:public.league_seasons.announcement_message_id'),
@@ -495,6 +500,9 @@ BEGIN
         WHEN 'apply_pvp_match_xp_once' THEN to_regprocedure('public.apply_pvp_match_xp_once(uuid,uuid,bigint,text,jsonb,numeric)')
         WHEN 'apply_pvp_post_match_fitness_once' THEN to_regprocedure('public.apply_pvp_post_match_fitness_once(uuid,uuid,bigint,jsonb,uuid[],jsonb)')
         WHEN 'complete_pvp_run' THEN to_regprocedure('public.complete_pvp_run(uuid)')
+        WHEN 'claim_due_topgg_vote_reminders' THEN to_regprocedure('public.claim_due_topgg_vote_reminders(integer)')
+        WHEN 'claim_deployment_changelog' THEN to_regprocedure('public.claim_deployment_changelog(text,text)')
+        WHEN 'complete_deployment_changelog' THEN to_regprocedure('public.complete_deployment_changelog(text,text,text,bigint)')
         ELSE NULL
       END IS NOT NULL
     )

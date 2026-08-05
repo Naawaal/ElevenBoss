@@ -146,3 +146,45 @@ def resolve_topgg_bot_id(runtime_bot_id: int | None = None) -> int:
 
 def topgg_vote_url(*, runtime_bot_id: int | None = None) -> str:
     return f"https://top.gg/bot/{resolve_topgg_bot_id(runtime_bot_id)}/vote"
+
+
+async def upsert_vote_reminder_window(
+    db: Any,
+    *,
+    discord_user_id: int,
+    last_vote_at: datetime | None = None,
+    next_vote_at: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Record or update a vote reminder window in public.topgg_vote_reminders."""
+    now = datetime.now(timezone.utc)
+    if last_vote_at is None:
+        last_vote_at = now
+    if next_vote_at is None:
+        next_vote_at = last_vote_at + timedelta(hours=12)
+
+    iso_str = next_vote_at.isoformat()
+    window_key = f"{discord_user_id}:{iso_str}"
+
+    row_data = {
+        "discord_user_id": discord_user_id,
+        "last_vote_at": last_vote_at.isoformat(),
+        "next_vote_at": next_vote_at.isoformat(),
+        "reminder_window_key": window_key,
+        "reminder_claimed_at": None,
+        "reminder_sent_at": None,
+        "dm_status": None,
+        "fallback_pending": False,
+        "fallback_created_at": None,
+        "fallback_shown_at": None,
+        "last_checked_at": None,
+        "next_check_at": next_vote_at.isoformat(),
+        "check_failure_count": 0,
+        "updated_at": now.isoformat(),
+    }
+
+    try:
+        res = await db.table("topgg_vote_reminders").upsert(row_data).execute()
+        return res.data[0] if getattr(res, "data", None) else row_data
+    except Exception:
+        logger.exception("Failed to upsert vote reminder window for user %s", discord_user_id)
+        return None

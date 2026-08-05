@@ -12,6 +12,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apps.discord_bot.core.thread_manager import ThreadManager
 from apps.discord_bot.core.scheduler_jobs import weekly_league_reset_job, auto_sim_expired_fixtures_job, league_state_machine_job, league_lifecycle_wake_job, league_matchday_reminder_job, season_aging_job, youth_intake_job, regen_pool_job, daily_recovery_job, academy_growth_job, transfer_listing_expiry_job, weekly_payroll_job, pvp_ghost_refresh_job
 from apps.discord_bot.tasks.pvp_matchmaker_job import pvp_matchmaker_job
+from apps.discord_bot.tasks.topgg_vote_reminder_job import run_topgg_vote_reminders
 
 # Configure logging
 logging.basicConfig(
@@ -270,6 +271,7 @@ class ElevenBossBot(commands.Bot):
         self.scheduler.add_job(transfer_listing_expiry_job, "interval", hours=1, args=[self])
         self.scheduler.add_job(pvp_matchmaker_job, "interval", seconds=5, args=[self], id="pvp_matchmaker")
         self.scheduler.add_job(pvp_ghost_refresh_job, "cron", hour=2, minute=30, args=[self], id="pvp_ghost_refresh")
+        self.scheduler.add_job(run_topgg_vote_reminders, "interval", minutes=30, args=[self], id="topgg_vote_reminders")
         self.scheduler.start()
         logger.info("APScheduler initialized and jobs started.")
 
@@ -339,6 +341,10 @@ class ElevenBossBot(commands.Bot):
         except Exception as e:
             logger.error(f"Match recovery failed on startup: {e}", exc_info=True)
 
+        if not getattr(self, "_deployment_changelog_checked", False):
+            self._deployment_changelog_checked = True
+            asyncio.create_task(self._trigger_deployment_changelog())
+
         try:
             from apps.discord_bot.core.league_recovery import startup_recovery_pass
             from apps.discord_bot.db.client import get_client
@@ -352,6 +358,14 @@ class ElevenBossBot(commands.Bot):
             await check_potential_integrity(await get_client(), context="startup")
         except Exception as e:
             logger.error("Potential integrity check failed on startup: %s", e, exc_info=True)
+
+    async def _trigger_deployment_changelog(self) -> None:
+        await asyncio.sleep(5)
+        try:
+            from apps.discord_bot.core.deployment_changelog import check_and_post_deployment_changelog
+            await check_and_post_deployment_changelog(self)
+        except Exception as e:
+            logger.error(f"Failed to check/post deployment changelog on startup: {e}", exc_info=True)
 
         try:
             from apps.discord_bot.tasks.level_reward_notifier import notify_pending_level_rewards

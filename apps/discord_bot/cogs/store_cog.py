@@ -29,7 +29,12 @@ from apps.discord_bot.core.economy_rpc import (
 )
 from apps.discord_bot.core.idempotent_outcome import parse_idempotent_outcome
 from apps.discord_bot.core import perf_signals
-from apps.discord_bot.core.topgg_vote import check_topgg_vote, resolve_topgg_bot_id, topgg_vote_url
+from apps.discord_bot.core.topgg_vote import (
+    check_topgg_vote,
+    resolve_topgg_bot_id,
+    topgg_vote_url,
+    upsert_vote_reminder_window,
+)
 from apps.discord_bot.core.view_helpers import disable_view_on_timeout, set_view_controls_disabled
 from apps.discord_bot.core.card_payload import card_rpc_payload
 from energy import near_full_reason
@@ -54,9 +59,13 @@ def _gacha_pack_field_value(*, gacha_ready: bool, gacha_cooldown_str: str) -> st
     return base + f"⏳ Cooldown: **{gacha_cooldown_str}** remaining."
 
 
+from apps.discord_bot.core.pending_notices import maybe_send_pending_vote_notice
+
+
 async def show_store(interaction: discord.Interaction, owner_id: int) -> None:
     with perf_signals.hub_timer("store_hub") as _perf:
         db = await get_client()
+        await maybe_send_pending_vote_notice(interaction, db)
         player_res = await db.table("players").select("*").eq("discord_id", owner_id).maybe_single().execute()
         player = player_res.data if player_res else None
         if not player:
@@ -326,6 +335,7 @@ class StoreHubView(discord.ui.View):
                 set_view_controls_disabled(self, disabled=False)
                 return
             else:
+                await upsert_vote_reminder_window(db, discord_user_id=self.owner_id, last_vote_at=vote_at)
                 await interaction.followup.send(embed=gacha_claim_embed(pack), ephemeral=True)
             await show_store(interaction, self.owner_id)
 
