@@ -2,7 +2,21 @@
 from __future__ import annotations
 import asyncio
 import os
+import sys
+from pathlib import Path
 import logging
+
+# Bootstrapping sys.path for monorepo packages under packages/*
+_repo_root = Path(__file__).resolve().parent.parent.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
+_packages_dir = _repo_root / "packages"
+if _packages_dir.exists():
+    for _pkg in _packages_dir.iterdir():
+        if _pkg.is_dir() and str(_pkg) not in sys.path:
+            sys.path.insert(0, str(_pkg))
+
 import discord
 from discord import app_commands
 from discord.ext import commands
