@@ -293,6 +293,8 @@ class SquadFormationView(discord.ui.View):
             db = await get_client()
             lock_msg = await assert_not_in_match(db, self.user_id)
             if lock_msg:
+                self.hub_view.is_locked = True
+                self.hub_view.setup_buttons()
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
             
@@ -554,6 +556,8 @@ class SquadSwapView(discord.ui.View):
             db = await get_client()
             lock_msg = await assert_not_in_match(db, self.user_id)
             if lock_msg:
+                self.hub_view.is_locked = True
+                self.hub_view.setup_buttons()
                 await interaction.followup.send(embed=error_embed(lock_msg), ephemeral=True)
                 return
 

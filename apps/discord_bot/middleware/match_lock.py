@@ -40,3 +40,43 @@ async def assert_not_in_match(db: AsyncClient, discord_id: int) -> str | None:
     if await is_in_match(db, discord_id):
         return "You are currently locked in an active match. Finish or wait for it to end first."
     return None
+
+
+import discord
+
+
+async def reject_if_in_match(
+    interaction: discord.Interaction,
+    db: AsyncClient,
+    *manager_ids: int,
+) -> bool:
+    """Check if any of manager_ids is locked in a match. If so, send ephemeral error and return True."""
+    from apps.discord_bot.embeds.common_embeds import error_embed
+
+    for mgr_id in manager_ids:
+        try:
+            res = await db.rpc("assert_manager_match_available", {"p_discord_id": mgr_id}).execute()
+            data = res.data if isinstance(res.data, dict) else {}
+            if data and not data.get("available", True):
+                embed = error_embed(
+                    "🔒 **You are currently in an active match.**\n\n"
+                    "Finish your current match before starting another battle."
+                )
+                if interaction.response.is_done():
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                else:
+                    await interaction.response.send_message(embed=embed, ephemeral=True)
+                return True
+        except Exception:
+            if await is_in_match(db, mgr_id):
+                embed = error_embed(
+                    "🔒 **You are currently in an active match.**\n\n"
+                    "Finish your current match before starting another battle."
+                )
+                if interaction.response.is_done():
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                else:
+                    await interaction.response.send_message(embed=embed, ephemeral=True)
+                return True
+
+    return False
