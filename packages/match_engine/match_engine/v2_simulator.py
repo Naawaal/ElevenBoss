@@ -205,6 +205,21 @@ class MatchState(BaseModel):
     transition_style: str = "balanced"
     counters_triggered: int = 0
 
+    # Feature 057 — Competitive Bot Match (flag-gated; default off)
+    competitive_enabled: bool = False
+    et_fatigue_mult: float = 1.35
+    et_injury_mult: float = 1.25
+    match_phase: str = "REGULATION"
+    decided_by: str | None = None
+    home_penalties: int = 0
+    away_penalties: int = 0
+    sim_seed: int | None = None
+    yellow_book: dict[str, int] = Field(default_factory=dict)
+    dismissals: list[dict] = Field(default_factory=list)
+    sent_off_keys: list[str] = Field(default_factory=list)
+    penalty_state: dict | None = None
+    played_extra_time: bool = False
+
     def update_tags(self) -> None:
         tags: list[str] = []
         if self.minute <= 15:
@@ -691,6 +706,19 @@ def generate_match_events(
                         "actor": fouler_name,
                         "team": defending.name,
                     }
+                    second = _apply_yellow_book(
+                        state, defending.name, fouler_name, state.minute
+                    )
+                    if second:
+                        yield second
+                        _remove_sent_off(defending, state.sent_off_keys)
+                else:
+                    red = _roll_straight_red(
+                        state, defending.name, fouler_name, state.minute, rng
+                    )
+                    if red:
+                        yield red
+                        _remove_sent_off(defending, state.sent_off_keys)
                 # Stoppage injury check on defending side
                 if rng.random() < 0.12:
                     side = "home" if defending.is_home else "away"
@@ -917,12 +945,350 @@ def generate_match_events(
     state.momentum = int(home.momentum * 10)
     state.update_tags()
 
+    # Feature 057: competitive draw → ET (+ pens). Flag off = baseline FULL_TIME.
+    if (
+        state.competitive_enabled
+        and state.home_score == state.away_score
+    ):
+        yield from _generate_competitive_aftermath(
+            state, home, away, home_name, away_name, rng
+        )
+        return
+
+    state.match_phase = "COMPLETE"
+    state.decided_by = state.decided_by or "regulation"
     yield {
         "minute": 90,
         "type": "FULL_TIME",
         "score_update": f"{state.home_score} - {state.away_score}",
         "actor": "The referee",
         "team": home_name,
+    }
+
+
+def _book_key(team_name: str, actor: str) -> str:
+    return f"{team_name}|{actor}"
+
+
+def _apply_yellow_book(state: MatchState, team_name: str, actor: str, minute: int) -> dict | None:
+    """Track yellows; on second yellow return a RED_CARD dismissal event."""
+    if not state.competitive_enabled:
+        return None
+    key = _book_key(team_name, actor)
+    if key in state.sent_off_keys:
+        return None
+    count = int(state.yellow_book.get(key, 0)) + 1
+    state.yellow_book[key] = count
+    if count < 2:
+        return None
+    state.sent_off_keys.append(key)
+    dismissal = {
+        "reason": "second_yellow",
+        "player_name": actor,
+        "team": team_name,
+        "minute": minute,
+        "suspension_matches": 1,
+    }
+    state.dismissals.append(dismissal)
+    return {
+        "minute": minute,
+        "type": "RED_CARD",
+        "score_update": f"{state.home_score} - {state.away_score}",
+        "actor": actor,
+        "team": team_name,
+        "reason": "second_yellow",
+        "suspension_matches": 1,
+    }
+
+
+def _roll_straight_red(state: MatchState, team_name: str, actor: str, minute: int, rng: random.Random) -> dict | None:
+    """Rare straight red during competitive ET/regulation fouls."""
+    if not state.competitive_enabled:
+        return None
+    key = _book_key(team_name, actor)
+    if key in state.sent_off_keys:
+        return None
+    if rng.random() >= 0.02:  # ~2% of eligible foul bookings
+        return None
+    state.sent_off_keys.append(key)
+    dismissal = {
+        "reason": "straight_red",
+        "player_name": actor,
+        "team": team_name,
+        "minute": minute,
+        "suspension_matches": 2,
+    }
+    state.dismissals.append(dismissal)
+    return {
+        "minute": minute,
+        "type": "RED_CARD",
+        "score_update": f"{state.home_score} - {state.away_score}",
+        "actor": actor,
+        "team": team_name,
+        "reason": "straight_red",
+        "suspension_matches": 2,
+    }
+
+
+def _remove_sent_off(team: MatchTeamState, sent_keys: list[str]) -> None:
+    if not sent_keys:
+        return
+    keep = []
+    for p in team.squad:
+        key = _book_key(team.name, _get_name(p))
+        if key not in sent_keys:
+            keep.append(p)
+    team.squad = keep
+
+
+def _generate_et_period(
+    state: MatchState,
+    home: MatchTeamState,
+    away: MatchTeamState,
+    *,
+    start_minute: int,
+    end_minute: int,
+    phase_label: str,
+    rng: random.Random,
+):
+    """Simplified ET interval using existing chance/shot math; carries fitness/discipline."""
+    state.match_phase = phase_label
+    _remove_sent_off(home, state.sent_off_keys)
+    _remove_sent_off(away, state.sent_off_keys)
+    state.minute = start_minute
+    stats = state.live_stats
+    attacking, defending = home, away
+
+    # ponytail: simplified ET loop — full phase machine reuse would duplicate 300 lines;
+    # upgrade path: parameterize generate_match_events minute_limit.
+    while state.minute < end_minute:
+        state.minute = min(end_minute, state.minute + rng.randint(1, 2))
+        state.momentum = int(home.momentum * 10)
+        state.update_tags()
+        tactics = state.home_tactics_modifier if attacking.is_home else 1.0
+
+        # Elevated injury checks during ET
+        if rng.random() < 0.08 * float(state.et_injury_mult or 1.25):
+            side = "home" if defending.is_home else "away"
+            inj = _try_authoritative_injury(state, defending, side, rng)
+            if inj:
+                yield inj
+                _consume_injury_after_yield(state, home, away, inj, rng)
+
+        atk_shot = attacking.phase_attack(PhaseStat.SHOOTING, tactics)
+        def_gk = defending.phase_gk()
+        actor = _pick_player(rng, attacking.squad, "attack") if attacking.squad else None
+        if actor is None:
+            attacking, defending = defending, attacking
+            continue
+        actor_name = _get_name(actor)
+        stats.record_chance(attacking.is_home)
+        yield {
+            "minute": state.minute,
+            "type": "CHANCE",
+            "score_update": f"{state.home_score} - {state.away_score}",
+            "actor": actor_name,
+            "team": attacking.name,
+        }
+
+        if not _roll_chance(rng, 0.38, atk_shot, def_gk, attacking.momentum, 0):
+            attacking, defending = defending, attacking
+            continue
+
+        stats.record_shot(attacking.is_home)
+        roll = rng.random()
+        diff = atk_shot - def_gk
+        chance = 0.42 + diff / _STAT_DIFF_DIVISOR + attacking.momentum * 0.05
+        chance = max(_probability_floor(atk_shot, def_gk), min(0.92, chance))
+        if roll < chance:
+            if attacking.is_home:
+                state.home_score += 1
+            else:
+                state.away_score += 1
+            event = {
+                "minute": state.minute,
+                "type": "GOAL",
+                "score_update": f"{state.home_score} - {state.away_score}",
+                "actor": actor_name,
+                "team": attacking.name,
+            }
+            stats.record_goal(actor_name, None)
+            yield event
+            _apply_momentum_goal(attacking, defending)
+        elif roll < chance + (1 - chance) * 0.45:
+            goalkeeper = _pick_player(rng, defending.squad, "gk") if defending.squad else None
+            yield {
+                "minute": state.minute,
+                "type": "SAVE",
+                "score_update": f"{state.home_score} - {state.away_score}",
+                "actor": _get_name(goalkeeper) if goalkeeper else "Keeper",
+                "team": defending.name,
+            }
+            _apply_momentum_save(defending)
+        else:
+            yield {
+                "minute": state.minute,
+                "type": "MISS",
+                "score_update": f"{state.home_score} - {state.away_score}",
+                "actor": actor_name,
+                "team": attacking.name,
+            }
+
+        if rng.random() < 0.12:
+            fouler = _pick_player(rng, defending.squad, "defense") if defending.squad else None
+            if fouler:
+                fname = _get_name(fouler)
+                yield {
+                    "minute": state.minute,
+                    "type": "FOUL",
+                    "score_update": f"{state.home_score} - {state.away_score}",
+                    "actor": fname,
+                    "team": defending.name,
+                }
+                red = _roll_straight_red(state, defending.name, fname, state.minute, rng)
+                if red:
+                    yield red
+                    _remove_sent_off(defending, state.sent_off_keys)
+                elif rng.random() < 0.35:
+                    yield {
+                        "minute": state.minute,
+                        "type": "YELLOW_CARD",
+                        "score_update": f"{state.home_score} - {state.away_score}",
+                        "actor": fname,
+                        "team": defending.name,
+                    }
+                    second = _apply_yellow_book(state, defending.name, fname, state.minute)
+                    if second:
+                        yield second
+                        _remove_sent_off(defending, state.sent_off_keys)
+
+        attacking, defending = defending, attacking
+
+    state.minute = end_minute
+    state.momentum = int(home.momentum * 10)
+    state.update_tags()
+
+
+def _generate_competitive_aftermath(
+    state: MatchState,
+    home: MatchTeamState,
+    away: MatchTeamState,
+    home_name: str,
+    away_name: str,
+    rng: random.Random,
+):
+    from match_engine.competitive_models import MatchPhase, deterministic_sub_seed
+    from match_engine.penalty_shootout import (
+        pick_goalkeeper,
+        run_shootout,
+        shootout_events_as_compat,
+    )
+
+    state.played_extra_time = True
+    seed = int(state.sim_seed if state.sim_seed is not None else rng.randint(1, 2**31 - 1))
+    et1_seed = deterministic_sub_seed(seed, "et1")
+    et2_seed = deterministic_sub_seed(seed, "et2")
+    shootout_seed = deterministic_sub_seed(seed, "shootout")
+
+    yield {
+        "minute": 90,
+        "type": "EXTRA_TIME_START",
+        "score_update": f"{state.home_score} - {state.away_score}",
+        "actor": "The referee",
+        "team": home_name,
+        "phase": "EXTRA_TIME_FIRST",
+    }
+
+    et1_rng = random.Random(et1_seed)
+    yield from _generate_et_period(
+        state, home, away,
+        start_minute=90, end_minute=95,
+        phase_label=MatchPhase.EXTRA_TIME_FIRST.value,
+        rng=et1_rng,
+    )
+    yield {
+        "minute": 95,
+        "type": "EXTRA_TIME_BREAK",
+        "score_update": f"{state.home_score} - {state.away_score}",
+        "actor": "The referee",
+        "team": home_name,
+    }
+
+    if state.home_score != state.away_score:
+        state.match_phase = MatchPhase.COMPLETE.value
+        state.decided_by = "extra_time"
+        yield {
+            "minute": 95,
+            "type": "FULL_TIME",
+            "score_update": f"{state.home_score} - {state.away_score}",
+            "actor": "The referee",
+            "team": home_name,
+            "decided_by": "extra_time",
+        }
+        return
+
+    et2_rng = random.Random(et2_seed)
+    yield from _generate_et_period(
+        state, home, away,
+        start_minute=95, end_minute=100,
+        phase_label=MatchPhase.EXTRA_TIME_SECOND.value,
+        rng=et2_rng,
+    )
+
+    if state.home_score != state.away_score:
+        state.match_phase = MatchPhase.COMPLETE.value
+        state.decided_by = "extra_time"
+        yield {
+            "minute": 100,
+            "type": "FULL_TIME",
+            "score_update": f"{state.home_score} - {state.away_score}",
+            "actor": "The referee",
+            "team": home_name,
+            "decided_by": "extra_time",
+        }
+        return
+
+    # Penalty shootout — football score unchanged
+    state.match_phase = MatchPhase.PENALTY_SHOOTOUT.value
+    yield {
+        "minute": 100,
+        "type": "PENALTY_SHOOTOUT_START",
+        "score_update": f"{state.home_score} - {state.away_score}",
+        "actor": "The referee",
+        "team": home_name,
+    }
+
+    home_eligible = [p for p in home.squad if _book_key(home.name, _get_name(p)) not in state.sent_off_keys]
+    away_eligible = [p for p in away.squad if _book_key(away.name, _get_name(p)) not in state.sent_off_keys]
+    home_gk = pick_goalkeeper(home.squad or home_eligible)
+    away_gk = pick_goalkeeper(away.squad or away_eligible)
+    pens = run_shootout(
+        home_eligible=home_eligible or home.squad,
+        away_eligible=away_eligible or away.squad,
+        home_gk=home_gk,
+        away_gk=away_gk,
+        shootout_seed=shootout_seed,
+    )
+    state.penalty_state = pens.to_persist()
+    state.home_penalties = pens.home_penalties_scored
+    state.away_penalties = pens.away_penalties_scored
+    football = f"{state.home_score} - {state.away_score}"
+    for ev in shootout_events_as_compat(pens, home_name=home_name, away_name=away_name, minute=100):
+        ev["score_update"] = football
+        yield ev
+
+    state.match_phase = MatchPhase.COMPLETE.value
+    state.decided_by = "penalties"
+    yield {
+        "minute": 100,
+        "type": "FULL_TIME",
+        "score_update": football,
+        "actor": "The referee",
+        "team": home_name,
+        "decided_by": "penalties",
+        "home_penalties": state.home_penalties,
+        "away_penalties": state.away_penalties,
+        "winner_side": pens.winner_side,
     }
 
 

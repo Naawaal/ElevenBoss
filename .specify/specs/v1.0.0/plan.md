@@ -642,7 +642,7 @@ CREATE TABLE public.player_xp_log (
 * **`ArenaHubView`**: Central navigation — Bot Battle + Friendly tip only (Feature 056 shelved Ranked PvP / Practice / Rivalries).
 * **Slash Command Group**:
   * `/battle hub`: Spawns hub.
-  * `/battle bot`: Original AI/bot match.
+  * `/battle bot`: Original AI/bot match. Optional **Competitive Bot Match** (Feature 057 / NSS stream extension): flag-gated ET → pens → suspensions — see `specs/057-competitive-bot-match/`. Default OFF.
   * `/battle friendly`: Sandbox friendly match.
 * **Deprecation of old command**: `/match play` warns to use `/battle`.
 * **Shelved**: Feature 053/054 PvP surfaces removed; schema cleanup in migration `108`.

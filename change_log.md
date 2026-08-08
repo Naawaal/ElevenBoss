@@ -4,6 +4,9 @@ Hey Managers!
 
 ## [2.2.0] - 2026-08-08
 
+### Added
+- **Competitive Bot Match (opt-in, default off)**: When enabled via `competitive_match_enabled` / `COMPETITIVE_MATCH_ENABLED`, drawn Bot Battles can go to extra time and penalties, with red-card suspensions and richer stadium copy. Classic 90' Bot Battle stays the default.
+
 ### Changed
 - **Battle Hub**: `/battle` is back to the classic experience — **Bot Battle** and **Friendly** only. Ranked PvP, Find Opponent, AI Practice, Ghost Managers, and Rivalries have been shelved for now.
 - **Patch Notes**: Changelog announcements now post only when a **new version section** is added — routine bot restarts of the same version stay quiet.

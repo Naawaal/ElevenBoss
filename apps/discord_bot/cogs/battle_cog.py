@@ -500,10 +500,20 @@ class StandardMatchHandler(IMatchOutputHandler):
             color=0xFFCC00
         )
         result_emoji = "🎉 WIN" if result.result == "win" else ("🤝 DRAW" if result.result == "draw" else "💔 LOSS")
-        
+        from apps.discord_bot.core.competitive_match import format_scoreline, format_shootout_emoji_line
+
+        if getattr(state, "decided_by", None) or getattr(state, "played_extra_time", False):
+            score_txt = format_scoreline(state)
+        else:
+            score_txt = f"{result.goals_for} - {result.goals_against}"
+        pens_line = format_shootout_emoji_line(getattr(state, "penalty_state", None))
+        final_value = f"### {result_emoji}\n**{home_name}** `{score_txt}` **{away_name}**"
+        if pens_line:
+            final_value += f"\n{pens_line}"
+
         press_embed.add_field(
             name="🥅 Final Result",
-            value=f"### {result_emoji}\n**{home_name}** `{result.goals_for} - {result.goals_against}` **{away_name}**",
+            value=final_value,
             inline=False
         )
         press_embed.add_field(
@@ -1762,11 +1772,29 @@ class BattleCog(commands.Cog):
             # Compute manager team base rating
             my_rating = sum(p.overall for p in match_cards) / len(match_cards)
 
+            from apps.discord_bot.core.competitive_flags import (
+                apply_bot_difficulty_delta,
+                bot_difficulty_settings,
+                competitive_et_multipliers,
+                is_competitive_match_enabled,
+            )
+            competitive_on = await is_competitive_match_enabled(db)
+            diff_settings = await bot_difficulty_settings(db)
+            opp_rating = apply_bot_difficulty_delta(
+                opp_rating, manager_ovr=my_rating, settings=diff_settings
+            )
+            et_fatigue_mult, et_injury_mult = (
+                await competitive_et_multipliers(db) if competitive_on else (1.0, 1.0)
+            )
+
             # 5. Instantiate V2 MatchState and CommentaryEngine
             state = MatchState(home_rating=my_rating, away_rating=opp_rating)
             state.injuries_enabled = True
             state.interactive_sides = ["home"]
             state.intensity_tier = int(player.get("intensity_tier") or 1)
+            state.competitive_enabled = bool(competitive_on)
+            state.et_fatigue_mult = float(et_fatigue_mult)
+            state.et_injury_mult = float(et_injury_mult)
             state.bench_home = await fetch_bench_cards(
                 db, interaction.user.id, [str(c["id"]) for c in active_cards]
             )
@@ -1804,9 +1832,15 @@ class BattleCog(commands.Cog):
                 sim_seed=sim_seed,
                 guild_id=interaction.guild_id,
                 thread_id=getattr(handler.thread, "id", None),
+                squad_snapshot={
+                    "opp_rating": opp_rating,
+                    "opp_name": opp_name,
+                    "competitive": bool(competitive_on),
+                },
             )
             bot_run_id = run_row.get("id")
             engine_version = run_row.get("engine_version") or "nss_v2"
+            state.sim_seed = int(sim_seed)
 
             touchline_inbox = None
             if engine_version == ENGINE_NSS_V3:
@@ -1875,7 +1909,11 @@ class BattleCog(commands.Cog):
                     ev, state, recent_ticker, touchline_view, goal_scroll=goal_scroll
                 )
 
-                if ev["type"] in ["KICKOFF", "HALF_TIME", "GOAL", "MISS", "CHANCE", "FOUL", "INJURY", "FULL_TIME"]:
+                if ev["type"] in [
+                    "KICKOFF", "HALF_TIME", "GOAL", "MISS", "CHANCE", "FOUL", "INJURY",
+                    "FULL_TIME", "YELLOW_CARD", "RED_CARD", "EXTRA_TIME_START",
+                    "EXTRA_TIME_BREAK", "PENALTY_SHOOTOUT_START", "PENALTY_KICK",
+                ]:
                     event_entry = {
                         "minute": ev["minute"],
                         "type": ev["type"],
@@ -1884,10 +1922,28 @@ class BattleCog(commands.Cog):
                     }
                     if "assister" in ev:
                         event_entry["assister"] = ev["assister"]
+                    if "outcome" in ev:
+                        event_entry["outcome"] = ev["outcome"]
                     key_events_list.append(event_entry)
 
-                if ev["type"] in ["FULL_TIME", "HALF_TIME"]:
+                if competitive_on and bot_run_id and ev["type"] in (
+                    "EXTRA_TIME_START", "EXTRA_TIME_BREAK", "PENALTY_SHOOTOUT_START",
+                    "PENALTY_KICK", "FULL_TIME",
+                ):
+                    from apps.discord_bot.core.competitive_match import snapshot_from_state
+                    from apps.discord_bot.core.match_runs import save_competitive_state
+
+                    try:
+                        await save_competitive_state(
+                            db, bot_run_id, snapshot_from_state(state)
+                        )
+                    except Exception:
+                        logger.debug("competitive_state checkpoint failed", exc_info=True)
+
+                if ev["type"] in ["FULL_TIME", "HALF_TIME", "EXTRA_TIME_START", "EXTRA_TIME_BREAK", "PENALTY_SHOOTOUT_START"]:
                     sleep_time = 2.0
+                elif ev["type"] == "PENALTY_KICK":
+                    sleep_time = 1.8
                 elif urgency == "cliffhanger":
                     sleep_time = 3.5
                 elif urgency == "build_up":
@@ -1908,10 +1964,15 @@ class BattleCog(commands.Cog):
                 child.disabled = True
             
             # Generate MatchResult and rewards
-            win_coins = current_div["win_coins"]
-            res_str = "win" if state.home_score > state.away_score else (
-                "draw" if state.home_score == state.away_score else "loss"
+            from apps.discord_bot.core.competitive_match import (
+                competitive_result_str,
+                dismissals_for_rpc,
+                format_scoreline,
+                snapshot_from_state,
             )
+
+            win_coins = current_div["win_coins"]
+            res_str = competitive_result_str(state)
             points_earned = division_rank_points(res_str)
             lp_delta = global_lp_delta(res_str)
             new_lp, actual_lp_change = clamp_global_lp(user_lp, lp_delta)
@@ -1942,12 +2003,28 @@ class BattleCog(commands.Cog):
                 tactics_modifier=float(getattr(state, "home_tactics_modifier", 1.0) or 1.0),
                 bot=self.bot,
                 recorded_injuries=recorded_for_side(state.recorded_injuries, "home"),
+                decided_by=getattr(state, "decided_by", None),
+                home_penalties=getattr(state, "home_penalties", None),
+                away_penalties=getattr(state, "away_penalties", None),
+                dismissals=dismissals_for_rpc(state, match_cards) if competitive_on else [],
+                et_fatigue_mult=(
+                    float(state.et_fatigue_mult)
+                    if competitive_on and getattr(state, "played_extra_time", False)
+                    else 1.0
+                ),
             )
             rewards_applied = True
 
             # Durable settle before Discord present (US-42.4)
             if bot_run_id:
-                await complete_run(db, bot_run_id, home_score=state.home_score, away_score=state.away_score)
+                await complete_run(
+                    db,
+                    bot_run_id,
+                    home_score=state.home_score,
+                    away_score=state.away_score,
+                    last_minute=int(getattr(state, "minute", 90) or 90),
+                    competitive_state=snapshot_from_state(state) if competitive_on else None,
+                )
                 settled = True
 
             result = MatchResult(

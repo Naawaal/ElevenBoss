@@ -143,10 +143,156 @@ async def _recover_ephemeral_run(bot: commands.Bot, db, run: dict) -> None:
     )
     if action == "complete":
         await _complete_ephemeral_run(bot, db, run)
-    elif action == "abandon":
-        await _abandon_ephemeral_run(bot, db, run)
-    else:
+        return
+    if action != "abandon":
         logger.info("No-op recovery for run %s status=%s", run.get("id"), run.get("status"))
+        return
+
+    # Feature 057: competitive bot mid-match — silent deterministic settle instead of abandon
+    if (
+        run.get("run_type") == "bot"
+        and isinstance(run.get("competitive_state"), dict)
+        and run.get("sim_seed") is not None
+    ):
+        try:
+            await _recover_competitive_bot_run(bot, db, run)
+            return
+        except Exception:
+            logger.exception(
+                "Competitive bot recovery failed for %s — abandoning", run.get("id")
+            )
+
+    await _abandon_ephemeral_run(bot, db, run)
+
+
+async def _recover_competitive_bot_run(bot: commands.Bot, db, run: dict) -> None:
+    """Re-sim with same seed (deterministic), apply rewards once, complete run."""
+    from match_engine import MatchState, collect_match_events, build_bot_match_squad
+    from match_engine.v3.adapters import collect_match_events_v3
+    from apps.discord_bot.core.match_cards import ordered_cards_to_match_squad
+    from apps.discord_bot.core.match_rewards import apply_bot_match_rewards
+    from apps.discord_bot.core.squad_fetch import fetch_squad_xi
+    from apps.discord_bot.core.competitive_match import (
+        competitive_result_str,
+        dismissals_for_rpc,
+        snapshot_from_state,
+    )
+    from apps.discord_bot.core.competitive_flags import competitive_et_multipliers
+    from apps.discord_bot.core.match_runs import ENGINE_NSS_V3
+    from apps.discord_bot.core.league_lp import (
+        division_rank_points,
+        global_lp_delta,
+    )
+
+    uid = int(run.get("active_discord_id") or run.get("home_discord_id") or 0)
+    if not uid:
+        await abandon_run(db, run["id"], reason="competitive_recovery_no_user")
+        return
+
+    player_res = await db.table("players").select("*").eq("discord_id", uid).maybe_single().execute()
+    player = player_res.data if player_res else None
+    if not player:
+        await abandon_run(db, run["id"], reason="competitive_recovery_no_player")
+        return
+
+    _, _, active_cards = await fetch_squad_xi(db, uid)
+    if len(active_cards) != 11:
+        await abandon_run(db, run["id"], reason="competitive_recovery_bad_xi")
+        return
+
+    match_cards = await ordered_cards_to_match_squad(db, active_cards)
+    my_rating = sum(p.overall for p in match_cards) / len(match_cards)
+    snap = run.get("squad_snapshot") or {}
+    opp_rating = float(snap.get("opp_rating") or my_rating)
+    opp_name = str(snap.get("opp_name") or "AI Club")
+    sim_seed = int(run["sim_seed"])
+    fatigue_m, injury_m = await competitive_et_multipliers(db)
+
+    state = MatchState(home_rating=my_rating, away_rating=opp_rating)
+    state.competitive_enabled = True
+    state.et_fatigue_mult = fatigue_m
+    state.et_injury_mult = injury_m
+    state.sim_seed = sim_seed
+    state.injuries_enabled = False  # silent recovery — no interactive injury pauses
+    state.interactive_sides = []
+
+    opp_squad = build_bot_match_squad(int(opp_rating), __import__("random").Random(sim_seed ^ 0xB075AD))
+    engine_version = run.get("engine_version") or "nss_v2"
+    if engine_version == ENGINE_NSS_V3:
+        state, events, _canon = await collect_match_events_v3(
+            state, match_cards, opp_squad, player["club_name"], opp_name, sim_seed=sim_seed
+        )
+    else:
+        state, events = await collect_match_events(
+            state, match_cards, opp_squad, player["club_name"], opp_name, sim_seed=sim_seed
+        )
+
+    div_res = await db.table("global_divisions").select("*").order("min_lp", desc=True).execute()
+    divisions = div_res.data or []
+    user_lp = player.get("global_lp", 0)
+    current_div = {"name": "Bronze III", "win_coins": 100}
+    for div in divisions:
+        if user_lp >= div["min_lp"]:
+            current_div = div
+            break
+
+    res_str = competitive_result_str(state)
+    points_earned = division_rank_points(res_str)
+    lp_delta = global_lp_delta(res_str)
+    key_events = [
+        {"minute": e.get("minute"), "type": e.get("type"), "actor": e.get("actor"), "team": e.get("team")}
+        for e in events
+        if e.get("type") in ("GOAL", "FULL_TIME", "PENALTY_KICK", "RED_CARD")
+    ]
+
+    await apply_bot_match_rewards(
+        db,
+        player_id=uid,
+        player_row=player,
+        result_str=res_str,
+        cards=active_cards,
+        club_name=player["club_name"],
+        team_rating=my_rating,
+        opponent_rating=opp_rating,
+        goals_for=state.home_score,
+        goals_against=state.away_score,
+        points_earned=points_earned,
+        lp_change=lp_delta,
+        division_win_coins=int(current_div.get("win_coins") or 100),
+        run_id=run["id"],
+        motm_name=state.live_stats.pick_motm(match_cards[0].name) if match_cards else "Unknown",
+        key_events=key_events,
+        decided_by=getattr(state, "decided_by", None),
+        home_penalties=getattr(state, "home_penalties", None),
+        away_penalties=getattr(state, "away_penalties", None),
+        dismissals=dismissals_for_rpc(state, match_cards),
+        et_fatigue_mult=(
+            float(state.et_fatigue_mult)
+            if getattr(state, "played_extra_time", False)
+            else 1.0
+        ),
+    )
+    await complete_run(
+        db,
+        run["id"],
+        home_score=state.home_score,
+        away_score=state.away_score,
+        last_minute=int(getattr(state, "minute", 90) or 90),
+        competitive_state=snapshot_from_state(state),
+    )
+    await _notify_participants(
+        bot,
+        run,
+        "Your competitive Bot Battle was interrupted and has been settled from the saved "
+        f"checkpoint. Final: {state.home_score}-{state.away_score}"
+        + (
+            f" ({state.home_penalties}-{state.away_penalties} pens)"
+            if getattr(state, "decided_by", None) == "penalties"
+            else ""
+        )
+        + ".",
+    )
+    logger.info("Competitive bot recovery completed for run %s", run["id"])
 
 
 async def _recover_league_run(bot: commands.Bot, db, run: dict) -> None:

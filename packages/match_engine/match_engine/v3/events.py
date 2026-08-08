@@ -25,9 +25,14 @@ SPORTING_DIGEST_TYPES = frozenset({
     "CHANCE",
     "FOUL",
     "YELLOW_CARD",
+    "RED_CARD",
     "INJURY",
     "SUB_RESOLUTION",
     "TACTICAL_DECISION",
+    "EXTRA_TIME_START",
+    "EXTRA_TIME_BREAK",
+    "PENALTY_SHOOTOUT_START",
+    "PENALTY_KICK",
 })
 
 SCAFFOLDING_TYPES = frozenset({
@@ -77,6 +82,7 @@ def category_for_type(event_type: str) -> EventCategory:
         return EventCategory.PROJECTION
     if event_type in SCAFFOLDING_TYPES or event_type in (
         "KICKOFF", "HALF_TIME", "FULL_TIME", "DECISION_WINDOW", "REPLAY_CHECKPOINT",
+        "EXTRA_TIME_START", "EXTRA_TIME_BREAK", "PENALTY_SHOOTOUT_START",
     ):
         # KICKOFF/HT/FT are administrative but also sporting-digest members
         if event_type in ("KICKOFF", "HALF_TIME", "FULL_TIME"):

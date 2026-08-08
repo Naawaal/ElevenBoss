@@ -52,6 +52,11 @@ async def apply_bot_match_rewards(
     tactics_modifier: float = 1.0,
     bot: Any | None = None,
     recorded_injuries: list[dict] | None = None,
+    decided_by: str | None = None,
+    home_penalties: int | None = None,
+    away_penalties: int | None = None,
+    dismissals: list[dict] | None = None,
+    et_fatigue_mult: float = 1.0,
 ) -> tuple[int, dict[str, Any]]:
     """Apply bot match payouts. Returns (coins_earned, fitness_summary)."""
     existing = await fetch_match_reward_row(db, player_id, run_id=run_id) if run_id else None
@@ -83,7 +88,7 @@ async def apply_bot_match_rewards(
             },
         ).execute()
 
-        insert_res = await db.table("match_history").insert({
+        history_row: dict[str, Any] = {
             "player_id": player_id,
             "result": result_str,
             "my_rating": team_rating,
@@ -93,11 +98,31 @@ async def apply_bot_match_rewards(
             "coins_earned": coins,
             "points_earned": points_earned,
             "run_id": run_id,
-        }).execute()
+        }
+        if decided_by:
+            history_row["decided_by"] = decided_by
+        if home_penalties is not None:
+            history_row["home_penalties"] = int(home_penalties)
+        if away_penalties is not None:
+            history_row["away_penalties"] = int(away_penalties)
+        insert_res = await db.table("match_history").insert(history_row).execute()
         history_id = (insert_res.data or [{}])[0]["id"]
     else:
         history_id = existing["id"]
 
+    # Discipline settle once per run (idempotent RPC). No XP for pens — XP uses goals only via match_xp.
+    if run_id and dismissals is not None:
+        try:
+            await db.rpc(
+                "apply_bot_match_discipline",
+                {
+                    "p_run_id": run_id,
+                    "p_club_id": player_id,
+                    "p_dismissals": dismissals,
+                },
+            ).execute()
+        except Exception:
+            logger.exception("apply_bot_match_discipline failed for run %s", run_id)
     xp_result = await apply_match_xp_if_needed(
         db,
         history_id=history_id,
@@ -135,6 +160,7 @@ async def apply_bot_match_rewards(
             intensity_tier=intensity_tier,
             apply_injuries=True,
             recorded_injuries=recorded_injuries,
+            fatigue_multiplier=float(et_fatigue_mult or 1.0),
         )
         await mark_match_fatigue_applied(db, history_id)
         fitness_summary = {

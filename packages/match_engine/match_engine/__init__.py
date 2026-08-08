@@ -19,6 +19,8 @@ from .substitution_resolve import (
 )
 from .bot_squad import build_bot_match_squad
 from .v2_simulator import generate_match_events
+from .competitive_models import MatchPhase, DecidedBy, competitive_snapshot, deterministic_sub_seed
+from .penalty_shootout import run_shootout, conversion_probability
 from .v3 import (
     ENGINE_VERSION as NSS_V3_ENGINE_VERSION,
     SIMULATION_SCHEMA_VERSION,
@@ -66,6 +68,12 @@ __all__ = [
     "play_on_tier_upgrade",
     "MAX_SUBS_PER_MATCH",
     "build_bot_match_squad",
+    "MatchPhase",
+    "DecidedBy",
+    "competitive_snapshot",
+    "deterministic_sub_seed",
+    "run_shootout",
+    "conversion_probability",
     "NSS_V3_ENGINE_VERSION",
     "SIMULATION_SCHEMA_VERSION",
     "SimulationEngine",

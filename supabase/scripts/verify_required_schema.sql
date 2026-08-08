@@ -25,6 +25,14 @@ BEGIN
       ('column:public.match_runs.simulation_schema_version'),
       ('column:public.match_runs.event_schema_version'),
       ('column:public.match_runs.events_flushed_thru'),
+      ('column:public.match_runs.competitive_state'),
+      ('column:public.match_history.decided_by'),
+      ('column:public.match_history.home_penalties'),
+      ('column:public.match_history.away_penalties'),
+      ('table:public.player_suspensions'),
+      ('policy:public.player_suspensions.player_suspensions_select'),
+      ('function:list_active_suspensions'),
+      ('function:apply_bot_match_discipline'),
       ('policy:public.match_events.match_events_select'),
       ('table:public.topgg_vote_reminders'),
       ('policy:public.topgg_vote_reminders.topgg_vote_reminders_read_anon'),
@@ -449,6 +457,8 @@ BEGIN
         WHEN 'claim_due_topgg_vote_reminders' THEN to_regprocedure('public.claim_due_topgg_vote_reminders(integer)')
         WHEN 'claim_deployment_changelog' THEN to_regprocedure('public.claim_deployment_changelog(text,text)')
         WHEN 'complete_deployment_changelog' THEN to_regprocedure('public.complete_deployment_changelog(text,text,text,bigint)')
+        WHEN 'list_active_suspensions' THEN to_regprocedure('public.list_active_suspensions(bigint)')
+        WHEN 'apply_bot_match_discipline' THEN to_regprocedure('public.apply_bot_match_discipline(uuid,bigint,jsonb)')
         ELSE NULL
       END IS NOT NULL
     )
@@ -493,7 +503,8 @@ BEGIN
         'league_registrations', 'league_divisions', 'league_matchdays',
         'league_final_standings', 'league_transition_journal',
         'league_operation_runs', 'league_outbox',
-        'pack_claim_runs'
+        'pack_claim_runs',
+        'player_suspensions'
     )
     AND NOT EXISTS (
         SELECT 1 FROM pg_policies p

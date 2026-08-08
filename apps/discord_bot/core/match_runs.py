@@ -198,17 +198,57 @@ async def mark_completing(db, run_id: str) -> None:
     }).eq("id", run_id).execute()
 
 
-async def complete_run(db, run_id: str, *, home_score: int, away_score: int) -> None:
+async def complete_run(
+    db,
+    run_id: str,
+    *,
+    home_score: int,
+    away_score: int,
+    last_minute: int | None = None,
+    competitive_state: dict | None = None,
+) -> None:
     now = datetime.now(timezone.utc).isoformat()
-    await db.table("match_runs").update({
+    payload: dict[str, Any] = {
         "status": "completed",
         "completion_key": run_id,
         "home_score": home_score,
         "away_score": away_score,
-        "last_minute": 90,
+        "last_minute": int(last_minute if last_minute is not None else 90),
         "completed_at": now,
         "updated_at": now,
-    }).eq("id", run_id).execute()
+    }
+    if competitive_state is not None:
+        payload["competitive_state"] = competitive_state
+    await db.table("match_runs").update(payload).eq("id", run_id).execute()
+
+
+async def save_competitive_state(db, run_id: str, competitive_state: dict) -> None:
+    """Checkpoint competitive phase snapshot (ET / pens) without completing the run."""
+    now = datetime.now(timezone.utc).isoformat()
+    minute = competitive_state.get("phase_minute")
+    update: dict[str, Any] = {
+        "competitive_state": competitive_state,
+        "home_score": int(competitive_state.get("home_score") or 0),
+        "away_score": int(competitive_state.get("away_score") or 0),
+        "updated_at": now,
+    }
+    if minute is not None:
+        update["last_minute"] = int(minute)
+    await db.table("match_runs").update(update).eq("id", run_id).execute()
+
+
+async def fetch_competitive_state(db, run_id: str) -> dict | None:
+    res = (
+        await db.table("match_runs")
+        .select("competitive_state")
+        .eq("id", run_id)
+        .maybe_single()
+        .execute()
+    )
+    if not res or not res.data:
+        return None
+    blob = res.data.get("competitive_state")
+    return blob if isinstance(blob, dict) else None
 
 
 async def abandon_match_run(db, run_id: str, *, reason: str | None = None) -> Any:

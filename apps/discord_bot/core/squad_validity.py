@@ -119,7 +119,7 @@ async def card_contract_blocks_assign(db: Any, card: dict) -> str | None:
 
 
 async def club_xi_block_reason(db: Any, discord_id: int, card_count: int | None = None) -> str | None:
-    """Full match gate: incomplete XI, retirement hole, or past-grace contracts."""
+    """Full match gate: incomplete XI, retirement hole, past-grace contracts, or suspensions."""
     if card_count is None:
         count, invalid = await fetch_xi_state(db, discord_id)
     else:
@@ -135,7 +135,52 @@ async def club_xi_block_reason(db: Any, discord_id: int, card_count: int | None 
     msg = xi_block_message(count, invalid)
     if msg:
         return msg
-    return await fetch_contract_xi_block(db, discord_id)
+    contract = await fetch_contract_xi_block(db, discord_id)
+    if contract:
+        return contract
+    return await fetch_suspension_xi_block(db, discord_id)
+
+
+async def fetch_suspension_xi_block(db: Any, discord_id: int) -> str | None:
+    """Block Bot Battle when an active suspension sits in the Starting XI."""
+    try:
+        assign_res = (
+            await db.table("squad_assignments")
+            .select("player_card_id")
+            .eq("discord_id", discord_id)
+            .execute()
+        )
+        xi_ids = {str(r["player_card_id"]) for r in (assign_res.data or []) if r.get("player_card_id")}
+        if not xi_ids:
+            return None
+        res = await db.rpc("list_active_suspensions", {"p_club_id": discord_id}).execute()
+        rows = res.data or []
+        if isinstance(rows, dict):
+            rows = [rows]
+        blocked: list[str] = []
+        for row in rows:
+            cid = str(row.get("player_card_id") or "")
+            if cid in xi_ids:
+                blocked.append(cid)
+        if not blocked:
+            return None
+        # Resolve names for clearer copy
+        names: list[str] = []
+        cards = (
+            await db.table("player_cards")
+            .select("id, name")
+            .in_("id", blocked)
+            .execute()
+        )
+        for c in cards.data or []:
+            names.append(str(c.get("name") or "Player"))
+        label = ", ".join(f"**{n}**" for n in names[:5]) or "a starter"
+        return (
+            f"Suspended player(s) in your Starting XI: {label}. "
+            "Replace them in `/squad` before Bot Battle."
+        )
+    except Exception:
+        return None
 
 
 async def human_club_xi_ok(db: Any, discord_id: int, card_count: int | None = None) -> bool:

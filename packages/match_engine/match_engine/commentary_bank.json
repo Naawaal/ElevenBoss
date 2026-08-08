@@ -333,5 +333,50 @@
       "urgency": "routine",
       "text": "**Full time!** A superb away performance seals the victory!"
     }
+  ],
+  "EXTRA_TIME_START": [
+    {
+      "tags": ["generic"],
+      "urgency": "cliffhanger",
+      "text": "**Extra time!** Still locked — thirty more minutes of football ahead."
+    },
+    {
+      "tags": ["tied"],
+      "urgency": "cliffhanger",
+      "text": "Level after 90 — {actor} signals **extra time**. Who blinks first?"
+    }
+  ],
+  "EXTRA_TIME_BREAK": [
+    {
+      "tags": ["generic"],
+      "urgency": "build_up",
+      "text": "**ET half-time.** Brief pause before the second period of extra time."
+    }
+  ],
+  "PENALTY_SHOOTOUT_START": [
+    {
+      "tags": ["generic"],
+      "urgency": "cliffhanger",
+      "text": "**Penalties!** From the spot — composure decides everything."
+    }
+  ],
+  "PENALTY_KICK": [
+    {
+      "tags": ["generic"],
+      "urgency": "cliffhanger",
+      "text": "{actor} steps up from the spot for {team}..."
+    }
+  ],
+  "RED_CARD": [
+    {
+      "tags": ["generic"],
+      "urgency": "cliffhanger",
+      "text": "**RED CARD!** {actor} is sent off!"
+    },
+    {
+      "tags": ["generic"],
+      "urgency": "cliffhanger",
+      "text": "The referee has no choice — {actor} sees red!"
+    }
   ]
 }

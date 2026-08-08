@@ -97,6 +97,7 @@ async def apply_post_match_fitness(
     intensity_tier: int = 1,
     apply_injuries: bool = True,
     recorded_injuries: list[dict[str, Any]] | None = None,
+    fatigue_multiplier: float = 1.0,
 ) -> dict[str, Any]:
     """
     After economy+XP: drain fatigue, then injuries.
@@ -108,6 +109,9 @@ async def apply_post_match_fitness(
         tactics_modifier=tactics_modifier,
         intensity_tier=intensity_tier,
     )
+    mult = float(fatigue_multiplier or 1.0)
+    if mult != 1.0:
+        drains = {cid: max(1, int(round(v * mult))) for cid, v in drains.items()}
     fatigue_result = await apply_match_fatigue_rpc(
         db, owner_id, starter_drains=drains, bench_ids=bench_ids
     )

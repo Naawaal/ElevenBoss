@@ -30,6 +30,27 @@ def _sync_state(dst: MatchState, src: MatchState) -> None:
     dst.counter_weight = getattr(src, "counter_weight", 1.0)
     dst.set_piece_rate = getattr(src, "set_piece_rate", 0.08)
     dst.counters_triggered = getattr(src, "counters_triggered", 0)
+    # Feature 057 competitive snapshot fields
+    dst.competitive_enabled = bool(getattr(src, "competitive_enabled", False))
+    dst.et_fatigue_mult = float(getattr(src, "et_fatigue_mult", 1.35) or 1.35)
+    dst.et_injury_mult = float(getattr(src, "et_injury_mult", 1.25) or 1.25)
+    dst.match_phase = getattr(src, "match_phase", "REGULATION") or "REGULATION"
+    dst.decided_by = getattr(src, "decided_by", None)
+    dst.home_penalties = int(getattr(src, "home_penalties", 0) or 0)
+    dst.away_penalties = int(getattr(src, "away_penalties", 0) or 0)
+    dst.sim_seed = getattr(src, "sim_seed", None)
+    dst.yellow_book = dict(getattr(src, "yellow_book", None) or {})
+    dst.dismissals = list(getattr(src, "dismissals", None) or [])
+    dst.sent_off_keys = list(getattr(src, "sent_off_keys", None) or [])
+    dst.penalty_state = getattr(src, "penalty_state", None)
+    dst.played_extra_time = bool(getattr(src, "played_extra_time", False))
+
+
+def _copy_competitive_into_engine(caller: MatchState, eng_state: MatchState) -> None:
+    eng_state.competitive_enabled = bool(getattr(caller, "competitive_enabled", False))
+    eng_state.et_fatigue_mult = float(getattr(caller, "et_fatigue_mult", 1.35) or 1.35)
+    eng_state.et_injury_mult = float(getattr(caller, "et_injury_mult", 1.25) or 1.25)
+    eng_state.sim_seed = getattr(caller, "sim_seed", None)
 
 
 def _bind_engine(
@@ -46,6 +67,8 @@ def _bind_engine(
 ) -> tuple[SimulationEngine, Any]:
     style = tactics_home or getattr(state, "transition_style", None) or "balanced"
     eng = SimulationEngine(brain=brain) if brain is not None else SimulationEngine()
+    if getattr(state, "sim_seed", None) is None:
+        state.sim_seed = sim_seed
     ctx = eng.initial_context(
         home=list(home_squad),
         away=list(away_squad),
@@ -67,6 +90,7 @@ def _bind_engine(
         if abs(float(state.home_tactics_modifier) - 1.0) > 1e-6 and style == "balanced":
             eng._state.home_tactics_modifier = state.home_tactics_modifier
         eng._state.pending_home_momentum = state.pending_home_momentum
+        _copy_competitive_into_engine(state, eng._state)
         _sync_state(state, eng._state)
     return eng, ctx
 

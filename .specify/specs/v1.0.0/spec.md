@@ -461,7 +461,7 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 **Acceptance Criteria:**
 - **AC-12a:** Slash command `/battle hub` opens `ArenaHubView` with classic modes only: `[🤖 Bot Battle ⚡]` + Friendly tip. Ranked PvP / Find Opponent / AI Practice / Rivalries are shelved (Feature 056) and MUST NOT appear.
 - **AC-12b:** Deprecated command: Running the old `/match play` command displays an ephemeral warning: *"⚠️ The match system has been moved! Please use /battle instead."*
-- **AC-12c:** `/battle bot` runs the original live stadium AI/bot match (`run_type`/`lock_type` = `bot`).
+- **AC-12c:** `/battle bot` runs the original live stadium AI/bot match (`run_type`/`lock_type` = `bot`). When `competitive_match_enabled` / `COMPETITIVE_MATCH_ENABLED` is ON (default **OFF**), Feature 057 extends the same NSS stream with extra time, penalties, suspensions, and richer stadium presentation — not a parallel engine or new slash command.
 - **AC-12d:** Hub Bot Battle button launches Bot Battle; Friendly tip points managers at `/battle friendly`.
 - **AC-12e:** Safety and timeout: All views enforce a 15-minute timeout and verify user identity.
 - **AC-12f:** Friendly remains sandbox (no coins/XP/LP). No PvP block list or rivalry gates.
