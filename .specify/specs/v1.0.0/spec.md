@@ -459,12 +459,12 @@ ElevenBoss is a Discord-native football (soccer) manager game. Players build a s
 > **So that** all competitive match play pathways are in one unified dashboard.
 
 **Acceptance Criteria:**
-- **AC-12a:** Slash command `/battle hub` opens `ArenaHubView`. When `battle_pvp_enabled` is false: `[🤖 Bot Battle ⚡]` + Friendly tip. When true (Feature 053): `[⚔️ Find Opponent]`, `[🤝 Friendly Challenge]`, `[🤖 AI Practice]`, `[🔥 Rivalries]` — Ranked is guild-local PvP; AI Practice grants **no Global LP**.
+- **AC-12a:** Slash command `/battle hub` opens `ArenaHubView` with classic modes only: `[🤖 Bot Battle ⚡]` + Friendly tip. Ranked PvP / Find Opponent / AI Practice / Rivalries are shelved (Feature 056) and MUST NOT appear.
 - **AC-12b:** Deprecated command: Running the old `/match play` command displays an ephemeral warning: *"⚠️ The match system has been moved! Please use /battle instead."*
-- **AC-12c:** Bot Battle / AI Practice: `/battle bot` runs live stadium sim; when PvP flag on, redirects managers to hub (Practice via hub button).
-- **AC-12d:** Hub buttons launch Find Opponent / Practice / Rivalries / legacy Bot Battle as appropriate for the flag.
+- **AC-12c:** `/battle bot` runs the original live stadium AI/bot match (`run_type`/`lock_type` = `bot`).
+- **AC-12d:** Hub Bot Battle button launches Bot Battle; Friendly tip points managers at `/battle friendly`.
 - **AC-12e:** Safety and timeout: All views enforce a 15-minute timeout and verify user identity.
-- **AC-12f (053):** Friendly remains sandbox (no coins/XP/LP/rivalry). Blocks via `managers_pvp_blocked` stop Friendly challenges. See `specs/053-pvp-matchmaking-rivalries/`.
+- **AC-12f:** Friendly remains sandbox (no coins/XP/LP). No PvP block list or rivalry gates.
 
 ---
 

@@ -91,17 +91,6 @@ async def daily_recovery_job(bot: commands.Bot) -> None:
         logger.exception("Daily recovery job failed.")
 
 
-async def pvp_ghost_refresh_job(bot: commands.Bot) -> None:
-    """Daily 02:30 UTC — refresh stale PvP ghost snapshots so the opponent pool stays current."""
-    try:
-        db = await get_client()
-        res = await db.rpc("pvp_daily_ghost_refresh", {}).execute()
-        count = res.data or 0
-        logger.info("pvp_ghost_refresh_job: refreshed %s ghost snapshots", count)
-    except Exception:
-        logger.exception("pvp_ghost_refresh_job failed")
-
-
 async def academy_growth_job(bot: commands.Bot) -> None:
     """Daily 00:10 UTC — academy passive growth + age-out promote/release."""
     logger.info("Executing daily academy growth...")

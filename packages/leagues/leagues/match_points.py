@@ -23,17 +23,3 @@ def clamp_global_lp(current: int, delta: int) -> tuple[int, int]:
     new_lp = max(0, current + delta)
     return new_lp, new_lp - current
 
-
-def provisional_global_lp_delta(
-    result: str,
-    *,
-    ranked_matches_completed: int = 0,
-    provisional_matches: int = 5,
-    loss_factor: float = 0.5,
-) -> int:
-    """Ranked PvP LP delta with reduced losses while provisional."""
-    raw = global_lp_delta(result)
-    if result == "loss" and ranked_matches_completed < provisional_matches and raw < 0:
-        return int(raw * loss_factor)
-    return raw
-

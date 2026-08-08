@@ -31,7 +31,6 @@ iniconfig==2.3.0
 MarkupSafe==3.0.3
 -e packages/match_engine
 -e packages/player_engine
--e packages/pvp
 multidict==6.7.1
 packaging==26.2
 pillow==12.2.0

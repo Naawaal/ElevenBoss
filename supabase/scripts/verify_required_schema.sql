@@ -21,38 +21,6 @@ BEGIN
       ('table:public.match_locks'),
       ('table:public.match_runs'),
       ('table:public.match_events'),
-      ('table:public.pvp_ghost_snapshots'),
-      ('table:public.pvp_ghost_encounters'),
-      ('column:public.pvp_matchmaking_queue.backfill_after'),
-      ('column:public.pvp_matchmaking_queue.preferred_mode'),
-      ('column:public.match_runs.opponent_mode'),
-      ('column:public.match_history.opponent_mode'),
-      ('column:public.match_history.opponent_snapshot_age_seconds'),
-      ('function:refresh_pvp_ghost_snapshot'),
-      ('function:bootstrap_pvp_ghost_snapshots'),
-      ('function:refresh_all_pvp_ghost_snapshots'),
-      ('function:join_pvp_queue'),
-      ('function:cancel_pvp_queue'),
-      ('function:try_match_pvp_queue'),
-      ('function:expire_pvp_queue_rows'),
-      ('function:get_battle_hub_state'),
-      ('function:finalize_pvp_match'),
-      ('function:finalize_ai_practice_match'),
-      ('function:reclaim_stale_pvp_matching'),
-      ('function:set_pvp_block'),
-      ('function:set_pvp_prefs'),
-      ('function:managers_pvp_blocked'),
-      ('function:get_manager_rivalries'),
-      ('function:get_rivalry_detail'),
-      ('function:get_server_hottest_rivalries'),
-      ('function:pvp_division_rank'),
-      ('function:build_pvp_squad_snapshot'),
-      ('function:apply_pvp_match_xp_once'),
-      ('function:apply_pvp_post_match_fitness_once'),
-      ('function:complete_pvp_run'),
-      ('policy:public.pvp_matchmaking_queue.pvp_queue_select'),
-      ('policy:public.manager_rivalries.manager_rivalries_select'),
-      ('policy:public.pvp_blocks.pvp_blocks_select'),
       ('column:public.match_runs.engine_version'),
       ('column:public.match_runs.simulation_schema_version'),
       ('column:public.match_runs.event_schema_version'),
@@ -478,28 +446,6 @@ BEGIN
         WHEN 'get_development_hub_state' THEN to_regprocedure('public.get_development_hub_state(bigint)')
         WHEN 'get_skill_allocation_hub' THEN to_regprocedure('public.get_skill_allocation_hub(bigint,uuid)')
         WHEN 'get_mentor_targets' THEN to_regprocedure('public.get_mentor_targets(bigint,uuid)')
-        WHEN 'refresh_pvp_ghost_snapshot' THEN to_regprocedure('public.refresh_pvp_ghost_snapshot(bigint,uuid)')
-        WHEN 'bootstrap_pvp_ghost_snapshots' THEN to_regprocedure('public.bootstrap_pvp_ghost_snapshots()')
-        WHEN 'refresh_all_pvp_ghost_snapshots' THEN to_regprocedure('public.refresh_all_pvp_ghost_snapshots(integer)')
-        WHEN 'join_pvp_queue' THEN to_regprocedure('public.join_pvp_queue(bigint,bigint,bigint)')
-        WHEN 'try_match_pvp_queue' THEN to_regprocedure('public.try_match_pvp_queue(bigint)')
-        WHEN 'cancel_pvp_queue' THEN to_regprocedure('public.cancel_pvp_queue(bigint,uuid)')
-        WHEN 'expire_pvp_queue_rows' THEN to_regprocedure('public.expire_pvp_queue_rows()')
-        WHEN 'reclaim_stale_pvp_matching' THEN to_regprocedure('public.reclaim_stale_pvp_matching(integer)')
-        WHEN 'get_battle_hub_state' THEN to_regprocedure('public.get_battle_hub_state(bigint,bigint)')
-        WHEN 'finalize_pvp_match' THEN to_regprocedure('public.finalize_pvp_match(uuid,integer,integer,numeric,numeric)')
-        WHEN 'finalize_ai_practice_match' THEN to_regprocedure('public.finalize_ai_practice_match(uuid,bigint,text,integer,integer,numeric,numeric,boolean)')
-        WHEN 'set_pvp_block' THEN to_regprocedure('public.set_pvp_block(bigint,bigint,boolean)')
-        WHEN 'set_pvp_prefs' THEN to_regprocedure('public.set_pvp_prefs(bigint,boolean,boolean,boolean)')
-        WHEN 'managers_pvp_blocked' THEN to_regprocedure('public.managers_pvp_blocked(bigint,bigint)')
-        WHEN 'get_manager_rivalries' THEN to_regprocedure('public.get_manager_rivalries(bigint)')
-        WHEN 'get_rivalry_detail' THEN to_regprocedure('public.get_rivalry_detail(bigint,bigint)')
-        WHEN 'get_server_hottest_rivalries' THEN to_regprocedure('public.get_server_hottest_rivalries(bigint,integer)')
-        WHEN 'pvp_division_rank' THEN to_regprocedure('public.pvp_division_rank(integer)')
-        WHEN 'build_pvp_squad_snapshot' THEN to_regprocedure('public.build_pvp_squad_snapshot(bigint)')
-        WHEN 'apply_pvp_match_xp_once' THEN to_regprocedure('public.apply_pvp_match_xp_once(uuid,uuid,bigint,text,jsonb,numeric)')
-        WHEN 'apply_pvp_post_match_fitness_once' THEN to_regprocedure('public.apply_pvp_post_match_fitness_once(uuid,uuid,bigint,jsonb,uuid[],jsonb)')
-        WHEN 'complete_pvp_run' THEN to_regprocedure('public.complete_pvp_run(uuid)')
         WHEN 'claim_due_topgg_vote_reminders' THEN to_regprocedure('public.claim_due_topgg_vote_reminders(integer)')
         WHEN 'claim_deployment_changelog' THEN to_regprocedure('public.claim_deployment_changelog(text,text)')
         WHEN 'complete_deployment_changelog' THEN to_regprocedure('public.complete_deployment_changelog(text,text,text,bigint)')

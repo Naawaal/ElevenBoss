@@ -2,52 +2,32 @@
 
 Hey Managers!
 
+## [2.2.0] - 2026-08-08
+
+### Changed
+- **Battle Hub**: `/battle` is back to the classic experience — **Bot Battle** and **Friendly** only. Ranked PvP, Find Opponent, AI Practice, Ghost Managers, and Rivalries have been shelved for now.
+- **Patch Notes**: Changelog announcements now post only when a **new version section** is added — routine bot restarts of the same version stay quiet.
+
+### Fixed
+- Top.gg vote reminders: one reminder (DM or Store fallback) per vote window, with correct cooldown timing when Top.gg provides the next vote time.
+
+### Removed
+- Ranked PvP matchmaking, rivalry tracking, and related feature flags from the live product.
+
+---
+
 ## [2.1.0] - 2026-08-05
 
 ### Added
-- **Instant Ranked PvP**: No more waiting in empty queues! Jump into Ranked PvP matches in under 15 seconds against live managers, offline Ghost Manager squads, or division-tuned AI opponents.
 - **Top.gg Vote Reminders**: Receive a friendly DM reminder as soon as your Top.gg vote cooldown expires so you never miss out on free Store reward packs.
-- **Automated Patch Notes**: Release updates now post automatically to your server's League Announcement channel right when a new update deploys.
-- **Guild Rivalries & Head-to-Head**: Track active manager rivalries, win streaks, and head-to-head records directly inside `/battle`.
+- **Automated Patch Notes**: Release updates post to your server's League Announcement channel when a new version ships.
 - **Youth Academy V2**: Evaluate prospect potential ranges, manage tighter squad seats, and claim up to 2 weekly youth promotions.
 
 ### Fixed
-- Fixed an issue where matches against AI or Ghost managers could get stuck on the completion screen.
-- Fixed AI opponents generating identical lineups — AI squads now feature varied formations, tactics, and realistic player names.
-- Added clear notifications when hitting the daily AI match limit so your queue search doesn't expire silently.
+- (Historical) Match completion and AI variety fixes from the shelved Ranked experiment — Bot Battle remains the supported AI path.
 
 ---
 
-## Instant PvP Backfill & Ghost Managers (Feature 054)
-
-No more long queue waits or PvP timeouts! Ranked PvP now guarantees match entry within 15 seconds:
-
-- **Instant Matchmaking**: Searching for Ranked PvP searches for a live human opponent for 10 seconds. If no live manager is queued, the matchmaker automatically matches you with a recent frozen snapshot of a real manager's team (**Ghost Manager**) or a division-calibrated **Ranked AI**.
-- **Ghost Manager Snapshots**: Ghost opponents use real managers' actual club names, starting XI lineups, formations, and tactics. The opponent team is controlled deterministically by the match engine.
-- **Zero Offline Penalty**: Offline ghost owners suffer **zero LP loss, zero coin loss, zero energy drain**, and receive no unwanted Discord mentions. Facing a ghost is a single-sided challenge against stored club data.
-- **Calibrated Ranked Rewards**: Ghost and AI backfill matches award full competitive experience with calibrated LP and reward multipliers:
-  - **Live Human**: 1.00x coins, 1.00x XP, 1.00x positive/negative LP, full rivalry tracking.
-  - **Ghost Manager**: 0.85x coins, 0.90x XP, 0.75x positive LP, 0.50x negative LP.
-  - **Ranked AI**: 0.70x coins, 0.75x XP, 0.50x positive LP, 0.25x negative LP.
-- **Daily Limits**: Maximum **3 ghost/AI backfills per day** within your standard daily Ranked allowance. Rivalries and head-to-head records remain strictly live-human only.
-
----
-
-## Ranked PvP & Rivalries (Feature 053)
-
-Find human opponents in your guild and build competitive manager rivalries in the updated `/battle` hub:
-
-- **Find Opponent (Ranked PvP)**: Queue for live guild-local matchmaking against other managers in your Discord server. Search range widens smoothly over 60 seconds (starting ±4 OVR up to ±12 OVR).
-- **Global LP & Integrity**: Only **Ranked PvP** moves Global LP and competitive records. Provisional LP loss protection applies during your first 5 ranked matches. Finalization is strictly server-verified and idempotent.
-- **Daily Caps & Cooldowns**: Maximum **5 ranked matches per day**, **30-minute same-pair cooldown**, and at most **2 ranked matches per day** against the exact same manager to preserve competitive integrity.
-- **AI Practice**: Train against AI with capped coin/XP rewards, **0 Global LP**, and **no rivalry progress**. If a PvP queue search times out after 60s, choose between *Continue Search*, *Cancel*, or switching to *AI Practice* — no silent bot backfilling.
-- **Friendly Matches**: Free sandbox play with custom teams or friends (0 coins / 0 XP / 0 LP / 0 rivalry). Includes a **Friendly Rematch** action directly from Rivalry detail views.
-- **Manager Rivalries**: Active rivalry story tracking triggers automatically after **3 ranked meetings within 30 days** (becomes dormant after 60 days without a match). Tracks Head-to-Head records, streaks, lead changes, and unlocks profile badge keys (`pvp_badge_keys`). Purely presentation-only — **zero simulation buffs or debuffs**.
-- **Privacy & Safety**: Block unwanted opponents to prevent both Ranked matchmaking pairing and Friendly challenges. Custom rivalry preferences let you toggle DM result notifications, match callouts, and server leaderboard visibility.
-
-*Energy is charged when a match is finalized, not when entering the queue. Pre-kickoff abandonments or stadium setup failures refund energy completely.*
-
----
 ## Youth Academy V2
 
 The academy loop is tighter and fairer:

@@ -639,15 +639,13 @@ CREATE TABLE public.player_xp_log (
 ## 13. ElevenBoss v1.7 Architecture (Battle Arena Hub)
 
 ### A. Battle Dashboard views (`battle_cog.py`)
-* **`ArenaHubView`**: Central navigation. Flag-off: Bot Battle + Friendly tip. Flag-on (Feature 053): Find Opponent (Ranked PvP), Friendly tip, AI Practice, Rivalries.
-* **Pure package**: `packages/pvp` — matchmaking bands, rivalry math, reward policy (no Discord/DB).
-* **RPCs**: `join_pvp_queue` / `try_match_pvp_queue` / `finalize_pvp_match` / `finalize_ai_practice_match` / rivalry + block helpers (migrations 098–101).
+* **`ArenaHubView`**: Central navigation — Bot Battle + Friendly tip only (Feature 056 shelved Ranked PvP / Practice / Rivalries).
 * **Slash Command Group**:
-  * `/battle hub`: Spawns hub (+ restores queue view if still searching).
-  * `/battle bot`: Legacy Bot Battle; when PvP enabled, nudges managers to hub Practice.
-  * `/battle friendly`: Sandbox PvP; respects `managers_pvp_blocked`.
+  * `/battle hub`: Spawns hub.
+  * `/battle bot`: Original AI/bot match.
+  * `/battle friendly`: Sandbox friendly match.
 * **Deprecation of old command**: `/match play` warns to use `/battle`.
-* **SoT detail**: `specs/053-pvp-matchmaking-rivalries/`.
+* **Shelved**: Feature 053/054 PvP surfaces removed; schema cleanup in migration `108`.
 
 ---
 
@@ -1739,7 +1737,7 @@ async def apply_bot_match_rewards(db, *, player_row, cards, result_str, ...):
 - Per-card `match_rating` from live stats (team average remains ? ponytail ceiling documented in `match_xp.py`)
 - Merging `global_lp` and `players.division` into one ladder
 - Pydantic v2 `ConfigDict` migration (separate hygiene ticket)
-- Ranked PvP mode implementation
+- Ranked PvP mode implementation (shelved — Feature 056)
 
 ---
 

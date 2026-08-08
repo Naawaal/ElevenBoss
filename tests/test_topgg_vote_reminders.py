@@ -171,3 +171,101 @@ async def test_maybe_send_pending_vote_notice_success() -> None:
     update_arg = mock_table.update.call_args[0][0]
     assert update_arg["fallback_pending"] is False
 
+
+@pytest.mark.asyncio
+async def test_upsert_prefers_explicit_next_vote_at() -> None:
+    mock_db = MagicMock()
+    mock_table = MagicMock()
+    mock_upsert = MagicMock()
+    mock_exec = AsyncMock(return_value=MagicMock(data=[{"discord_user_id": 1}]))
+    mock_db.table.return_value = mock_table
+    mock_table.upsert.return_value = mock_upsert
+    mock_upsert.execute = mock_exec
+
+    last = datetime(2026, 8, 8, 0, 0, tzinfo=timezone.utc)
+    explicit_next = datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc)
+    await upsert_vote_reminder_window(
+        mock_db,
+        discord_user_id=1,
+        last_vote_at=last,
+        next_vote_at=explicit_next,
+    )
+    payload = mock_table.upsert.call_args[0][0]
+    assert payload["next_vote_at"] == explicit_next.isoformat()
+    assert payload["next_check_at"] == explicit_next.isoformat()
+    assert "1:2026-08-08T10:00:00" in payload["reminder_window_key"]
+
+
+@pytest.mark.asyncio
+async def test_upsert_falls_back_to_last_plus_12h() -> None:
+    mock_db = MagicMock()
+    mock_table = MagicMock()
+    mock_upsert = MagicMock()
+    mock_exec = AsyncMock(return_value=MagicMock(data=[{"discord_user_id": 2}]))
+    mock_db.table.return_value = mock_table
+    mock_table.upsert.return_value = mock_upsert
+    mock_upsert.execute = mock_exec
+
+    last = datetime(2026, 8, 8, 0, 0, tzinfo=timezone.utc)
+    await upsert_vote_reminder_window(
+        mock_db,
+        discord_user_id=2,
+        last_vote_at=last,
+        next_vote_at=None,
+    )
+    payload = mock_table.upsert.call_args[0][0]
+    expected = (last + timedelta(hours=12)).isoformat()
+    assert payload["next_vote_at"] == expected
+
+
+@pytest.mark.asyncio
+async def test_run_topgg_vote_reminders_forbidden_marks_window_handled() -> None:
+    import discord
+
+    mock_bot = MagicMock()
+    mock_user = AsyncMock()
+    mock_user.send = AsyncMock(side_effect=discord.Forbidden(MagicMock(), "dms off"))
+    mock_bot.get_user.return_value = mock_user
+
+    mock_db = MagicMock()
+    mock_rpc = MagicMock()
+    mock_exec_rpc = AsyncMock(
+        return_value=MagicMock(
+            data=[
+                {
+                    "discord_user_id": 55,
+                    "reminder_window_key": "55:2026-08-08T12:00:00Z",
+                    "last_vote_at": "2026-08-08T00:00:00Z",
+                    "next_vote_at": "2026-08-08T12:00:00Z",
+                    "next_check_at": "2026-08-08T12:00:00Z",
+                    "check_failure_count": 0,
+                }
+            ]
+        )
+    )
+    mock_db.rpc.return_value = mock_rpc
+    mock_rpc.execute = mock_exec_rpc
+
+    mock_table = MagicMock()
+    mock_update = MagicMock()
+    mock_eq = MagicMock()
+    mock_exec_update = AsyncMock()
+    mock_db.table.return_value = mock_table
+    mock_table.update.return_value = mock_update
+    mock_update.eq.return_value = mock_eq
+    mock_eq.execute = mock_exec_update
+
+    with (
+        patch("apps.discord_bot.tasks.topgg_vote_reminder_job.get_client", AsyncMock(return_value=mock_db)),
+        patch(
+            "apps.discord_bot.tasks.topgg_vote_reminder_job.check_topgg_vote",
+            AsyncMock(return_value=VoteCheckResult(status="not_voted")),
+        ),
+    ):
+        await run_topgg_vote_reminders(mock_bot)
+
+    update_data = mock_table.update.call_args[0][0]
+    assert update_data["dm_status"] == "forbidden"
+    assert update_data["fallback_pending"] is True
+    assert update_data["reminder_sent_at"] is not None
+

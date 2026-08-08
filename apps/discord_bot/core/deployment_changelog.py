@@ -159,11 +159,12 @@ async def check_and_post_deployment_changelog(bot: commands.Bot) -> None:
         return
 
     commit = get_current_commit_sha()
-    deployment_key = f"{entry.version}:{commit[:7]}"
+    # Version-only identity (Feature 056) — commit must not trigger reposts.
+    deployment_key = entry.version
 
     db = await get_client()
 
-    # Claim deployment atomically
+    # Claim version atomically
     try:
         res = await db.rpc("claim_deployment_changelog", {
             "p_deployment_key": deployment_key,
@@ -172,10 +173,10 @@ async def check_and_post_deployment_changelog(bot: commands.Bot) -> None:
         claim_data = res.data if isinstance(res.data, dict) else {}
         status = claim_data.get("status")
         if status != "claimed":
-            logger.info("Deployment changelog skipped — status: %s for key %s", status, deployment_key)
+            logger.info("Deployment changelog skipped — status: %s for version %s", status, deployment_key)
             return
     except Exception:
-        logger.exception("Failed to claim deployment changelog for key %s", deployment_key)
+        logger.exception("Failed to claim deployment changelog for version %s", deployment_key)
         return
 
     # Resolve channel
@@ -188,9 +189,9 @@ async def check_and_post_deployment_changelog(bot: commands.Bot) -> None:
     try:
         embed = build_changelog_embed(entry, commit)
         msg = await channel.send(embed=embed)
-        logger.info("Posted deployment changelog to #%s (id: %s) for key %s", channel.name, msg.id, deployment_key)
+        logger.info("Posted deployment changelog to #%s (id: %s) for version %s", channel.name, msg.id, deployment_key)
 
-        # Complete claim in database
+        # Complete claim only after successful send (failed send stays retryable)
         await db.rpc("complete_deployment_changelog", {
             "p_deployment_key": deployment_key,
             "p_version": entry.version,

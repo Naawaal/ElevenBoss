@@ -1,5 +1,7 @@
 # Interface Contract: Deployment Changelog RPCs & Service
 
+**Superseded key semantics (Feature 056)**: `p_deployment_key` is now the **version string only** (e.g. `1.4.0`), not `<version>:<commit>`. See `specs/056-shelve-pvp-automation/contracts/changelog-version-rpc.md`.
+
 ## 1. RPC: `claim_deployment_changelog`
 
 **Signature**: `public.claim_deployment_changelog(p_deployment_key TEXT, p_instance_id TEXT)`
